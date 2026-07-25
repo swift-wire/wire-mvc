@@ -56,7 +56,8 @@ public struct ControllerDeclaration {
                     if let type = binding.typeAnnotation?.type { types.append(type.trimmedDescription) }
                 }
             }
-            if let initializer = member.decl.as(InitializerDeclSyntax.self), hasInjectAttribute(initializer.attributes) {
+            if let initializer = member.decl.as(InitializerDeclSyntax.self), hasInjectAttribute(initializer.attributes)
+            {
                 for parameter in initializer.signature.parameterClause.parameters {
                     types.append(parameter.type.trimmedDescription)
                 }
