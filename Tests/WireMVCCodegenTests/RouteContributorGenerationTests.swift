@@ -1267,7 +1267,9 @@ struct RouteContributorGenerationTests {
                 "try await wireMVCVariantProxy._wireEnterScope(request, wireMVCDoubles)"
             )
         )
-        #expect(rendered.source.contains("let wireMVCVariantProxy = _WireMVCKeyed_Binds_mock.variantProxy_NotesController"))
+        #expect(
+            rendered.source.contains("let wireMVCVariantProxy = _WireMVCKeyed_Binds_mock.variantProxy_NotesController")
+        )
         #expect(!rendered.source.contains(".get()"))
         #expect(rendered.source.contains("_WireMVCKeyed_Binds_mock.doubles.value(for: wireMVCCorrelationID)"))
         #expect(rendered.source.contains("try await WireMVCOutcome.body("))
