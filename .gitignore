@@ -5,3 +5,13 @@ build.log
 swiftlint.zip
 .swift-version
 .vscode/
+
+# Swift compiler artifacts from SourceKit-LSP's index build. When the
+# IDE indexer compiles a build-plugin-generated source file (like
+# Wire's `_<Name>WireGraph.swift`), the per-source artifacts (`.d`,
+# `.dia`, `.o`, `.swiftdeps`) sometimes land at the project root
+# instead of inside `.build/`. Harmless; just keep them out of
+# version control.
+/_*WireGraph.*
+/_WireKeyChecks.*
+/_WireRoutes.*

@@ -140,6 +140,8 @@ let package = Package(
             dependencies: [
                 "WireMVC",
                 .product(name: "HTTPAPIs", package: "swift-http-api-proposal"),
+                // `HTTPRequest`/`HTTPFields` for the dispatch-side correlation-header read (H2.2b).
+                .product(name: "HTTPTypes", package: "swift-http-types"),
                 .product(name: "NIOHTTPServer", package: "swift-http-server"),
                 .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
             ],
@@ -239,6 +241,30 @@ let package = Package(
                 "WireMVCTesting",
                 // Direct dependency so the plugin re-parses WireMVC's adapter directives — see the sibling
                 // integration test target.
+                "WireMVC",
+                "WireMVCRouter",
+                .product(name: "Wire", package: "swift-wire"),
+                .product(name: "HTTPAPIs", package: "swift-http-api-proposal"),
+                .product(name: "HTTPTypes", package: "swift-http-types"),
+                .product(name: "BasicContainers", package: "swift-collections"),
+                .product(name: "NIOHTTPServer", package: "swift-http-server"),
+                .product(name: "Logging", package: "swift-log"),
+                .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
+            ],
+            swiftSettings: proposalSettings,
+            plugins: [.plugin(name: "WireMVCBuildPlugin")]
+        ),
+        // H2.2b — the keyed test harness. Re-composes the app's graph and declares a `TestingKey` whose
+        // `@BindType` binds the app's request-scoped `NoteBackend` to a mock. The generated keyed
+        // `.wiremvc(NoteTestBinds.mockBackend)` factory threads a `withBindValues`-supplied mock into request
+        // scope through the variant contributor proxy, so `GET /notes/{id}` observes the mock over real HTTP.
+        // Depends on `WireMVCTesting` (the doubles-supply runtime + the suite trait), so the plugin emits the
+        // keyed factory instead of a `@main`.
+        .testTarget(
+            name: "WireMVCBootstrapExampleBindTests",
+            dependencies: [
+                "WireMVCBootstrapExample",
+                "WireMVCTesting",
                 "WireMVC",
                 "WireMVCRouter",
                 .product(name: "Wire", package: "swift-wire"),

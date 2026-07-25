@@ -32,7 +32,7 @@ func graphBindingPropertyName(_ typeName: String) -> String {
 /// serve helper by inference — the `@main` to `WireMVC.serve`, the `.wiremvc()` factory closure to
 /// `WireMVCTesting.serveForSuite`. `createServer` may throw (building a server configuration
 /// conventionally does), so the call is prefixed with `try` when the declaration is `throws`.
-private func bootstrapBuildLines(
+func bootstrapBuildLines(
     bootstrap: ControllerDeclaration,
     notFoundRegistration: String,
     factoryKeys: Set<String>

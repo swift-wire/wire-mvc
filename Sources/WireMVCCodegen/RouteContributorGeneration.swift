@@ -31,12 +31,14 @@ public func renderRegisterWireRoutesWitness(
     pathPrefix: String,
     subjectAccessor: String,
     factoryKeys: Set<String>,
-    globalErrorMappings: [ErrorMapping] = []
+    globalErrorMappings: [ErrorMapping] = [],
+    keyedScopeEntry: KeyedScopeEntry? = nil
 ) -> (witness: String, diagnostics: [RouteCodegenDiagnostic]) {
     var generator = RouteBlockGenerator(
         subjectAccessor: subjectAccessor,
         factoryKeys: factoryKeys,
-        globalErrorMappings: globalErrorMappings
+        globalErrorMappings: globalErrorMappings,
+        keyedScopeEntry: keyedScopeEntry
     )
     let body = generator.routeBlocks(of: controller, pathPrefix: pathPrefix)
     let witness = """
@@ -57,7 +59,8 @@ public func renderRouteContributorExtension(
     controller: ControllerDeclaration,
     pathPrefix: String,
     factoryKeys: Set<String>,
-    globalErrorMappings: [ErrorMapping] = []
+    globalErrorMappings: [ErrorMapping] = [],
+    keyedScopeEntry: KeyedScopeEntry? = nil
 ) -> (source: String, diagnostics: [RouteCodegenDiagnostic]) {
     let rendered = renderRegisterWireRoutesWitness(
         access: controller.access,
@@ -65,7 +68,8 @@ public func renderRouteContributorExtension(
         pathPrefix: pathPrefix,
         subjectAccessor: contributorProxySubjectAccessor,
         factoryKeys: factoryKeys,
-        globalErrorMappings: globalErrorMappings
+        globalErrorMappings: globalErrorMappings,
+        keyedScopeEntry: keyedScopeEntry
     )
     let raw = """
         extension \(controller.proxyTypeName): RouteContributor {
@@ -105,104 +109,139 @@ public func generateRouteContributors(
     testEntry: Bool = false,
     extraImports: [String] = []
 ) -> (source: String, diagnostics: [LocatedRouteDiagnostic]) {
-    var extensions: [(name: String, source: String)] = []
-    var located: [LocatedRouteDiagnostic] = []
-    var imports: Set<String> = ["import WireMVC"]
-
-    // Parse every source once, collecting its imports and its `@Factory` template keys — a controller in
-    // one file may reference a factory declared in another, so the full key set must be known before any
-    // witness is folded (it classifies each `@Middleware(key)` as factory-vs-graph-binding).
+    // Parse every source once, then collect (in one pass) the imports, `@Factory` template keys, bootstrap
+    // declarations, and the first bootstrap's global error tier + `@NotFound` fallback — a controller in one
+    // file may reference a factory declared in another, so the full key set must be known before any witness
+    // is folded (it classifies each `@Middleware(key)` as factory-vs-graph-binding).
     let parsed = files.map { file -> (path: String, tree: SourceFileSyntax) in
         (file.path, Parser.parse(source: file.source))
     }
-    var factoryKeys: Set<String> = []
-    var bootstraps: [ControllerDeclaration] = []
-    // The `@WireMVCBootstrap` composition root's `@ErrorResponse` is the global default error tier (M5.5
-    // Phase 3), folded into every route below. Read once from the first bootstrap found, with its own
-    // scope diagnostics (catch-all ordering, duplicate types) located to source.
-    var globalErrorMappings: [ErrorMapping] = []
-    var notFoundRegistration = ""  // the generated `builder.registerNotFound { … }` (M5.5 Phase 4)
-    // The bootstrap's file converter, kept so the global-middleware proxy extension — rendered after the
-    // first loop, when the full `factoryKeys` set is known — can locate its diagnostics (M5.5 Phase 5).
-    var bootstrapConverter: SourceLocationConverter?
-    var readBootstrap = false
-    for file in parsed {
-        imports.formUnion(importDeclarations(of: file.tree))
-        factoryKeys.formUnion(factoryTemplateKeys(in: file.tree))
-        let fileBootstraps = bootstrapDeclarations(in: file.tree)
-        bootstraps.append(contentsOf: fileBootstraps)
-        if !readBootstrap, let bootstrap = fileBootstraps.first {
-            readBootstrap = true
-            let converter = SourceLocationConverter(fileName: file.path, tree: file.tree)
-            bootstrapConverter = converter
-            func locate(_ diagnostics: [RouteCodegenDiagnostic]) {
-                for diagnostic in diagnostics {
-                    located.append(
-                        LocatedRouteDiagnostic(
-                            message: diagnostic.message,
-                            location: diagnostic.node.startLocation(converter: converter)
-                        )
-                    )
-                }
-            }
-            var reader = RouteBlockGenerator(subjectAccessor: "", factoryKeys: [], globalErrorMappings: [])
-            globalErrorMappings = reader.errorMappings(from: bootstrap.attributes, scopeLabel: "bootstrap")
-            locate(reader.diagnostics)
-            let notFound = renderNotFoundRegistration(bootstrap: bootstrap)
-            notFoundRegistration = notFound.registration
-            locate(notFound.diagnostics)
-        }
-    }
-    // The generated `@main`/`.wiremvc()` entry calls `Wire.bootstrap()`, so the consumer module needs
-    // `import Wire` even when no controller source imported it directly. The `.wiremvc()` suite-trait factory
-    // (test consumer only) extends `SuiteTrait` (from `Testing`) with a `WireMVCSuiteTrait` (from
-    // `WireMVCTesting`), so those two imports are added only when it is emitted — a program consumer must not
-    // link the test client.
-    if !bootstraps.isEmpty {
-        imports.insert("import Wire")
+    var composition = analyzeComposedInputs(parsed)
+    var located = composition.diagnostics
+    // The generated `@main`/`.wiremvc()` entry calls `Wire.bootstrap()`, so the consumer needs `import Wire`;
+    // a test consumer's `.wiremvc()` suite-trait factory adds `Testing` + `WireMVCTesting` (a program consumer
+    // must not link the test client).
+    if !composition.bootstraps.isEmpty {
+        composition.imports.insert("import Wire")
         if testEntry {
-            imports.insert("import WireMVCTesting")
-            imports.insert("import Testing")
+            composition.imports.insert("import WireMVCTesting")
+            composition.imports.insert("import Testing")
         }
     }
+
+    // The keyed test harness's `TestingKey` (H2.2b), discovered only for a test consumer that links
+    // `WireMVCTesting` (`testEntry`) — the sole context the keyed factory + doubles-aware dispatch belong in.
+    // Single-key scope: the first key found drives the harness.
+    let harnessKey = testEntry ? discoverTestingKey(in: parsed.map(\.tree)) : nil
 
     let controllerExtensions = renderControllerExtensions(
         parsed,
-        factoryKeys: factoryKeys,
-        globalErrorMappings: globalErrorMappings
+        factoryKeys: composition.factoryKeys,
+        globalErrorMappings: composition.globalErrorMappings,
+        harnessKey: harnessKey
     )
-    extensions.append(contentsOf: controllerExtensions.extensions)
     located.append(contentsOf: controllerExtensions.diagnostics)
 
-    // Re-parsed Wire-aware dependency modules are named by the generated extensions/entry (their subjects,
-    // response types, and factories), so import each — but only when there is generated content that
-    // references them, to avoid an unused-import in an otherwise-empty file.
-    if !extensions.isEmpty || !bootstraps.isEmpty {
-        imports.formUnion(extraImports.map { "import \($0)" })
+    // Re-parsed Wire-aware dependency modules are named by the generated extensions/entry, so import each —
+    // but only when there is generated content that references them (avoids an unused-import otherwise).
+    if !controllerExtensions.extensions.isEmpty || !composition.bootstraps.isEmpty {
+        composition.imports.formUnion(extraImports.map { "import \($0)" })
     }
 
-    // The `@WireMVCBootstrap` composition root's generated `@main` entry point. Exactly one is
-    // expected; if a consumer declares more than one, the first gets the entry (a second `@main`
-    // is a compile error the toolchain reports). Emitted last, at module scope.
-    var bootstrapSources: [String] = []
-    if let bootstrap = bootstraps.first {
-        let artifacts = bootstrapArtifacts(
-            bootstrap: bootstrap,
-            factoryKeys: factoryKeys,
-            notFoundRegistration: notFoundRegistration,
-            converter: bootstrapConverter,
-            testEntry: testEntry
-        )
-        located.append(contentsOf: artifacts.diagnostics)
-        bootstrapSources = artifacts.sources
-    }
+    // The `@WireMVCBootstrap` composition root's generated entry (and the keyed harness), emitted last at
+    // module scope.
+    let bootstrap = renderBootstrapSources(
+        composition: composition,
+        subjects: controllerExtensions.subjects,
+        harnessKey: harnessKey,
+        testEntry: testEntry
+    )
+    located.append(contentsOf: bootstrap.diagnostics)
 
     let source = assembleGeneratedSource(
-        imports: imports,
-        extensions: extensions,
-        bootstrapSources: bootstrapSources
+        imports: composition.imports,
+        extensions: controllerExtensions.extensions,
+        bootstrapSources: bootstrap.sources
     )
     return (source, located)
+}
+
+/// The `@WireMVCBootstrap` root's module-scope sources: the global-middleware proxy extension + the program
+/// entry (`@main` or keyless `.wiremvc()`) via ``bootstrapArtifacts``, then — for a test consumer whose
+/// composed sources declare a `TestingKey` with at least one matching `@Scoped(seed:)` subject — the keyed
+/// harness (H2.2b): the per-key statics + typed `withBindValues`, and the `.wiremvc(_:)` factory. A key with
+/// no matching subject appends nothing, so the keyless path stands unchanged. Empty when there's no bootstrap.
+private func renderBootstrapSources(
+    composition: ComposedInputs,
+    subjects: [String],
+    harnessKey: DiscoveredTestingKey?,
+    testEntry: Bool
+) -> (sources: [String], diagnostics: [LocatedRouteDiagnostic]) {
+    guard let bootstrap = composition.bootstraps.first else { return ([], []) }
+    let artifacts = bootstrapArtifacts(
+        bootstrap: bootstrap,
+        factoryKeys: composition.factoryKeys,
+        notFoundRegistration: composition.notFoundRegistration,
+        converter: composition.bootstrapConverter,
+        testEntry: testEntry
+    )
+    var sources = artifacts.sources
+    if testEntry, let harnessKey, !subjects.isEmpty {
+        sources.append(renderKeyedHarnessStatics(key: harnessKey, subjects: subjects))
+        sources.append(
+            renderBootstrapKeyedTestEntry(
+                bootstrap: bootstrap,
+                notFoundRegistration: composition.notFoundRegistration,
+                factoryKeys: composition.factoryKeys,
+                key: harnessKey,
+                subjects: subjects
+            )
+        )
+    }
+    return (sources, artifacts.diagnostics)
+}
+
+/// The whole-composition facts the generator reads once up front: the collected imports, `@Factory` template
+/// keys, every `@WireMVCBootstrap` declaration, and the first bootstrap's global `@ErrorResponse` tier +
+/// `@NotFound` fallback registration (with its file converter for locating later proxy diagnostics).
+private struct ComposedInputs {
+    var imports: Set<String> = ["import WireMVC"]
+    var factoryKeys: Set<String> = []
+    var bootstraps: [ControllerDeclaration] = []
+    var globalErrorMappings: [ErrorMapping] = []
+    var notFoundRegistration = ""
+    var bootstrapConverter: SourceLocationConverter?
+    var diagnostics: [LocatedRouteDiagnostic] = []
+}
+
+/// One pass over the parsed sources, gathering ``ComposedInputs`` — split out of `generateRouteContributors`
+/// so the orchestration reads as a short pipeline.
+private func analyzeComposedInputs(_ parsed: [(path: String, tree: SourceFileSyntax)]) -> ComposedInputs {
+    var result = ComposedInputs()
+    var readBootstrap = false
+    for file in parsed {
+        result.imports.formUnion(importDeclarations(of: file.tree))
+        result.factoryKeys.formUnion(factoryTemplateKeys(in: file.tree))
+        let fileBootstraps = bootstrapDeclarations(in: file.tree)
+        result.bootstraps.append(contentsOf: fileBootstraps)
+        guard !readBootstrap, let bootstrap = fileBootstraps.first else { continue }
+        readBootstrap = true
+        let converter = SourceLocationConverter(fileName: file.path, tree: file.tree)
+        result.bootstrapConverter = converter
+        var reader = RouteBlockGenerator(subjectAccessor: "", factoryKeys: [], globalErrorMappings: [])
+        result.globalErrorMappings = reader.errorMappings(from: bootstrap.attributes, scopeLabel: "bootstrap")
+        let notFound = renderNotFoundRegistration(bootstrap: bootstrap)
+        result.notFoundRegistration = notFound.registration
+        for diagnostic in reader.diagnostics + notFound.diagnostics {
+            result.diagnostics.append(
+                LocatedRouteDiagnostic(
+                    message: diagnostic.message,
+                    location: diagnostic.node.startLocation(converter: converter)
+                )
+            )
+        }
+    }
+    return result
 }
 
 /// Join the collected imports, controller extensions, and bootstrap entry-point sources into the
@@ -233,23 +272,36 @@ private func assembleGeneratedSource(
 
 /// Render a route-contributor `extension` for every `@Controller` across the parsed files, each diagnostic
 /// located to its file. Split out of `generateRouteContributors` to keep it within the body-length budget.
+/// The controller-extension render output — the `RouteContributor` extensions, their located diagnostics,
+/// and the variant subjects (matching `@Scoped(seed:)` controller names) the keyed harness parks a proxy for.
+private struct ControllerExtensionsResult {
+    let extensions: [(name: String, source: String)]
+    let diagnostics: [LocatedRouteDiagnostic]
+    let subjects: [String]
+}
+
 private func renderControllerExtensions(
     _ parsed: [(path: String, tree: SourceFileSyntax)],
     factoryKeys: Set<String>,
-    globalErrorMappings: [ErrorMapping]
-) -> (extensions: [(name: String, source: String)], diagnostics: [LocatedRouteDiagnostic]) {
+    globalErrorMappings: [ErrorMapping],
+    harnessKey: DiscoveredTestingKey?
+) -> ControllerExtensionsResult {
     var extensions: [(name: String, source: String)] = []
     var located: [LocatedRouteDiagnostic] = []
+    var subjects: [String] = []
     for file in parsed {
         let converter = SourceLocationConverter(fileName: file.path, tree: file.tree)
         let finder = ControllerFinder()
         finder.walk(file.tree)
         for found in finder.controllers {
+            let entry = harnessKey.flatMap { keyedScopeEntry(for: found.declaration, key: $0) }
+            if entry != nil { subjects.append(found.declaration.name) }
             let rendered = renderRouteContributorExtension(
                 controller: found.declaration,
                 pathPrefix: found.pathPrefix,
                 factoryKeys: factoryKeys,
-                globalErrorMappings: globalErrorMappings
+                globalErrorMappings: globalErrorMappings,
+                keyedScopeEntry: entry
             )
             extensions.append((found.declaration.name, rendered.source))
             for diagnostic in rendered.diagnostics {
@@ -262,7 +314,7 @@ private func renderControllerExtensions(
             }
         }
     }
-    return (extensions, located)
+    return ControllerExtensionsResult(extensions: extensions, diagnostics: located, subjects: subjects)
 }
 
 /// The `@WireMVCBootstrap` composition root's generated artifacts, emitted last at module scope: the

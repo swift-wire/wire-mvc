@@ -33,6 +33,12 @@ struct RouteBlockGenerator {
     /// per request from the proxy's `_wireEnterScope` thunk, rather than calling the held `_wireSubject`.
     /// `nil` for an app-scoped (`@Singleton`) controller. Set at the start of `routeBlocks`.
     private var scopedSeedType: String?
+    /// Set when this controller is a keyed-harness *variant subject* (H2.2b): a `@Scoped(seed:)` controller
+    /// whose injected slot a `TestingKey`'s `@BindType` substitutes, in a test target that links
+    /// `WireMVCTesting`. Its scoped routes gain a per-request keyed branch — header → per-key doubles →
+    /// variant proxy, else an explicit 500 — around the untouched production scope entry. `nil` for every
+    /// other controller (and the whole production path), whose prologue is byte-for-byte unchanged.
+    var keyedScopeEntry: KeyedScopeEntry?
     private(set) var diagnostics: [RouteCodegenDiagnostic] = []
 
     /// The expression the witness calls the controller through — a per-request `wireMVCController` local
@@ -56,11 +62,58 @@ struct RouteBlockGenerator {
     /// errors are collected by the closure and discarded here (the response is the request's outcome). The
     /// seed is the register closure's `request` (seed-from-`HTTPRequest`).
     private var scopeEntryProloguePrefix: String {
-        scopedSeedType == nil
-            ? ""
-            : """
-            let (\(scopeEntryLocalName), \(scopeTeardownLocalName)) = try await self.\(contributorProxyScopeEntryAccessor)(request)
+        guard scopedSeedType != nil else { return "" }
+        guard let keyed = keyedScopeEntry else {
+            return """
+                let (\(scopeEntryLocalName), \(scopeTeardownLocalName)) = try await self.\(contributorProxyScopeEntryAccessor)(request)
+                defer { _ = await \(scopeTeardownLocalName)() }
+
+                """
+        }
+        // The in-`do` half: enter request scope via the variant proxy when a keyed suite is active and its
+        // doubles were resolved by the preamble, else the untouched production `_wireEnterScope`. Both
+        // `_wireEnterScope` calls stay inside the `do` so their throws are mapped by the route's catch.
+        return """
+            let (\(scopeEntryLocalName), \(scopeTeardownLocalName)): (\(keyed.subjectType), @Sendable () async -> [any Error])
+            if let wireMVCVariantProxy, let wireMVCDoubles {
+            (\(scopeEntryLocalName), \(scopeTeardownLocalName)) = try await wireMVCVariantProxy.\(contributorProxyScopeEntryAccessor)(request, wireMVCDoubles)
+            } else {
+            (\(scopeEntryLocalName), \(scopeTeardownLocalName)) = try await self.\(contributorProxyScopeEntryAccessor)(request)
+            }
             defer { _ = await \(scopeTeardownLocalName)() }
+
+            """
+    }
+
+    /// The keyed scope-entry *preamble* for a variant subject (H2.2b), emitted **before** the route's `do`
+    /// block — so its explicit-500 send escapes the closure directly rather than routing through the `catch`
+    /// (which would re-consume the `consuming` sender). The dispatch gates on the *parked variant proxy*: set
+    /// only by the keyed `.wiremvc(_:)` factory, its presence means a keyed suite is driving this route and
+    /// doubles are mandatory. It resolves `wireMVCVariantProxy` + `wireMVCDoubles` for the in-`do` entry:
+    /// under a keyed suite a request whose correlated doubles are present carries them through (the
+    /// `@BindType`d slot resolves to the supplied mock), and a request that reaches the route with no supplied
+    /// doubles — no header, or no store entry — is an explicit 500. When the proxy is unset (the keyless
+    /// `.wiremvc()`, or any non-keyed serving) both locals are `nil` and the route takes the production path.
+    private var scopeEntryPreamble: String {
+        guard scopedSeedType != nil, let keyed = keyedScopeEntry else { return "" }
+        let missingMessage =
+            "WireMVC keyed test harness: no bound doubles for a request reaching this route under key "
+            + "\(keyed.keyReference) — wrap the request in withBindValues(...)\\n"
+        return """
+            let wireMVCVariantProxy = \(keyed.harnessEnumName).\(keyed.variantProxyBoxName).get()
+            let wireMVCDoubles: \(keyed.doublesTypeName)?
+            if wireMVCVariantProxy != nil {
+            guard
+            let wireMVCCorrelationID = wireMVCTestCorrelationID(in: request),
+            let wireMVCResolvedDoubles = \(keyed.harnessEnumName).\(keyed.doublesStoreName).value(for: wireMVCCorrelationID)
+            else {
+            try await WireMVCOutcome.body([UInt8]("\(missingMessage)".utf8), .internalServerError).send(on: responseSender)
+            return
+            }
+            wireMVCDoubles = wireMVCResolvedDoubles
+            } else {
+            wireMVCDoubles = nil
+            }
 
             """
     }
@@ -131,6 +184,7 @@ struct RouteBlockGenerator {
                 hasBody: hasBody,
                 binds: binds,
                 response: response,
+                scopeEntryPreamble: scopeEntryPreamble,
                 scopeEntryPrologue: scopeEntryProloguePrefix,
                 errorMappings: errorMappings
             )
@@ -540,6 +594,7 @@ extension RouteBlockGenerator {
         hasBody: Bool,
         binds: [String],
         response: String,
+        scopeEntryPreamble: String,
         scopeEntryPrologue: String,
         errorMappings: [ErrorMapping]
     ) -> String {
@@ -547,8 +602,11 @@ extension RouteBlockGenerator {
         let bindsBlock = binds.isEmpty ? "" : binds.joined(separator: "\n") + "\n"
         let referencesError = !errorMappings.isEmpty || hasBinds
         let catchClause = referencesError ? "} catch let wireMVCError {" : "} catch {"
+        // The keyed-harness preamble (empty for every other route) sits *before* the `do`, so its explicit
+        // 500 send escapes the closure directly rather than re-consuming the `consuming` sender through the
+        // `catch`.
         return """
-            let wireMVCOutcome: WireMVCOutcome
+            \(scopeEntryPreamble)let wireMVCOutcome: WireMVCOutcome
             do {
             \(scopeEntryPrologue)\(collect)\(bindsBlock)\(response)
             \(catchClause)
