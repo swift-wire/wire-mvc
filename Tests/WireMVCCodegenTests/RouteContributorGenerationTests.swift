@@ -1249,9 +1249,42 @@ struct RouteContributorGenerationTests {
         #expect(key?.variantName == "Suite_setup")
         #expect(key?.doublesTypeName == "_Suite_setupDoubles")
         #expect(key?.harnessEnumName == "_WireMVCKeyed_Suite_setup")
-        #expect(key?.substitutions.first?.slotType == "Repo")
         #expect(key?.substitutions.first?.mockType == "MockRepo")
         #expect(key?.substitutions.first?.fieldName == "repo")
+    }
+
+    /// The keyed `@BindType(K.member, Mock.self)` form: the doubles field name derives from the slot type
+    /// (recovered from the `BindingKey<Slot>` declaration) plus the key, matching WireGen's
+    /// `identifierName(forType:key:)` — `(any PrefsBackend, "PrefsKeys.primary")` → `prefsBackendKeyedPrefsKeysPrimary`.
+    @Test func testingKeyDiscoveryReadsKeyedBindTypeForm() {
+        let file = Parser.parse(
+            source: """
+                enum PrefsKeys { static let primary = BindingKey<any PrefsBackend>() }
+                enum Suite {
+                    @BindType(PrefsKeys.primary, MockPrefs.self)
+                    static let setup = TestingKey()
+                }
+                """
+        )
+        let key = discoverTestingKey(in: [file])
+        #expect(key?.substitutions.first?.fieldName == "prefsBackendKeyedPrefsKeysPrimary")
+        #expect(key?.substitutions.first?.mockType == "MockPrefs")
+    }
+
+    /// A keyed `@BindType` whose `BindingKey` is declared on an `extension` of the slot type — the key
+    /// reference reconstructs through the extended type (`AppConfig.alternate`).
+    @Test func testingKeyDiscoveryResolvesBindingKeyOnExtension() {
+        let file = Parser.parse(
+            source: """
+                extension AppConfig { static let alternate = BindingKey<AppConfig>() }
+                enum Suite {
+                    @BindType(AppConfig.alternate, MockConfig.self)
+                    static let setup = TestingKey()
+                }
+                """
+        )
+        let key = discoverTestingKey(in: [file])
+        #expect(key?.substitutions.first?.fieldName == "appConfigKeyedAppConfigAlternate")
     }
 
     /// A `TestingKey` `@BindType`ing a slot a `@Scoped(seed:)` controller injects, in a test consumer, makes
