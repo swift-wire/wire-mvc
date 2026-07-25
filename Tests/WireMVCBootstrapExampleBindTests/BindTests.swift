@@ -67,7 +67,9 @@ struct BindTests {
             }
             group.addTask {
                 try await Task.sleep(for: .seconds(5))
-                Issue.record("interleaving barrier timed out: the two differently-mocked requests were not in-flight concurrently")
+                Issue.record(
+                    "interleaving barrier timed out: the two differently-mocked requests were not in-flight concurrently"
+                )
                 throw BarrierTimedOut()
             }
             // Whichever finishes first: the two requests completing (Void) or the timeout (throws).
