@@ -114,6 +114,31 @@ package struct LoggedController: Sendable {
     package func logged() -> Note { Note(value: "logged") }
 }
 
+// A KEYED binding slot — `@Provides(PrefsKeys.primary)` / `@Inject(PrefsKeys.primary)` (a `BindingKey`),
+// mirroring `@Provides(key)` / `@Replaces(key)`. Mocked via the keyed `@BindType(PrefsKeys.primary, …)` form.
+package protocol PrefsBackend: Sendable {
+    func pref(_ id: String) async -> String
+}
+package final class RealPrefsBackend: PrefsBackend {
+    package init() {}
+    package func pref(_ id: String) async -> String { "real-pref:\(id)" }
+}
+package enum PrefsKeys {
+    package static let primary = BindingKey<any PrefsBackend>()
+}
+@Provides(PrefsKeys.primary)
+package func prefsBackend() -> any PrefsBackend { RealPrefsBackend() }
+
+@Scoped(seed: HTTPRequest.self)
+@Controller("/prefs")
+package struct PrefsController: Sendable {
+    @Inject(PrefsKeys.primary) var prefs: any PrefsBackend  // the keyed binding
+
+    @Get("/{id}")
+    @JSONResponse
+    package func read(@Path id: String) async -> Note { Note(value: await prefs.pref(id)) }
+}
+
 /// A request-scoped intermediate — injects the `@Scopable`'d `AccountRegistry`. It is neither `@BindType`d nor
 /// `@Scopable`'d, so it is the Level-2 transitive hop the mock threads *through*.
 @Scoped(seed: HTTPRequest.self)

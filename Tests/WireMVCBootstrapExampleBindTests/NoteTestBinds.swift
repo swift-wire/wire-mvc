@@ -29,11 +29,23 @@ package final class MockNoteBackend: NoteBackend {
     package var recordedNotes: [String] { calls.withLock { $0 } }
 }
 
+/// Mock for the KEYED slot, supplied via `@BindType(PrefsKeys.primary, MockPrefsBackend.self)`.
+package final class MockPrefsBackend: PrefsBackend {
+    private let calls = Mutex<[String]>([])
+    package init() {}
+    package func pref(_ id: String) async -> String {
+        calls.withLock { $0.append(id) }
+        return "mock-pref:\(id)"
+    }
+    package var recordedPrefs: [String] { calls.withLock { $0 } }
+}
+
 enum NoteTestBinds {
     // One `@BindType` slot (`NoteBackend`) reached two ways: directly by `NotesController`, and through the
     // `@Scopable`'d `AccountRegistry` (an app `@Singleton` reading the backend at `init`) by `AccountController`.
     // `@Scopable` acknowledges lifting that singleton into the request scope so its init sees the double.
     @BindType(NoteBackend.self, MockNoteBackend.self)
+    @BindType(PrefsKeys.primary, MockPrefsBackend.self)  // STEP 0: the keyed slot form
     @Scopable(AccountRegistry.self)
     static let mockBackend = TestingKey()
 }
