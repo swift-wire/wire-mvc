@@ -1230,4 +1230,97 @@ struct RouteContributorGenerationTests {
         #expect(result.diagnostics.count == 1)
         #expect(result.diagnostics.first?.location.line == 5)
     }
+
+    // MARK: - Keyed test harness (H2.2b)
+
+    /// The names the keyed harness derives from a `TestingKey` — the reference, variant, doubles struct, and
+    /// the `@BindType` slot/mock/field — must match WireGen's blind, so pin them.
+    @Test func testingKeyDiscoveryDerivesNames() {
+        let file = Parser.parse(
+            source: """
+                enum Suite {
+                    @BindType(Repo.self, MockRepo.self)
+                    static let setup = TestingKey()
+                }
+                """
+        )
+        let key = discoverTestingKey(in: [file])
+        #expect(key?.keyReference == "Suite.setup")
+        #expect(key?.variantName == "Suite_setup")
+        #expect(key?.doublesTypeName == "_Suite_setupDoubles")
+        #expect(key?.harnessEnumName == "_WireMVCKeyed_Suite_setup")
+        #expect(key?.substitutions.first?.slotType == "Repo")
+        #expect(key?.substitutions.first?.mockType == "MockRepo")
+        #expect(key?.substitutions.first?.fieldName == "repo")
+    }
+
+    /// A `TestingKey` `@BindType`ing a slot a `@Scoped(seed:)` controller injects, in a test consumer, makes
+    /// that controller's route dispatch doubles-aware and emits the keyed factory + statics + `withBindValues`.
+    @Test func keyedHarnessEmitsDoublesAwareDispatchAndFactory() {
+        let rendered = generateRouteContributors(files: [("App.swift", keyedHarnessFixture)], testEntry: true)
+        #expect(rendered.diagnostics.isEmpty)
+        // Doubles-aware dispatch: gated on the parked variant proxy, threading correlated doubles, else 500.
+        #expect(rendered.source.contains("if let wireMVCVariantProxy, let wireMVCDoubles {"))
+        #expect(
+            rendered.source.contains(
+                "try await wireMVCVariantProxy._wireEnterScope(request, wireMVCDoubles)"
+            )
+        )
+        #expect(rendered.source.contains("_WireMVCKeyed_Binds_mock.variantProxy_NotesController.get()"))
+        #expect(rendered.source.contains("_WireMVCKeyed_Binds_mock.doubles.value(for: wireMVCCorrelationID)"))
+        #expect(rendered.source.contains("try await WireMVCOutcome.body("))
+        #expect(rendered.source.contains("under key Binds.mock"))
+        // The production scope entry survives as the no-keyed-suite fall-through.
+        #expect(rendered.source.contains("try await self._wireEnterScope(request)"))
+        // Statics + typed withBindValues + keyed factory that parks the proxy before serving.
+        #expect(rendered.source.contains("enum _WireMVCKeyed_Binds_mock {"))
+        #expect(rendered.source.contains("static let doubles = TestBindStore<_Binds_mockDoubles>()"))
+        #expect(
+            rendered.source.contains(
+                "static let variantProxy_NotesController = WireMVCVariantProxyBox<_Binds_mock_WireRouteContributor_NotesController>()"
+            )
+        )
+        #expect(rendered.source.contains("func withBindValues<R>(noteBackend: MockNoteBackend,"))
+        #expect(rendered.source.contains("static func wiremvc(_ key: TestingKey) -> WireMVCSuiteTrait"))
+        #expect(
+            rendered.source.contains(
+                ".set(Wire.bootstrapBinds_mock_NotesControllerContributor(wireGraph: graph))"
+            )
+        )
+    }
+
+    /// The same fixture as a program consumer (`testEntry: false`) — no keyed harness is discovered, so the
+    /// scoped controller's dispatch is the byte-for-byte production scope entry, with no doubles-aware branch.
+    @Test func productionDispatchIsUnchangedWithoutTestEntry() {
+        let rendered = generateRouteContributors(files: [("App.swift", keyedHarnessFixture)], testEntry: false)
+        #expect(
+            rendered.source.contains(
+                "let (wireMVCController, wireMVCScopeTeardown) = try await self._wireEnterScope(request)"
+            )
+        )
+        #expect(!rendered.source.contains("wireMVCVariantProxy"))
+        #expect(!rendered.source.contains("_WireMVCKeyed_"))
+        #expect(!rendered.source.contains("wiremvc(_ key:"))
+    }
+
+    /// A `@WireMVCBootstrap` root, a `@Scoped(seed:)` controller injecting the `@BindType`d slot, and the key.
+    private let keyedHarnessFixture = """
+        @Singleton
+        @WireMVCBootstrap
+        struct AppBootstrap {}
+
+        @Scoped(seed: HTTPRequest.self)
+        @Controller("/notes")
+        struct NotesController {
+            @Inject var backend: any NoteBackend
+            @Get("/{id}")
+            @JSONResponse
+            func note(@Path id: String) -> Note { fatalError() }
+        }
+
+        enum Binds {
+            @BindType(NoteBackend.self, MockNoteBackend.self)
+            static let mock = TestingKey()
+        }
+        """
 }

@@ -43,6 +43,35 @@ public struct ControllerDeclaration {
         memberBlock.members.compactMap { $0.decl.as(FunctionDeclSyntax.self) }
     }
 
+    /// The types this controller injects — every `@Inject var/let`'s declared type plus every `@Inject
+    /// init`'s parameter types, each verbatim (`"any NoteBackend"`). The keyed harness matches a scoped
+    /// controller against a `TestingKey`'s `@BindType` slots by comparing these (stripped of `any `): a
+    /// controller injecting a substituted slot is a variant subject whose route dispatch becomes
+    /// doubles-aware.
+    public var injectedTypes: [String] {
+        var types: [String] = []
+        for member in memberBlock.members {
+            if let variable = member.decl.as(VariableDeclSyntax.self), hasInjectAttribute(variable.attributes) {
+                for binding in variable.bindings {
+                    if let type = binding.typeAnnotation?.type { types.append(type.trimmedDescription) }
+                }
+            }
+            if let initializer = member.decl.as(InitializerDeclSyntax.self), hasInjectAttribute(initializer.attributes) {
+                for parameter in initializer.signature.parameterClause.parameters {
+                    types.append(parameter.type.trimmedDescription)
+                }
+            }
+        }
+        return types
+    }
+
+    private func hasInjectAttribute(_ attributes: AttributeListSyntax) -> Bool {
+        for case let .attribute(attr) in attributes where attr.attributeName.trimmedDescription == "Inject" {
+            return true
+        }
+        return false
+    }
+
     /// `"public "` / `"package "` / `""` — the proxy inherits the controller's visibility so the graph
     /// consumer (another module) can construct it.
     public var access: String {
