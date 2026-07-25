@@ -30,11 +30,10 @@ public struct DiscoveredTestingKey: Sendable, Equatable {
     /// The canonical reference text — `"NoteTestBinds.mockBackend"` for a `static let mockBackend` on
     /// `NoteTestBinds`. The variant/doubles names derive from it.
     public let keyReference: String
-    /// The `@BindType` substitutions, in source order.
+    /// The `@BindType` substitutions, in source order — the doubles struct's fields. (`@Scopable` markers on
+    /// the key are read by swift-wire's cascade to lift app singletons into the scope; wire-mvc's keyed
+    /// harness keys every `@Scoped(seed:)` controller regardless, so it does not read them.)
     public let substitutions: [TestingBindSubstitution]
-    /// The `@Scopable(X.self)` type names, in source order — surfaced for completeness; the single-key
-    /// direct-injection harness matches subjects by their injected slot, not by these.
-    public let scopables: [String]
 
     /// The variant name — the key reference with `.` → `_` (`"NoteTestBinds_mockBackend"`). Prefixes the
     /// doubles struct, the variant proxy type, and the facade method, matching WireGen.
@@ -161,30 +160,19 @@ private final class TestingKeyFinder: SyntaxVisitor {
             else { return nil }
             return bindSubstitution(from: attribute)
         }
-        let scopables = node.attributes.compactMap { element -> String? in
-            guard case let .attribute(attribute) = element,
-                attribute.attributeName.trimmedDescription == "Scopable"
-            else { return nil }
-            return metatypeBase(ofFirstArgumentOf: attribute)
-        }
-        key = DiscoveredTestingKey(keyReference: reference, substitutions: substitutions, scopables: scopables)
+        key = DiscoveredTestingKey(keyReference: reference, substitutions: substitutions)
         return .visitChildren
     }
 
     /// Read one `@BindType(Slot.self, Mock.self)` into a substitution — the type form only (a keyed-slot
-    /// `@BindType(Repo.primary, Mock.self)` is out of the single-key harness's subject-by-type matching, so
-    /// it is skipped). `nil` for a malformed attribute the macro would already have rejected.
+    /// `@BindType(Repo.primary, Mock.self)` is a deferred follow-up). `nil` for a malformed attribute the
+    /// macro would already have rejected.
     private func bindSubstitution(from attribute: AttributeSyntax) -> TestingBindSubstitution? {
         guard case let .argumentList(args) = attribute.arguments, args.count == 2,
             let slot = metatypeBase(of: args.first!.expression),
             let mock = metatypeBase(of: args.last!.expression)
         else { return nil }
         return TestingBindSubstitution(slotType: strippingAny(slot), mockType: mock)
-    }
-
-    private func metatypeBase(ofFirstArgumentOf attribute: AttributeSyntax) -> String? {
-        guard case let .argumentList(args) = attribute.arguments, let first = args.first else { return nil }
-        return metatypeBase(of: first.expression)
     }
 
     /// The base type of a `.self` metatype expression — `Repo` for `Repo.self` — or `nil` when it isn't one.
