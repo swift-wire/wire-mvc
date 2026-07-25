@@ -147,7 +147,10 @@ struct BindTests {
                     for tag in ["alpha", "beta"] {
                         requests.addTask {
                             let mock = MockNoteBackend(onNote: { await barrier.arrive() })
-                            try await withBindValues(noteBackend: mock, prefsBackendKeyedPrefsKeysPrimary: MockPrefsBackend()) {
+                            try await withBindValues(
+                                noteBackend: mock,
+                                prefsBackendKeyedPrefsKeysPrimary: MockPrefsBackend()
+                            ) {
                                 let response = try await TestClient.current.get("/notes/\(tag)")
                                 #expect(response.status == 200)
                                 #expect(try response.json(Note.self).value == "stamped:mock:\(tag)")

@@ -317,13 +317,25 @@ private final class BindingKeyFinder: SyntaxVisitor {
 
     init() { super.init(viewMode: .sourceAccurate) }
 
-    override func visit(_ node: EnumDeclSyntax) -> SyntaxVisitorContinueKind { push(node.name.text); return .visitChildren }
+    override func visit(_ node: EnumDeclSyntax) -> SyntaxVisitorContinueKind {
+        push(node.name.text)
+        return .visitChildren
+    }
     override func visitPost(_ node: EnumDeclSyntax) { pop() }
-    override func visit(_ node: StructDeclSyntax) -> SyntaxVisitorContinueKind { push(node.name.text); return .visitChildren }
+    override func visit(_ node: StructDeclSyntax) -> SyntaxVisitorContinueKind {
+        push(node.name.text)
+        return .visitChildren
+    }
     override func visitPost(_ node: StructDeclSyntax) { pop() }
-    override func visit(_ node: ClassDeclSyntax) -> SyntaxVisitorContinueKind { push(node.name.text); return .visitChildren }
+    override func visit(_ node: ClassDeclSyntax) -> SyntaxVisitorContinueKind {
+        push(node.name.text)
+        return .visitChildren
+    }
     override func visitPost(_ node: ClassDeclSyntax) { pop() }
-    override func visit(_ node: ActorDeclSyntax) -> SyntaxVisitorContinueKind { push(node.name.text); return .visitChildren }
+    override func visit(_ node: ActorDeclSyntax) -> SyntaxVisitorContinueKind {
+        push(node.name.text)
+        return .visitChildren
+    }
     override func visitPost(_ node: ActorDeclSyntax) { pop() }
     override func visit(_ node: ExtensionDeclSyntax) -> SyntaxVisitorContinueKind {
         push(node.extendedType.trimmedDescription)
