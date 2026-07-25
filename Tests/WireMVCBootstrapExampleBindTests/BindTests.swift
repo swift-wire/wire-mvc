@@ -46,6 +46,54 @@ struct BindTests {
         #expect(mock.recordedNotes == ["init"])
     }
 
+    /// Level-2 transitive (the "key every controller" payoff): `CartController` injects only the
+    /// request-scoped `CartService`, which injects the `@Scopable`'d `AccountRegistry`. The mock threads the
+    /// whole chain — `CartService → AccountRegistry(lifted, init reads the mock)` — with NO `@VariantRoute`
+    /// and no extra mark on `CartService`, purely because every seed-scoped controller is keyed. Over HTTP
+    /// `GET /cart/x` returns the mock's init-read value; the exact instance recorded the init call.
+    @Test func level2TransitiveRouteThreadsMockWithNoMark() async throws {
+        let mock = MockNoteBackend()
+        try await withBindValues(noteBackend: mock) {
+            let response = try await TestClient.current.get("/cart/x")
+            #expect(response.status == 200)
+            #expect(try response.json(Note.self).value == "mock:init")
+        }
+        #expect(mock.recordedNotes == ["init"])
+    }
+
+    /// A factory-carrying keyed route: `LoggedController` carries `@Middleware(AccessLogKeys.factory)`, so its
+    /// variant proxy holds a lifted `_wireFactory_<key>`. Under the keyed suite it enters cleanly and serves
+    /// over HTTP (the swift-wire factory-facade fix) — `GET /logged/` returns its constant, mock ignored.
+    @Test func factoryCarryingRouteEntersAndServes() async throws {
+        let mock = MockNoteBackend()
+        try await withBindValues(noteBackend: mock) {
+            let response = try await TestClient.current.get("/logged/")
+            #expect(response.status == 200)
+            #expect(try response.json(Note.self).value == "logged")
+        }
+        #expect(mock.recordedNotes == [])
+    }
+
+    /// A mock-IGNORING keyed route: `/ping` injects nothing mocked, but under `.wiremvc(key)` it is keyed and
+    /// its variant proxy takes the key's Doubles, which it ignores. With `withBindValues` it parks, enters,
+    /// and serves its constant.
+    @Test func mockIgnoringRouteServesUnderWithBindValues() async throws {
+        let mock = MockNoteBackend()
+        try await withBindValues(noteBackend: mock) {
+            let response = try await TestClient.current.get("/ping/")
+            #expect(response.status == 200)
+            #expect(try response.json(Note.self).value == "pong")
+        }
+        #expect(mock.recordedNotes == [])
+    }
+
+    /// The uniform "keyed suite ⇒ supply doubles" rule applies even to a mock-ignoring route — a request to
+    /// `/ping` WITHOUT `withBindValues` is an explicit 500.
+    @Test func mockIgnoringRouteWithoutDoublesIs500() async throws {
+        let response = try await TestClient.current.get("/ping/")
+        #expect(response.status == 500)
+    }
+
     /// The keyed side of the shared-route coexistence check (see `KeylessCoexistTests`): under the keyed
     /// suite, `withBindValues` + `GET /notes/z` resolves the mock — while the parallel keyless suite serves
     /// the real backend on the very same route. The two don't cross because the variant proxy rides only the

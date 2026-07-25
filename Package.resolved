@@ -1,5 +1,5 @@
 {
-  "originHash" : "1ce5b0324b8de4106cd9c4a1ee9925376f48d6e861b19caf15fb543f4b84ab2d",
+  "originHash" : "93dfc5e0ac94491fd1d4ff16568f30fc50f090ba6df1db24ae7d3d19d38ce7aa",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -232,7 +232,7 @@
       "location" : "https://github.com/tachyonics/swift-wire.git",
       "state" : {
         "branch" : "main",
-        "revision" : "eafaa013b90ee2388b968b7cc810726be7a73385"
+        "revision" : "7c4d234b3c351fcb5df55c34410d94c97676a91e"
       }
     }
   ],

@@ -13,17 +13,15 @@ import SwiftSyntax
 // holder — so a keyless `.wiremvc()` suite and a keyed suite can run in parallel without crossing.
 
 /// The keyed scope-entry descriptor for `controller` under `key`, or `nil` when the controller is not a
-/// variant subject: it must be `@Scoped(seed:)` AND directly inject a type the key touches — either a
-/// `@BindType`d slot (Phase 1) or a `@Scopable`'d app singleton that reaches the mock (the Phase-2 cascade:
-/// the mock threads through the lifted singleton into the controller, including at the singleton's `init`).
-/// Matched by type, stripped of `any `. This is the direct-injection rule over both sets; a subject reaching
-/// the mock only through a request-scoped intermediate that is itself neither `@BindType`d nor `@Scopable`'d
-/// needs a transitive `@Inject`-graph walk wire-mvc can't see (a swift-wire follow-up). Deterministic.
+/// keyed variant subject. Under a `TestingKey`, **every** `@Scoped(seed:)` controller is a subject: swift-wire
+/// emits a `Wire.bootstrap<Variant>_<Subject>Contributor` facade accepting the key's `_<Key>Doubles` for each
+/// seed-scoped subject — one that uses a `@BindType`d slot (directly or through a `@Scopable`-lifted singleton,
+/// or through a request-scoped intermediate) threads the mock, and one that uses none takes the doubles and
+/// ignores them. So there is no selection heuristic to match on: the keyed dispatch is uniform, and a request
+/// under a keyed suite always supplies doubles (else an explicit 500). `@Scopable` still marks the app
+/// singletons swift-wire's cascade lifts into the scope; wire-mvc no longer reads it to select subjects.
 func keyedScopeEntry(for controller: ControllerDeclaration, key: DiscoveredTestingKey) -> KeyedScopeEntry? {
     guard controller.scopedSeedType != nil else { return nil }
-    let touched = Set(key.substitutions.map(\.slotType)).union(key.scopables)
-    let injected = Set(controller.injectedTypes.map(strippingAny))
-    guard !touched.isDisjoint(with: injected) else { return nil }
     return KeyedScopeEntry(
         harnessEnumName: key.harnessEnumName,
         doublesStoreName: harnessDoublesStoreName,

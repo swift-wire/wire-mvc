@@ -86,3 +86,50 @@ package struct AccountController: Sendable {
         Note(value: registry.tag)  // the registry's init-time read of the (mocked, under a keyed suite) backend
     }
 }
+
+// Three more seed-scoped controllers that exercise the keyed harness's "key every controller" model — under
+// `.wiremvc(key)` each is keyed and its variant proxy takes the key's Doubles, whether or not it uses a mock.
+
+/// A mock-IGNORING controller — injects only the seed. Its variant proxy takes the Doubles and ignores them;
+/// a keyed request must still supply them (else 500), the uniform rule.
+@Scoped(seed: HTTPRequest.self)
+@Controller("/ping")
+package struct PingController: Sendable {
+    @Inject package init(request: HTTPRequest) {}
+    @Get("/")
+    @JSONResponse
+    package func ping() -> Note { Note(value: "pong") }
+}
+
+/// A factory-carrying controller — its `@Middleware(AccessLogKeys.factory)` gives the contributor proxy a
+/// lifted `_wireFactory_<key>`. The variant proxy re-emits it and the facade constructs it (the swift-wire
+/// factory-facade fix); under a keyed suite it enters and serves like any other.
+@Scoped(seed: HTTPRequest.self)
+@Controller("/logged")
+@Middleware(AccessLogKeys.factory)
+package struct LoggedController: Sendable {
+    @Inject package init(request: HTTPRequest) {}
+    @Get("/")
+    @JSONResponse
+    package func logged() -> Note { Note(value: "logged") }
+}
+
+/// A request-scoped intermediate — injects the `@Scopable`'d `AccountRegistry`. It is neither `@BindType`d nor
+/// `@Scopable`'d, so it is the Level-2 transitive hop the mock threads *through*.
+@Scoped(seed: HTTPRequest.self)
+package struct CartService: Sendable {
+    @Inject package init(registry: AccountRegistry) { self.registry = registry }
+    package let registry: AccountRegistry
+}
+
+/// The Level-2 subject — injects only the request-scoped `CartService`, reaching the mock through
+/// `CartService → AccountRegistry(lifted, init reads the mock)`. Under "key every controller" it is keyed with
+/// no extra mark, so the mock threads the transitive chain end to end.
+@Scoped(seed: HTTPRequest.self)
+@Controller("/cart")
+package struct CartController: Sendable {
+    @Inject var cart: CartService
+    @Get("/{id}")
+    @JSONResponse
+    package func cart(@Path id: String) -> Note { Note(value: cart.registry.tag) }
+}
