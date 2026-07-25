@@ -30,6 +30,22 @@ struct BindTests {
         #expect(mock.recordedNotes == ["x"])
     }
 
+    /// The `@Scopable` cascade: `AccountController` reaches the mock ONLY through the `@Scopable`'d app
+    /// `@Singleton` `AccountRegistry`, whose `init` reads `any NoteBackend`. Under the keyed suite the registry
+    /// is lifted into the request scope and rebuilt per entry, so its init reads the supplied mock — the
+    /// Phase-2 distinguishing property, observed over HTTP: `GET /account/x` returns the mock's init-read value
+    /// (`mock:init`), and the exact supplied instance recorded that init-time `note("init")` call.
+    @Test func cascadeMockThreadsThroughScopableSingletonInit() async throws {
+        let mock = MockNoteBackend()
+        try await withBindValues(noteBackend: mock) {
+            let response = try await TestClient.current.get("/account/x")
+            #expect(response.status == 200)
+            #expect(try response.json(Note.self).value == "mock:init")
+        }
+        // The lifted singleton's init read the exact supplied instance (reference identity via its recording).
+        #expect(mock.recordedNotes == ["init"])
+    }
+
     /// The keyed side of the shared-route coexistence check (see `KeylessCoexistTests`): under the keyed
     /// suite, `withBindValues` + `GET /notes/z` resolves the mock — while the parallel keyless suite serves
     /// the real backend on the very same route. The two don't cross because the variant proxy rides only the

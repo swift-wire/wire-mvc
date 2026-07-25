@@ -30,6 +30,10 @@ package final class MockNoteBackend: NoteBackend {
 }
 
 enum NoteTestBinds {
+    // One `@BindType` slot (`NoteBackend`) reached two ways: directly by `NotesController`, and through the
+    // `@Scopable`'d `AccountRegistry` (an app `@Singleton` reading the backend at `init`) by `AccountController`.
+    // `@Scopable` acknowledges lifting that singleton into the request scope so its init sees the double.
     @BindType(NoteBackend.self, MockNoteBackend.self)
+    @Scopable(AccountRegistry.self)
     static let mockBackend = TestingKey()
 }
