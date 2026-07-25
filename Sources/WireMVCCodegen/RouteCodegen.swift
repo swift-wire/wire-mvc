@@ -87,20 +87,21 @@ struct RouteBlockGenerator {
 
     /// The keyed scope-entry *preamble* for a variant subject (H2.2b), emitted **before** the route's `do`
     /// block — so its explicit-500 send escapes the closure directly rather than routing through the `catch`
-    /// (which would re-consume the `consuming` sender). The dispatch gates on the *parked variant proxy*: set
-    /// only by the keyed `.wiremvc(_:)` factory, its presence means a keyed suite is driving this route and
-    /// doubles are mandatory. It resolves `wireMVCVariantProxy` + `wireMVCDoubles` for the in-`do` entry:
-    /// under a keyed suite a request whose correlated doubles are present carries them through (the
-    /// `@BindType`d slot resolves to the supplied mock), and a request that reaches the route with no supplied
-    /// doubles — no header, or no store entry — is an explicit 500. When the proxy is unset (the keyless
-    /// `.wiremvc()`, or any non-keyed serving) both locals are `nil` and the route takes the production path.
+    /// (which would re-consume the `consuming` sender). The dispatch gates on the per-key `@TaskLocal` variant
+    /// proxy: the keyed `.wiremvc(_:)` factory binds it around the serve, so a non-`nil` read means a keyed
+    /// suite is driving this route and doubles are mandatory. It resolves `wireMVCVariantProxy` +
+    /// `wireMVCDoubles` for the in-`do` entry: under a keyed suite a request whose correlated doubles are
+    /// present carries them through (the `@BindType`d slot resolves to the supplied mock), and a request that
+    /// reaches the route with no supplied doubles — no header, or no store entry — is an explicit 500. When
+    /// the task-local is unbound (a keyless `.wiremvc()` suite, or any non-keyed serving) both locals are
+    /// `nil` and the route takes the production path.
     private var scopeEntryPreamble: String {
         guard scopedSeedType != nil, let keyed = keyedScopeEntry else { return "" }
         let missingMessage =
             "WireMVC keyed test harness: no bound doubles for a request reaching this route under key "
             + "\(keyed.keyReference) — wrap the request in withBindValues(...)\\n"
         return """
-            let wireMVCVariantProxy = \(keyed.harnessEnumName).\(keyed.variantProxyBoxName).get()
+            let wireMVCVariantProxy = \(keyed.harnessEnumName).\(keyed.variantProxyBoxName)
             let wireMVCDoubles: \(keyed.doublesTypeName)?
             if wireMVCVariantProxy != nil {
             guard

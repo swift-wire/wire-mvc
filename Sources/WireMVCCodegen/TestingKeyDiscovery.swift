@@ -45,13 +45,13 @@ public struct DiscoveredTestingKey: Sendable, Equatable {
     public var doublesTypeName: String { "_" + variantName + "Doubles" }
 
     /// The generated per-key harness namespace enum — holds the doubles ``TestBindStore`` and, per subject,
-    /// a ``WireMVCVariantProxyBox``. `_`-prefixed to stay out of user code's namespace.
+    /// a `@TaskLocal` variant-proxy holder. `_`-prefixed to stay out of user code's namespace.
     public var harnessEnumName: String { "_WireMVCKeyed_" + variantName }
 }
 
 /// What a variant subject's scoped route dispatch needs to emit its keyed branch — the per-key harness
-/// namespace, the doubles store + variant-proxy box members on it, the subject type for the scope-entry
-/// tuple annotation, and the key reference for the missing-doubles 500 message. Built per matching
+/// namespace, the doubles store + `@TaskLocal` variant-proxy members on it, the subject type for the
+/// scope-entry tuple annotation, and the key reference for the missing-doubles 500 message. Built per matching
 /// controller by ``renderControllerExtensions`` and threaded into ``RouteBlockGenerator``.
 public struct KeyedScopeEntry: Sendable, Equatable {
     public let harnessEnumName: String
@@ -95,7 +95,7 @@ public func variantFacadeMethodName(variantName: String, subject: String) -> Str
     "bootstrap\(variantName)_\(subject)Contributor"
 }
 
-/// The per-subject ``WireMVCVariantProxyBox`` static's name inside the harness enum.
+/// The per-subject `@TaskLocal` variant-proxy holder's name inside the harness enum.
 public func variantProxyBoxName(subject: String) -> String {
     "variantProxy_" + subject
 }
