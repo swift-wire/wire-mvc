@@ -1347,7 +1347,9 @@ struct RouteContributorGenerationTests {
         #expect(rendered.diagnostics.isEmpty)
         // The mock-ignoring seed-scoped `PingController` is keyed: dispatch reads its @TaskLocal proxy, and the
         // factory binds it from the facade swift-wire emits for every seed-scoped subject.
-        #expect(rendered.source.contains("let wireMVCVariantProxy = _WireMVCKeyed_Binds_mock.variantProxy_PingController"))
+        #expect(
+            rendered.source.contains("let wireMVCVariantProxy = _WireMVCKeyed_Binds_mock.variantProxy_PingController")
+        )
         #expect(
             rendered.source.contains(
                 "@TaskLocal static var variantProxy_PingController: _Binds_mock_WireRouteContributor_PingController?"
