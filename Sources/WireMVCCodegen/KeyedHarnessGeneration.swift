@@ -13,14 +13,17 @@ import SwiftSyntax
 // holder — so a keyless `.wiremvc()` suite and a keyed suite can run in parallel without crossing.
 
 /// The keyed scope-entry descriptor for `controller` under `key`, or `nil` when the controller is not a
-/// variant subject: it must be `@Scoped(seed:)` AND inject a slot the key's `@BindType` substitutes (matched
-/// by type, stripped of `any `). This is the single-key direct-injection rule — a subject reached only
-/// through a `@Scopable`-lifted singleton is a follow-up. Deterministic (set membership, no ordering).
+/// variant subject: it must be `@Scoped(seed:)` AND directly inject a type the key touches — either a
+/// `@BindType`d slot (Phase 1) or a `@Scopable`'d app singleton that reaches the mock (the Phase-2 cascade:
+/// the mock threads through the lifted singleton into the controller, including at the singleton's `init`).
+/// Matched by type, stripped of `any `. This is the direct-injection rule over both sets; a subject reaching
+/// the mock only through a request-scoped intermediate that is itself neither `@BindType`d nor `@Scopable`'d
+/// needs a transitive `@Inject`-graph walk wire-mvc can't see (a swift-wire follow-up). Deterministic.
 func keyedScopeEntry(for controller: ControllerDeclaration, key: DiscoveredTestingKey) -> KeyedScopeEntry? {
     guard controller.scopedSeedType != nil else { return nil }
-    let slots = Set(key.substitutions.map(\.slotType))
+    let touched = Set(key.substitutions.map(\.slotType)).union(key.scopables)
     let injected = Set(controller.injectedTypes.map(strippingAny))
-    guard !slots.isDisjoint(with: injected) else { return nil }
+    guard !touched.isDisjoint(with: injected) else { return nil }
     return KeyedScopeEntry(
         harnessEnumName: key.harnessEnumName,
         doublesStoreName: harnessDoublesStoreName,

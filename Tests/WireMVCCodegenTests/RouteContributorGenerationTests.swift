@@ -1313,6 +1313,45 @@ struct RouteContributorGenerationTests {
         #expect(!rendered.source.contains("wiremvc(_ key:"))
     }
 
+    /// The `@Scopable` cascade match (Level 1 set-expansion): a `@Scoped(seed:)` controller that injects a
+    /// `@Scopable`'d type — not a `@BindType`d one — is still a variant subject, so its route gets the keyed
+    /// dispatch + a variant-proxy holder. The direct-injection controller in the same fixture is matched too.
+    @Test func scopableCascadeControllerIsAVariantSubject() {
+        let source = """
+            @Singleton @WireMVCBootstrap struct AppBootstrap {}
+
+            @Scoped(seed: HTTPRequest.self)
+            @Controller("/account")
+            struct AccountController {
+                @Inject var registry: AccountRegistry
+                @Get("/{id}")
+                @JSONResponse
+                func account(@Path id: String) -> Note { fatalError() }
+            }
+
+            enum Binds {
+                @BindType(NoteBackend.self, MockNoteBackend.self)
+                @Scopable(AccountRegistry.self)
+                static let mock = TestingKey()
+            }
+            """
+        let rendered = generateRouteContributors(files: [("App.swift", source)], testEntry: true)
+        #expect(rendered.diagnostics.isEmpty)
+        // AccountController injects only the `@Scopable`'d `AccountRegistry`, yet gets the keyed dispatch...
+        #expect(rendered.source.contains("_WireMVCKeyed_Binds_mock.variantProxy_AccountController"))
+        #expect(
+            rendered.source.contains(
+                "@TaskLocal static var variantProxy_AccountController: _Binds_mock_WireRouteContributor_AccountController?"
+            )
+        )
+        // ...and the factory binds that subject's proxy from the cascade facade swift-wire emits for it.
+        #expect(
+            rendered.source.contains(
+                "Wire.bootstrapBinds_mock_AccountControllerContributor(wireGraph: graph)"
+            )
+        )
+    }
+
     /// A `@WireMVCBootstrap` root, a `@Scoped(seed:)` controller injecting the `@BindType`d slot, and the key.
     private let keyedHarnessFixture = """
         @Singleton
