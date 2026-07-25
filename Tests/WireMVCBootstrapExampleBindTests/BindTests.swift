@@ -30,6 +30,20 @@ struct BindTests {
         #expect(mock.recordedNotes == ["x"])
     }
 
+    /// The keyed side of the shared-route coexistence check (see `KeylessCoexistTests`): under the keyed
+    /// suite, `withBindValues` + `GET /notes/z` resolves the mock — while the parallel keyless suite serves
+    /// the real backend on the very same route. The two don't cross because the variant proxy rides only the
+    /// keyed suite's serve task tree.
+    @Test func keyedSuiteServesMockOnSharedRoute() async throws {
+        let mock = MockNoteBackend()
+        try await withBindValues(noteBackend: mock) {
+            let response = try await TestClient.current.get("/notes/z")
+            #expect(response.status == 200)
+            #expect(try response.json(Note.self).value == "stamped:mock:z")
+        }
+        #expect(mock.recordedNotes == ["z"])
+    }
+
     /// A request reaching a keyed route without `withBindValues` — no supplied doubles — is an explicit 500
     /// under the keyed suite (the decided behaviour), not a silent fall-through to the real backend. Runs in
     /// the parallel suite alongside bound requests: an unbound, header-less request must still 500 while other

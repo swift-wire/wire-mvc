@@ -1259,32 +1259,42 @@ struct RouteContributorGenerationTests {
     @Test func keyedHarnessEmitsDoublesAwareDispatchAndFactory() {
         let rendered = generateRouteContributors(files: [("App.swift", keyedHarnessFixture)], testEntry: true)
         #expect(rendered.diagnostics.isEmpty)
-        // Doubles-aware dispatch: gated on the parked variant proxy, threading correlated doubles, else 500.
+        // Doubles-aware dispatch: gated on the per-key @TaskLocal variant proxy, threading correlated doubles,
+        // else 500.
         #expect(rendered.source.contains("if let wireMVCVariantProxy, let wireMVCDoubles {"))
         #expect(
             rendered.source.contains(
                 "try await wireMVCVariantProxy._wireEnterScope(request, wireMVCDoubles)"
             )
         )
-        #expect(rendered.source.contains("_WireMVCKeyed_Binds_mock.variantProxy_NotesController.get()"))
+        #expect(
+            rendered.source.contains("let wireMVCVariantProxy = _WireMVCKeyed_Binds_mock.variantProxy_NotesController")
+        )
+        #expect(!rendered.source.contains(".get()"))
         #expect(rendered.source.contains("_WireMVCKeyed_Binds_mock.doubles.value(for: wireMVCCorrelationID)"))
         #expect(rendered.source.contains("try await WireMVCOutcome.body("))
         #expect(rendered.source.contains("under key Binds.mock"))
         // The production scope entry survives as the no-keyed-suite fall-through.
         #expect(rendered.source.contains("try await self._wireEnterScope(request)"))
-        // Statics + typed withBindValues + keyed factory that parks the proxy before serving.
+        // Statics (@TaskLocal proxy holder) + typed withBindValues + keyed factory that binds the proxy
+        // around the serve.
         #expect(rendered.source.contains("enum _WireMVCKeyed_Binds_mock {"))
         #expect(rendered.source.contains("static let doubles = TestBindStore<_Binds_mockDoubles>()"))
         #expect(
             rendered.source.contains(
-                "static let variantProxy_NotesController = WireMVCVariantProxyBox<_Binds_mock_WireRouteContributor_NotesController>()"
+                "@TaskLocal static var variantProxy_NotesController: _Binds_mock_WireRouteContributor_NotesController?"
             )
         )
         #expect(rendered.source.contains("func withBindValues<R>(noteBackend: MockNoteBackend,"))
         #expect(rendered.source.contains("static func wiremvc(_ key: TestingKey) -> WireMVCSuiteTrait"))
         #expect(
             rendered.source.contains(
-                ".set(Wire.bootstrapBinds_mock_NotesControllerContributor(wireGraph: graph))"
+                "let wireMVCVariantProxy_NotesController = Wire.bootstrapBinds_mock_NotesControllerContributor(wireGraph: graph)"
+            )
+        )
+        #expect(
+            rendered.source.contains(
+                "_WireMVCKeyed_Binds_mock.$variantProxy_NotesController.withValue(wireMVCVariantProxy_NotesController)"
             )
         )
     }
