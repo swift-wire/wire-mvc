@@ -11,15 +11,16 @@ import WireMVC
 
 /// The request-scoped backend the controller injects — the slot a `TestingKey`'s `@BindType` substitutes.
 /// A protocol (existential) so a mock matches the producer/consumer directly. `package` so a test target can
-/// re-compose it and name it in a `@BindType`.
+/// re-compose it and name it in a `@BindType`. `note` is `async` so a test mock can suspend inside the
+/// lookup (e.g. on a barrier), letting a test prove two differently-mocked requests interleave in-flight.
 package protocol NoteBackend: Sendable {
-    func note(_ id: String) -> String
+    func note(_ id: String) async -> String
 }
 
 /// The production backend, produced per request scope. `package` for re-composition.
 package final class RealNoteBackend: NoteBackend {
     package init() {}
-    package func note(_ id: String) -> String { "real:\(id)" }
+    package func note(_ id: String) async -> String { "real:\(id)" }
 }
 
 /// The request-scoped producer of `NoteBackend`, seeded by the `HTTPRequest` like the controller — so the
@@ -51,7 +52,7 @@ package struct NotesController: Sendable {
 
     @Get("/{id}")
     @JSONResponse
-    package func note(@Path id: String) -> Note {
-        Note(value: stamp.stamp(backend.note(id)))
+    package func note(@Path id: String) async -> Note {
+        Note(value: stamp.stamp(await backend.note(id)))
     }
 }
