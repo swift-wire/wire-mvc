@@ -1,16 +1,20 @@
 import SwiftParser
 import SwiftSyntax
 
-// The keyed test harness's generated module-scope artifacts (H2.2b): the per-key statics (a doubles
-// `TestBindStore` + a `@TaskLocal` variant-proxy holder per subject), the typed `withBindValues`, and the
-// `.wiremvc(_:)` suite-trait factory that binds each subject's H2.2a variant proxy around `serveForSuite`.
-// Split from `BootstrapGeneration` (the keyless entry) and `RouteContributorGeneration` (the witness
-// threading) so the keyed surface lives in one place. Emitted only for a test consumer whose composed sources
-// declare a `TestingKey` with at least one matching `@Scoped(seed:)` subject.
+// The keyed test harness's generated module-scope artifacts (H2.2b): the per-key doubles `TestBindStore`, the
+// typed `withBindValues`, and the `.wiremvc(_:)` suite-trait factory. The factory bootstraps the key's
+// **variant app graph** (`Wire.bootstrap<Variant>()` — production minus the mocked/lifted bindings and the
+// scoped-subject proxies, so a mocked eager `@Singleton`'s `init` never runs under the keyed suite), then
+// hand-registers each subject's routes from its variant proxy's `RouteContributor` witness (the variant
+// graph's `routeContributors` carries only the surviving non-scoped controllers). Split from
+// `BootstrapGeneration` (the keyless entry) and `RouteContributorGeneration` (the witness threading) so the
+// keyed surface lives in one place. Emitted only for a test consumer whose composed sources declare a
+// `TestingKey` with at least one matching `@Scoped(seed:)` subject.
 //
-// The variant proxy travels a `@TaskLocal` bound around the serve (a suite-level value that rides the serve
-// task tree into every request handler and isolates across concurrently-served suites), not a process-global
-// holder — so a keyless `.wiremvc()` suite and a keyed suite can run in parallel without crossing.
+// Per-request doubles ride the `X-WireMVC-Test-Binds` header → `TestBindStore` (correlated per request); the
+// variant proxy is the registered instance, so the variant witness enters request scope directly with no
+// production branch and no `@TaskLocal`. A keyless `.wiremvc()` suite serves the production graph; the two
+// serve separate graphs, so they can't cross.
 
 /// The keyed scope-entry descriptor for `controller` under `key`, or `nil` when the controller is not a
 /// keyed variant subject. Under a `TestingKey`, **every** `@Scoped(seed:)` controller is a subject: swift-wire
@@ -25,26 +29,18 @@ func keyedScopeEntry(for controller: ControllerDeclaration, key: DiscoveredTesti
     return KeyedScopeEntry(
         harnessEnumName: key.harnessEnumName,
         doublesStoreName: harnessDoublesStoreName,
-        doublesTypeName: key.doublesTypeName,
-        variantProxyBoxName: variantProxyBoxName(subject: controller.name),
-        subjectType: controller.selfType,
         keyReference: key.keyReference
     )
 }
 
 /// The keyed test harness's module-scope statics (H2.2b): the per-key namespace enum holding the doubles
-/// ``TestBindStore`` and one `@TaskLocal` variant-proxy holder per subject, plus the typed `withBindValues`
-/// the test calls. `subjects` are the matching `@Scoped(seed:)` controller names (a variant proxy each).
-/// Emitted into the test module beside the `.wiremvc(_:)` factory, referencing the `_<Key>Doubles` and
-/// variant-proxy types WireGen emits in the same module. The proxy holder is a `@TaskLocal` the factory binds
-/// around `serveForSuite`; the dispatch reads its current value, so an unbound serving reads `nil`.
-func renderKeyedHarnessStatics(key: DiscoveredTestingKey, subjects: [String]) -> String {
+/// ``TestBindStore``, plus the typed `withBindValues` the test calls. Emitted into the test module beside the
+/// `.wiremvc(_:)` factory, referencing the `_<Key>Doubles` type WireGen emits in the same module. The store
+/// correlates each request's doubles (by the `X-WireMVC-Test-Binds` header); the variant witness reads it per
+/// request.
+func renderKeyedHarnessStatics(key: DiscoveredTestingKey) -> String {
     var lines: [String] = ["enum \(key.harnessEnumName) {"]
     lines.append("    static let \(harnessDoublesStoreName) = TestBindStore<\(key.doublesTypeName)>()")
-    for subject in subjects {
-        let proxyType = variantProxyTypeName(variantName: key.variantName, subject: subject)
-        lines.append("    @TaskLocal static var \(variantProxyBoxName(subject: subject)): \(proxyType)?")
-    }
     lines.append("}")
 
     // The typed `withBindValues` — one parameter per `@BindType` slot, building the concrete `_<Key>Doubles`
@@ -68,13 +64,15 @@ func renderKeyedHarnessStatics(key: DiscoveredTestingKey, subjects: [String]) ->
 }
 
 /// The generated keyed suite-trait factory `.wiremvc(_ key: TestingKey)` for a keyed test harness (H2.2b) —
-/// emitted alongside the keyless `.wiremvc()`. It inlines the same build as the keyless entry, builds each
-/// variant subject's H2.2a proxy (from the graph via its `Wire.bootstrap<Variant>_<Subject>Contributor`
-/// facade), and binds it to the per-key `@TaskLocal` *around* `serveForSuite` — so the proxy rides the serve
-/// task tree into every request handler, and each scoped route's keyed dispatch enters request scope with the
-/// correlated doubles. Binding around the serve (not a process-global) is what isolates concurrently-served
-/// suites. The `TestingKey` argument documents which variant the suite selects; the single-key harness binds
-/// one variant, so the value itself isn't dispatched on.
+/// emitted alongside the keyless `.wiremvc()`. It bootstraps the key's **variant app graph**
+/// (`Wire.bootstrap<Variant>()`, so a mocked eager `@Singleton`'s `init` never runs here), registers the
+/// surviving non-scoped controllers via `WireMVC.apply`, then hand-registers each subject's routes from its
+/// variant proxy's `RouteContributor` witness (built from the variant graph via the
+/// `Wire.bootstrap<Variant>_<Subject>Contributor` facade) — the variant graph's `routeContributors` no longer
+/// carries the scoped-subject proxies. Per-request doubles ride the header → `TestBindStore`; the variant
+/// witness reads them per request, so there's no `@TaskLocal` and no production branch. The keyless
+/// `.wiremvc()` serves the production graph, so the two never cross. The `TestingKey` argument documents which
+/// variant the suite selects; the single-key harness binds one variant, so the value itself isn't dispatched on.
 func renderBootstrapKeyedTestEntry(
     bootstrap: ControllerDeclaration,
     notFoundRegistration: String,
@@ -82,34 +80,30 @@ func renderBootstrapKeyedTestEntry(
     key: DiscoveredTestingKey,
     subjects: [String]
 ) -> String {
+    // Build each variant proxy from the variant graph and register its routes — before `finalize()`, so they
+    // join the router. `WireMVC.apply` already registered the surviving non-scoped controllers.
+    let variantRegistrations = subjects.map { subject in
+        let facade = variantFacadeMethodName(variantName: key.variantName, subject: subject)
+        let local = variantProxyLocalName(subject: subject)
+        return """
+            let \(local) = Wire.\(facade)(wireGraph: graph)
+            try \(local).registerWireRoutes(on: &builder)
+            """
+    }
+    .joined(separator: "\n")
     let buildLines = bootstrapBuildLines(
         bootstrap: bootstrap,
         notFoundRegistration: notFoundRegistration,
-        factoryKeys: factoryKeys
+        factoryKeys: factoryKeys,
+        bootstrapCall: "Wire.\(variantBootstrapMethodName(variantName: key.variantName))()",
+        extraRegistrations: variantRegistrations
     )
-    let proxyBindings = subjects.map { subject in
-        let facade = variantFacadeMethodName(variantName: key.variantName, subject: subject)
-        return "let \(variantProxyLocalName(subject: subject)) = Wire.\(facade)(wireGraph: graph)"
-    }
-    .joined(separator: "\n")
-    // Nest one `$variantProxy_<Subject>.withValue` per subject *around* the serve, innermost first — the
-    // task-local rides the serve task tree into every request handler.
-    var served =
-        "try await WireMVCTesting.serveForSuite(on: server, handler: wireMVCServed, services: services, runTests: runTests)"
-    for subject in subjects.reversed() {
-        served = """
-            try await \(key.harnessEnumName).$\(variantProxyBoxName(subject: subject)).withValue(\(variantProxyLocalName(subject: subject))) {
-            \(served)
-            }
-            """
-    }
     let raw = """
         extension SuiteTrait where Self == WireMVCSuiteTrait {
             static func wiremvc(_ key: TestingKey) -> WireMVCSuiteTrait {
                 WireMVCSuiteTrait { runTests in
                     \(buildLines)
-                    \(proxyBindings)
-                    \(served)
+                    try await WireMVCTesting.serveForSuite(on: server, handler: wireMVCServed, services: services, runTests: runTests)
                 }
             }
         }
@@ -117,5 +111,5 @@ func renderBootstrapKeyedTestEntry(
     return Parser.parse(source: raw).formatted().description
 }
 
-/// The keyed factory's local holding a subject's built variant proxy, before it is bound to the task-local.
+/// The keyed factory's local holding a subject's built variant proxy, which its routes are registered from.
 private func variantProxyLocalName(subject: String) -> String { "wireMVCVariantProxy_" + subject }

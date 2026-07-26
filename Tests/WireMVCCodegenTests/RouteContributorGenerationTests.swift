@@ -1292,43 +1292,37 @@ struct RouteContributorGenerationTests {
     @Test func keyedHarnessEmitsDoublesAwareDispatchAndFactory() {
         let rendered = generateRouteContributors(files: [("App.swift", keyedHarnessFixture)], testEntry: true)
         #expect(rendered.diagnostics.isEmpty)
-        // Doubles-aware dispatch: gated on the per-key @TaskLocal variant proxy, threading correlated doubles,
-        // else 500.
-        #expect(rendered.source.contains("if let wireMVCVariantProxy, let wireMVCDoubles {"))
+        // The keyed dispatch lives on a variant witness emitted on the variant proxy type: correlate the
+        // request's doubles from the per-key store (else 500), then enter request scope via the variant proxy
+        // (`self`) — no production branch.
         #expect(
-            rendered.source.contains(
-                "try await wireMVCVariantProxy._wireEnterScope(request, wireMVCDoubles)"
-            )
+            rendered.source.contains("extension _Binds_mock_WireRouteContributor_NotesController: RouteContributor")
         )
-        #expect(
-            rendered.source.contains("let wireMVCVariantProxy = _WireMVCKeyed_Binds_mock.variantProxy_NotesController")
-        )
-        #expect(!rendered.source.contains(".get()"))
         #expect(rendered.source.contains("_WireMVCKeyed_Binds_mock.doubles.value(for: wireMVCCorrelationID)"))
+        #expect(rendered.source.contains("try await self._wireEnterScope(request, wireMVCDoubles)"))
+        #expect(!rendered.source.contains(".get()"))
         #expect(rendered.source.contains("try await WireMVCOutcome.body("))
         #expect(rendered.source.contains("under key Binds.mock"))
-        // The production scope entry survives as the no-keyed-suite fall-through.
+        // The keyed dispatch retires the @TaskLocal proxy box, the production `if let` branch, and `.withValue`.
+        #expect(!rendered.source.contains("@TaskLocal"))
+        #expect(!rendered.source.contains("if let wireMVCVariantProxy"))
+        #expect(!rendered.source.contains(".withValue("))
+        // The production witness stays keyless — the plain scope entry, no doubles.
         #expect(rendered.source.contains("try await self._wireEnterScope(request)"))
-        // Statics (@TaskLocal proxy holder) + typed withBindValues + keyed factory that binds the proxy
-        // around the serve.
+        // Statics: the doubles store (no proxy holder) + typed withBindValues + the keyed factory.
         #expect(rendered.source.contains("enum _WireMVCKeyed_Binds_mock {"))
         #expect(rendered.source.contains("static let doubles = TestBindStore<_Binds_mockDoubles>()"))
-        #expect(
-            rendered.source.contains(
-                "@TaskLocal static var variantProxy_NotesController: _Binds_mock_WireRouteContributor_NotesController?"
-            )
-        )
         #expect(rendered.source.contains("func withBindValues<R>(noteBackend: MockNoteBackend,"))
         #expect(rendered.source.contains("static func wiremvc(_ key: TestingKey) -> WireMVCSuiteTrait"))
+        // The keyed factory bootstraps the variant graph and hand-registers each variant proxy's routes.
+        #expect(rendered.source.contains("let graph = try await Wire.bootstrapBinds_mock()"))
         #expect(
             rendered.source.contains(
                 "let wireMVCVariantProxy_NotesController = Wire.bootstrapBinds_mock_NotesControllerContributor(wireGraph: graph)"
             )
         )
         #expect(
-            rendered.source.contains(
-                "_WireMVCKeyed_Binds_mock.$variantProxy_NotesController.withValue(wireMVCVariantProxy_NotesController)"
-            )
+            rendered.source.contains("try wireMVCVariantProxy_NotesController.registerWireRoutes(on: &builder)")
         )
     }
 
@@ -1378,19 +1372,18 @@ struct RouteContributorGenerationTests {
             """
         let rendered = generateRouteContributors(files: [("App.swift", source)], testEntry: true)
         #expect(rendered.diagnostics.isEmpty)
-        // The mock-ignoring seed-scoped `PingController` is keyed: dispatch reads its @TaskLocal proxy, and the
-        // factory binds it from the facade swift-wire emits for every seed-scoped subject.
+        // The mock-ignoring seed-scoped `PingController` is keyed: a variant witness on its variant proxy type,
+        // and the factory hand-registers the variant proxy the facade swift-wire emits for every seed-scoped subject.
         #expect(
-            rendered.source.contains("let wireMVCVariantProxy = _WireMVCKeyed_Binds_mock.variantProxy_PingController")
-        )
-        #expect(
-            rendered.source.contains(
-                "@TaskLocal static var variantProxy_PingController: _Binds_mock_WireRouteContributor_PingController?"
-            )
+            rendered.source.contains("extension _Binds_mock_WireRouteContributor_PingController: RouteContributor")
         )
         #expect(rendered.source.contains("Wire.bootstrapBinds_mock_PingControllerContributor(wireGraph: graph)"))
+        #expect(
+            rendered.source.contains("try wireMVCVariantProxy_PingController.registerWireRoutes(on: &builder)")
+        )
         // The app-scoped `HealthController` is never keyed — no per-request scope entry to vary.
-        #expect(!rendered.source.contains("variantProxy_HealthController"))
+        #expect(!rendered.source.contains("_Binds_mock_WireRouteContributor_HealthController"))
+        #expect(!rendered.source.contains("wireMVCVariantProxy_HealthController"))
     }
 
     /// A `@WireMVCBootstrap` root, a `@Scoped(seed:)` controller injecting the `@BindType`d slot, and the key.

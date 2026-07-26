@@ -79,6 +79,37 @@ public func renderRouteContributorExtension(
     return (formatted(raw), rendered.diagnostics)
 }
 
+/// The route-contributor witness as an `extension` on the **variant** proxy type
+/// (`_<Variant>_WireRouteContributor_<Subject>`) — the keyed half a keyed test suite serves. The witness body
+/// carries the doubles-threaded scope entry (`keyedScopeEntry`): each request correlates its doubles from the
+/// per-key `TestBindStore` (an explicit 500 when absent) and enters request scope via the variant proxy's
+/// `self._wireEnterScope(request, doubles)` — no production branch, since the variant graph selects this proxy
+/// structurally. The keyed factory builds the proxy from the variant graph and calls `registerWireRoutes`.
+public func renderVariantRouteContributorExtension(
+    controller: ControllerDeclaration,
+    pathPrefix: String,
+    factoryKeys: Set<String>,
+    globalErrorMappings: [ErrorMapping] = [],
+    variantName: String,
+    keyedScopeEntry: KeyedScopeEntry
+) -> (source: String, diagnostics: [RouteCodegenDiagnostic]) {
+    let rendered = renderRegisterWireRoutesWitness(
+        access: controller.access,
+        controller: controller,
+        pathPrefix: pathPrefix,
+        subjectAccessor: contributorProxySubjectAccessor,
+        factoryKeys: factoryKeys,
+        globalErrorMappings: globalErrorMappings,
+        keyedScopeEntry: keyedScopeEntry
+    )
+    let raw = """
+        extension \(variantProxyTypeName(variantName: variantName, subject: controller.name)): RouteContributor {
+        \(rendered.witness)
+        }
+        """
+    return (formatted(raw), rendered.diagnostics)
+}
+
 /// The stored-property name the plugin-emitted structural proxy holds its subject under — WireGen's
 /// `_wireSubject` contract (`WireGenCore.contributorProxySubjectFieldName`). Restated here so the domain
 /// witness references the same field the structural half declares. The two meet on this name.
@@ -187,7 +218,7 @@ private func renderBootstrapSources(
     )
     var sources = artifacts.sources
     if testEntry, let harnessKey, !subjects.isEmpty {
-        sources.append(renderKeyedHarnessStatics(key: harnessKey, subjects: subjects))
+        sources.append(renderKeyedHarnessStatics(key: harnessKey))
         sources.append(
             renderBootstrapKeyedTestEntry(
                 bootstrap: bootstrap,
@@ -294,14 +325,15 @@ private func renderControllerExtensions(
         let finder = ControllerFinder()
         finder.walk(file.tree)
         for found in finder.controllers {
-            let entry = harnessKey.flatMap { keyedScopeEntry(for: found.declaration, key: $0) }
-            if entry != nil { subjects.append(found.declaration.name) }
+            // The production witness is always keyless — a keyed suite serves the variant graph, whose scoped
+            // subjects are registered from their variant witnesses below; the production witness serves the
+            // keyless graph (`.wiremvc()` / `@main`).
             let rendered = renderRouteContributorExtension(
                 controller: found.declaration,
                 pathPrefix: found.pathPrefix,
                 factoryKeys: factoryKeys,
                 globalErrorMappings: globalErrorMappings,
-                keyedScopeEntry: entry
+                keyedScopeEntry: nil
             )
             extensions.append((found.declaration.name, rendered.source))
             for diagnostic in rendered.diagnostics {
@@ -312,6 +344,23 @@ private func renderControllerExtensions(
                     )
                 )
             }
+
+            // A keyed variant subject also gets a witness on its variant proxy type, carrying the
+            // doubles-threaded scope entry — the keyed factory hand-registers it. Its route-shape diagnostics
+            // duplicate the production witness's (same routes), so they are not re-reported.
+            guard let harnessKey, let entry = keyedScopeEntry(for: found.declaration, key: harnessKey) else {
+                continue
+            }
+            subjects.append(found.declaration.name)
+            let variant = renderVariantRouteContributorExtension(
+                controller: found.declaration,
+                pathPrefix: found.pathPrefix,
+                factoryKeys: factoryKeys,
+                globalErrorMappings: globalErrorMappings,
+                variantName: harnessKey.variantName,
+                keyedScopeEntry: entry
+            )
+            extensions.append((found.declaration.name + "Variant", variant.source))
         }
     }
     return ControllerExtensionsResult(extensions: extensions, diagnostics: located, subjects: subjects)

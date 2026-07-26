@@ -35,7 +35,9 @@ func graphBindingPropertyName(_ typeName: String) -> String {
 func bootstrapBuildLines(
     bootstrap: ControllerDeclaration,
     notFoundRegistration: String,
-    factoryKeys: Set<String>
+    factoryKeys: Set<String>,
+    bootstrapCall: String = "Wire.bootstrap()",
+    extraRegistrations: String = ""
 ) -> String {
     let property = graphBindingPropertyName(bootstrap.name)
     let proxyProperty = graphBindingPropertyName(globalMiddlewareProxyTypeName(bootstrap.name))
@@ -45,16 +47,17 @@ func bootstrapBuildLines(
         factoryKeys: factoryKeys,
         proxyProperty: proxyProperty
     )
-    // Pre-finalize registrations (introspection mount + `@NotFound` fallback), combined so an absent mount
-    // adds no blank line to the entry.
-    let registrations =
-        mountIntrospection.isEmpty ? notFoundRegistration : "\(mountIntrospection)\n\(notFoundRegistration)"
+    // Pre-finalize registrations (introspection mount + `@NotFound` fallback + any keyed-harness variant-proxy
+    // registrations), combined so an absent piece adds no blank line to the entry.
+    let registrations = [mountIntrospection, notFoundRegistration, extraRegistrations]
+        .filter { !$0.isEmpty }
+        .joined(separator: "\n")
     // The finalized router is wrapped once in the global-middleware front layer: the keyless proxy's
     // `wrapGlobalMiddleware` folds the Bootstrap's `@Middleware` factories around every request — matched
     // routes and the `@NotFound` fallback alike — or returns the router unchanged (identity) when there are
     // none. Always emitted, so the entries are uniform.
     return """
-        let graph = try await Wire.bootstrap()
+        let graph = try await \(bootstrapCall)
         let bootstrap = graph.\(property)
         let server = \(createServerTry)bootstrap.createServer()
         var builder = bootstrap.createRouteBuilder(for: server)

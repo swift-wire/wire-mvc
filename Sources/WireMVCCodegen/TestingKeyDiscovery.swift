@@ -48,36 +48,28 @@ public struct DiscoveredTestingKey: Sendable, Equatable {
     /// (`"_NoteTestBinds_mockBackendDoubles"`). Matches WireGen's `doublesStructTypeName(forKeyReference:)`.
     public var doublesTypeName: String { "_" + variantName + "Doubles" }
 
-    /// The generated per-key harness namespace enum — holds the doubles ``TestBindStore`` and, per subject,
-    /// a `@TaskLocal` variant-proxy holder. `_`-prefixed to stay out of user code's namespace.
+    /// The generated per-key harness namespace enum — holds the doubles ``TestBindStore``. `_`-prefixed to
+    /// stay out of user code's namespace.
     public var harnessEnumName: String { "_WireMVCKeyed_" + variantName }
 }
 
-/// What a variant subject's scoped route dispatch needs to emit its keyed branch — the per-key harness
-/// namespace, the doubles store + `@TaskLocal` variant-proxy members on it, the subject type for the
-/// scope-entry tuple annotation, and the key reference for the missing-doubles 500 message. Built per matching
+/// What a variant subject's route dispatch needs to emit the keyed entry on the *variant* witness — the
+/// per-key harness namespace + doubles store to correlate a request's doubles from, and the key reference for
+/// the missing-doubles 500 message. The variant witness's `self` is the variant proxy, so it enters request
+/// scope directly (`self._wireEnterScope(request, doubles)`) with no production branch. Built per matching
 /// controller by ``renderControllerExtensions`` and threaded into ``RouteBlockGenerator``.
 public struct KeyedScopeEntry: Sendable, Equatable {
     public let harnessEnumName: String
     public let doublesStoreName: String
-    public let doublesTypeName: String
-    public let variantProxyBoxName: String
-    public let subjectType: String
     public let keyReference: String
 
     public init(
         harnessEnumName: String,
         doublesStoreName: String,
-        doublesTypeName: String,
-        variantProxyBoxName: String,
-        subjectType: String,
         keyReference: String
     ) {
         self.harnessEnumName = harnessEnumName
         self.doublesStoreName = doublesStoreName
-        self.doublesTypeName = doublesTypeName
-        self.variantProxyBoxName = variantProxyBoxName
-        self.subjectType = subjectType
         self.keyReference = keyReference
     }
 }
@@ -99,9 +91,11 @@ public func variantFacadeMethodName(variantName: String, subject: String) -> Str
     "bootstrap\(variantName)_\(subject)Contributor"
 }
 
-/// The per-subject `@TaskLocal` variant-proxy holder's name inside the harness enum.
-public func variantProxyBoxName(subject: String) -> String {
-    "variantProxy_" + subject
+/// The `Wire.bootstrap<Variant>()` variant-app-graph bootstrap method — the keyed factory builds the variant
+/// graph (production minus the mocked/lifted bindings and the scoped-subject proxies), so a mocked eager
+/// `@Singleton`'s `init` never runs under the keyed suite. Mirrors WireGen's `bootstrap<Variant>()`.
+public func variantBootstrapMethodName(variantName: String) -> String {
+    "bootstrap\(variantName)"
 }
 
 /// Lower-camel a type's simple name by lowercasing only its first character — WireGen's `identifierName`
