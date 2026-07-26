@@ -33,11 +33,11 @@ struct RouteBlockGenerator {
     /// per request from the proxy's `_wireEnterScope` thunk, rather than calling the held `_wireSubject`.
     /// `nil` for an app-scoped (`@Singleton`) controller. Set at the start of `routeBlocks`.
     private var scopedSeedType: String?
-    /// Set when this controller is a keyed-harness *variant subject* (H2.2b): a `@Scoped(seed:)` controller
-    /// whose injected slot a `TestingKey`'s `@BindType` substitutes, in a test target that links
-    /// `WireMVCTesting`. Its scoped routes gain a per-request keyed branch — header → per-key doubles →
-    /// variant proxy, else an explicit 500 — around the untouched production scope entry. `nil` for every
-    /// other controller (and the whole production path), whose prologue is byte-for-byte unchanged.
+    /// Set when this witness is a keyed-harness *variant* witness (H2.2b) — the one emitted on the variant
+    /// proxy type for a `@Scoped(seed:)` subject in a test target that links `WireMVCTesting`. Its scoped
+    /// routes correlate the request's per-key doubles from the `TestBindStore` (else an explicit 500) and
+    /// enter request scope through the variant proxy (`self`). `nil` for the production witness (and every
+    /// keyless path), whose prologue is byte-for-byte unchanged.
     var keyedScopeEntry: KeyedScopeEntry?
     private(set) var diagnostics: [RouteCodegenDiagnostic] = []
 
@@ -63,57 +63,40 @@ struct RouteBlockGenerator {
     /// seed is the register closure's `request` (seed-from-`HTTPRequest`).
     private var scopeEntryProloguePrefix: String {
         guard scopedSeedType != nil else { return "" }
-        guard let keyed = keyedScopeEntry else {
-            return """
-                let (\(scopeEntryLocalName), \(scopeTeardownLocalName)) = try await self.\(contributorProxyScopeEntryAccessor)(request)
-                defer { _ = await \(scopeTeardownLocalName)() }
-
-                """
-        }
-        // The in-`do` half: enter request scope via the variant proxy when a keyed suite is active and its
-        // doubles were resolved by the preamble, else the untouched production `_wireEnterScope`. Both
-        // `_wireEnterScope` calls stay inside the `do` so their throws are mapped by the route's catch.
+        // A keyed variant witness enters request scope via the variant proxy (`self`) with the request's
+        // correlated doubles (resolved by the preamble); the production/keyless witness takes the plain scope
+        // entry. The `_wireEnterScope` call stays inside the `do` so its throw is mapped by the route's catch.
+        let entryCall =
+            keyedScopeEntry == nil
+            ? "self.\(contributorProxyScopeEntryAccessor)(request)"
+            : "self.\(contributorProxyScopeEntryAccessor)(request, wireMVCDoubles)"
         return """
-            let (\(scopeEntryLocalName), \(scopeTeardownLocalName)): (\(keyed.subjectType), @Sendable () async -> [any Error])
-            if let wireMVCVariantProxy, let wireMVCDoubles {
-            (\(scopeEntryLocalName), \(scopeTeardownLocalName)) = try await wireMVCVariantProxy.\(contributorProxyScopeEntryAccessor)(request, wireMVCDoubles)
-            } else {
-            (\(scopeEntryLocalName), \(scopeTeardownLocalName)) = try await self.\(contributorProxyScopeEntryAccessor)(request)
-            }
+            let (\(scopeEntryLocalName), \(scopeTeardownLocalName)) = try await \(entryCall)
             defer { _ = await \(scopeTeardownLocalName)() }
 
             """
     }
 
-    /// The keyed scope-entry *preamble* for a variant subject (H2.2b), emitted **before** the route's `do`
-    /// block — so its explicit-500 send escapes the closure directly rather than routing through the `catch`
-    /// (which would re-consume the `consuming` sender). The dispatch gates on the per-key `@TaskLocal` variant
-    /// proxy: the keyed `.wiremvc(_:)` factory binds it around the serve, so a non-`nil` read means a keyed
-    /// suite is driving this route and doubles are mandatory. It resolves `wireMVCVariantProxy` +
-    /// `wireMVCDoubles` for the in-`do` entry: under a keyed suite a request whose correlated doubles are
-    /// present carries them through (the `@BindType`d slot resolves to the supplied mock), and a request that
-    /// reaches the route with no supplied doubles — no header, or no store entry — is an explicit 500. When
-    /// the task-local is unbound (a keyless `.wiremvc()` suite, or any non-keyed serving) both locals are
-    /// `nil` and the route takes the production path.
+    /// The keyed scope-entry *preamble* for a variant subject's witness (H2.2b), emitted **before** the route's
+    /// `do` block — so its explicit-500 send escapes the closure directly rather than routing through the
+    /// `catch` (which would re-consume the `consuming` sender). The variant witness is registered only under a
+    /// keyed suite (the keyed `.wiremvc(_:)` factory hand-registers it), so doubles are always mandatory here:
+    /// it correlates the request's doubles from the per-key `TestBindStore` (by the `X-WireMVC-Test-Binds`
+    /// header) into `wireMVCDoubles` for the in-`do` entry — the `@BindType`d slot then resolves to the
+    /// supplied mock — and a request that reaches the route with no supplied doubles (no header, or no store
+    /// entry) is an explicit 500.
     private var scopeEntryPreamble: String {
         guard scopedSeedType != nil, let keyed = keyedScopeEntry else { return "" }
         let missingMessage =
             "WireMVC keyed test harness: no bound doubles for a request reaching this route under key "
             + "\(keyed.keyReference) — wrap the request in withBindValues(...)\\n"
         return """
-            let wireMVCVariantProxy = \(keyed.harnessEnumName).\(keyed.variantProxyBoxName)
-            let wireMVCDoubles: \(keyed.doublesTypeName)?
-            if wireMVCVariantProxy != nil {
             guard
             let wireMVCCorrelationID = wireMVCTestCorrelationID(in: request),
-            let wireMVCResolvedDoubles = \(keyed.harnessEnumName).\(keyed.doublesStoreName).value(for: wireMVCCorrelationID)
+            let wireMVCDoubles = \(keyed.harnessEnumName).\(keyed.doublesStoreName).value(for: wireMVCCorrelationID)
             else {
             try await WireMVCOutcome.body([UInt8]("\(missingMessage)".utf8), .internalServerError).send(on: responseSender)
             return
-            }
-            wireMVCDoubles = wireMVCResolvedDoubles
-            } else {
-            wireMVCDoubles = nil
             }
 
             """
