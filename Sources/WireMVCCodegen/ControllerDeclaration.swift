@@ -90,4 +90,17 @@ public struct ControllerDeclaration {
         }
         return nil
     }
+
+    /// `true` when the controller carries `@TestScopable` — an app-`@Singleton` route contributor the variant
+    /// rebuilds per request **seedlessly** (`_wireEnterScope(doubles)`, no seed) under a keyed suite. Combined
+    /// with `scopedSeedType == nil` it selects the seedless dispatch; a `@Scoped(seed:)` controller keeps the
+    /// seed-scoped path regardless.
+    public var isTestScopable: Bool {
+        attributes.contains { element in
+            if case let .attribute(attr) = element {
+                return attr.attributeName.trimmedDescription == "TestScopable"
+            }
+            return false
+        }
+    }
 }
