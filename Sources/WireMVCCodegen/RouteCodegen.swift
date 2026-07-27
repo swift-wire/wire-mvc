@@ -39,6 +39,11 @@ struct RouteBlockGenerator {
     /// enter request scope through the variant proxy (`self`). `nil` for the production witness (and every
     /// keyless path), whose prologue is byte-for-byte unchanged.
     var keyedScopeEntry: KeyedScopeEntry?
+    /// The `@Factory` keys whose lifted factory is **mock-consuming** under this variant witness's key — swift-wire
+    /// re-emits each as a variant factory whose `create` takes the per-request `doubles` (the mocked `@Inject`
+    /// rides the call, not a held field). The fold threads `wireMVCDoubles` to those `create`s and leaves every
+    /// other factory's `create` box-role-only. Empty for a production witness (no factory takes doubles).
+    var doublesThreadedFactoryKeys: Set<String> = []
     private(set) var diagnostics: [RouteCodegenDiagnostic] = []
 
     /// The expression the witness calls the controller through — a per-request `wireMVCController` local for a
@@ -47,6 +52,11 @@ struct RouteBlockGenerator {
     var subjectExpression: String {
         scopedSeedType == nil && keyedScopeEntry == nil ? "self.\(subjectAccessor)" : scopeEntryLocalName
     }
+
+    /// The `create` argument a mock-consuming variant factory's fold entry threads — the per-request doubles
+    /// ahead of the box-role metatypes. Also the marker `foldThreadsDoubles` detects to hoist the doubles
+    /// correlation above the fold (so `wireMVCDoubles` is in scope where the fold's `create` reads it).
+    static let doublesCreateArgument = "doubles: wireMVCDoubles, "
 
     /// The per-request scoped-controller local's name — deliberately `wireMVC`-prefixed so it can't
     /// collide with a handler's decoded parameter locals.
@@ -163,10 +173,16 @@ struct RouteBlockGenerator {
         let requestName = (hasBinds || scopedSeedType != nil) ? "request" : "_"
         let parametersName = hasBinds ? "pathParameters" : "_"
         let readerName = hasBody ? "reader" : "_"
+        // When the fold threads doubles (a mock-consuming variant factory), the doubles correlation must bind
+        // `wireMVCDoubles` *above* the fold — the fold's `create(doubles:)` reads it. So hoist the preamble to
+        // the register-closure top and drop it from the terminal (which still enters scope off the hoisted
+        // binding). Otherwise the preamble stays in the terminal, byte-for-byte unchanged.
+        let foldThreadsDoubles = middleware.contains { $0.contains(Self.doublesCreateArgument) }
         return emitRegister(
             verb: verb,
             path: path,
             middleware: middleware,
+            hoistedPreamble: foldThreadsDoubles ? scopeEntryPreamble : "",
             requestName: requestName,
             contextName: "_",
             parametersName: parametersName,
@@ -176,7 +192,7 @@ struct RouteBlockGenerator {
                 hasBody: hasBody,
                 binds: binds,
                 response: response,
-                scopeEntryPreamble: scopeEntryPreamble,
+                scopeEntryPreamble: foldThreadsDoubles ? "" : scopeEntryPreamble,
                 scopeEntryPrologue: scopeEntryProloguePrefix,
                 errorMappings: errorMappings
             )
@@ -387,6 +403,7 @@ extension RouteBlockGenerator {
         verb: Verb,
         path: String,
         middleware: [String],
+        hoistedPreamble: String = "",
         requestName: String,
         contextName: String,
         parametersName: String,
@@ -396,6 +413,7 @@ extension RouteBlockGenerator {
         emitRegisterClosure(
             registerCall: "builder.register(method: \(verb.method), path: \"\(path)\")",
             middleware: middleware,
+            hoistedPreamble: hoistedPreamble,
             requestName: requestName,
             contextName: contextName,
             parametersName: parametersName,
@@ -411,6 +429,7 @@ extension RouteBlockGenerator {
     fileprivate func emitRegisterClosure(
         registerCall: String,
         middleware: [String],
+        hoistedPreamble: String = "",
         requestName: String,
         contextName: String,
         parametersName: String,
@@ -426,11 +445,12 @@ extension RouteBlockGenerator {
         }
         // `middleware` holds each fold entry's expression — a graph binding read off the proxy
         // (`self._wire<Type>` / `self._wire<key>`) or a lifted factory's `create` call — computed by
-        // `middlewareConstructions`.
+        // `middlewareConstructions`. `hoistedPreamble` (a variant witness whose fold threads doubles) binds
+        // `wireMVCDoubles` above the fold so the `create(doubles:)` reads it; it's empty otherwise.
         let fold = middleware.joined(separator: "\n")
         return """
             \(registerCall) { request, requestContext, \(parametersName), reader, responseSender in
-                let wireMVCBaseBox = RequestResponseMiddlewareBox.pending(request: request, requestContext: requestContext, reader: reader, responseSender: responseSender)
+                \(hoistedPreamble)let wireMVCBaseBox = RequestResponseMiddlewareBox.pending(request: request, requestContext: requestContext, reader: reader, responseSender: responseSender)
                 let wireMVCChain = wireCompose {
             \(fold)
                 }
@@ -468,8 +488,12 @@ extension RouteBlockGenerator {
                 constructions.append("self.\(dependencyPropertyName(forType: type))")
             } else if factoryKeys.contains(expression) {
                 let property = factoryPropertyName(forKey: expression)
+                // A mock-consuming factory under this variant is a swift-wire variant factory: its `create`
+                // takes the per-request `doubles` ahead of the box-role metatypes (the mocked `@Inject` rides
+                // the call). Every other factory's `create` is box-role-only, as in production.
+                let doublesArgument = doublesThreadedFactoryKeys.contains(expression) ? Self.doublesCreateArgument : ""
                 constructions.append(
-                    "self.\(property).create(Builder.RequestContext.self, Builder.Reader.self, Builder.ResponseSender.self)"
+                    "self.\(property).create(\(doublesArgument)Builder.RequestContext.self, Builder.Reader.self, Builder.ResponseSender.self)"
                 )
             } else {
                 constructions.append("self.\(dependencyPropertyName(forKey: expression))")

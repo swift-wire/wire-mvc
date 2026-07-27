@@ -1406,4 +1406,71 @@ struct RouteContributorGenerationTests {
             static let mock = TestingKey()
         }
         """
+
+    /// An app-scoped `@TestScopable` controller carrying a **mock-consuming** `@Middleware` factory (`Audit`
+    /// `@Inject`s the `@BindType`'d `NoteBackend`) — the Phase-B shape. Its variant witness must thread the
+    /// per-request doubles to the factory's `create`.
+    private let mockConsumingFactoryFixture = """
+        @Singleton
+        @WireMVCBootstrap
+        struct AppBootstrap {}
+
+        enum AuditKeys { static let factory = FactoryKey() }
+
+        @Factory(AuditKeys.factory)
+        @MiddlewareFactory
+        struct Audit {
+            @Inject var backend: any NoteBackend
+        }
+
+        @TestScopable
+        @Singleton
+        @Controller("/summary")
+        @Middleware(AuditKeys.factory)
+        struct SummaryController {
+            @Inject var backend: any NoteBackend
+            @Get("/{id}")
+            @JSONResponse
+            func summary(@Path id: String) -> Note { fatalError() }
+        }
+
+        enum Binds {
+            @BindType(NoteBackend.self, MockNoteBackend.self)
+            static let mock = TestingKey()
+        }
+        """
+
+    /// Phase B: a mock-consuming lifted `@Factory` (`Audit`, which `@Inject`s the mocked `NoteBackend`) folds
+    /// on the app-scoped variant witness with the per-request doubles threaded to its `create(doubles:)` —
+    /// swift-wire re-emits it as a variant factory whose mock rides the call. The production witness's fold is
+    /// box-role-only, and the doubles correlation is hoisted above the fold so `wireMVCDoubles` is in scope.
+    @Test func mockConsumingFactoryFoldThreadsDoublesToCreate() {
+        let rendered = generateRouteContributors(files: [("App.swift", mockConsumingFactoryFixture)], testEntry: true)
+        #expect(rendered.diagnostics.isEmpty)
+        // The variant witness threads the per-request doubles ahead of the box-role metatypes.
+        #expect(
+            rendered.source.contains(
+                "self._wireFactory_AuditKeys_factory.create(doubles: wireMVCDoubles, "
+                    + "Builder.RequestContext.self, Builder.Reader.self, Builder.ResponseSender.self)"
+            )
+        )
+        // The production witness's fold stays box-role-only — no doubles (the mock is only bound under the key).
+        #expect(
+            rendered.source.contains(
+                "self._wireFactory_AuditKeys_factory.create("
+                    + "Builder.RequestContext.self, Builder.Reader.self, Builder.ResponseSender.self)"
+            )
+        )
+        // Hoist: in the variant witness the doubles bind *above* the fold, else `create(doubles:)` wouldn't
+        // resolve `wireMVCDoubles`. Assert the ordering within the variant extension.
+        let marker = "_Binds_mock_WireRouteContributor_SummaryController: RouteContributor"
+        if let start = rendered.source.range(of: marker) {
+            let variant = rendered.source[start.lowerBound...]
+            let doubles = variant.range(of: "let wireMVCDoubles =")?.lowerBound
+            let fold = variant.range(of: "wireCompose {")?.lowerBound
+            #expect(doubles != nil && fold != nil && doubles! < fold!)
+        } else {
+            Issue.record("no variant witness generated for SummaryController")
+        }
+    }
 }

@@ -96,6 +96,7 @@ package struct AccountController: Sendable {
 @TestScopable
 @Singleton
 @Controller("/summary")
+@Middleware(SummaryAuditKeys.factory)
 package struct SummaryController: Sendable {
     @Inject var backend: any NoteBackend
 
