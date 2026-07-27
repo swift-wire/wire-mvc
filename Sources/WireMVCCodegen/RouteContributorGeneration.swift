@@ -32,13 +32,15 @@ public func renderRegisterWireRoutesWitness(
     subjectAccessor: String,
     factoryKeys: Set<String>,
     globalErrorMappings: [ErrorMapping] = [],
-    keyedScopeEntry: KeyedScopeEntry? = nil
+    keyedScopeEntry: KeyedScopeEntry? = nil,
+    doublesThreadedFactoryKeys: Set<String> = []
 ) -> (witness: String, diagnostics: [RouteCodegenDiagnostic]) {
     var generator = RouteBlockGenerator(
         subjectAccessor: subjectAccessor,
         factoryKeys: factoryKeys,
         globalErrorMappings: globalErrorMappings,
-        keyedScopeEntry: keyedScopeEntry
+        keyedScopeEntry: keyedScopeEntry,
+        doublesThreadedFactoryKeys: doublesThreadedFactoryKeys
     )
     let body = generator.routeBlocks(of: controller, pathPrefix: pathPrefix)
     let witness = """
@@ -91,7 +93,8 @@ public func renderVariantRouteContributorExtension(
     factoryKeys: Set<String>,
     globalErrorMappings: [ErrorMapping] = [],
     variantName: String,
-    keyedScopeEntry: KeyedScopeEntry
+    keyedScopeEntry: KeyedScopeEntry,
+    doublesThreadedFactoryKeys: Set<String> = []
 ) -> (source: String, diagnostics: [RouteCodegenDiagnostic]) {
     let rendered = renderRegisterWireRoutesWitness(
         access: controller.access,
@@ -100,7 +103,8 @@ public func renderVariantRouteContributorExtension(
         subjectAccessor: contributorProxySubjectAccessor,
         factoryKeys: factoryKeys,
         globalErrorMappings: globalErrorMappings,
-        keyedScopeEntry: keyedScopeEntry
+        keyedScopeEntry: keyedScopeEntry,
+        doublesThreadedFactoryKeys: doublesThreadedFactoryKeys
     )
     let raw = """
         extension \(variantProxyTypeName(variantName: variantName, subject: controller.name)): RouteContributor {
@@ -165,11 +169,25 @@ public func generateRouteContributors(
     // Single-key scope: the first key found drives the harness.
     let harnessKey = testEntry ? discoverTestingKey(in: parsed.map(\.tree)) : nil
 
+    // The lifted `@Factory`s that consume the harness key's mocked slots — mock-consuming under this key, so
+    // swift-wire re-emits each as a variant factory whose `create` takes doubles. One hop: a factory whose
+    // `@Inject` doubles-field intersects a `@BindType` slot field (the same rule swift-wire applies).
+    let doublesThreadedFactoryKeys: Set<String> =
+        harnessKey.map { key in
+            let slotFields = Set(key.substitutions.map(\.fieldName))
+            return Set(
+                composition.factoryInjectFields.compactMap { factoryKey, injectFields in
+                    injectFields.isDisjoint(with: slotFields) ? nil : factoryKey
+                }
+            )
+        } ?? []
+
     let controllerExtensions = renderControllerExtensions(
         parsed,
         factoryKeys: composition.factoryKeys,
         globalErrorMappings: composition.globalErrorMappings,
-        harnessKey: harnessKey
+        harnessKey: harnessKey,
+        doublesThreadedFactoryKeys: doublesThreadedFactoryKeys
     )
     located.append(contentsOf: controllerExtensions.diagnostics)
 
@@ -238,6 +256,9 @@ private func renderBootstrapSources(
 private struct ComposedInputs {
     var imports: Set<String> = ["import WireMVC"]
     var factoryKeys: Set<String> = []
+    /// Each `@Factory` template key → the doubles-field names its `@Inject`s resolve to — the one-hop
+    /// mock-consumption facts a variant witness classifies its lifted factories against.
+    var factoryInjectFields: [String: Set<String>] = [:]
     var bootstraps: [ControllerDeclaration] = []
     var globalErrorMappings: [ErrorMapping] = []
     var notFoundRegistration = ""
@@ -253,6 +274,7 @@ private func analyzeComposedInputs(_ parsed: [(path: String, tree: SourceFileSyn
     for file in parsed {
         result.imports.formUnion(importDeclarations(of: file.tree))
         result.factoryKeys.formUnion(factoryTemplateKeys(in: file.tree))
+        result.factoryInjectFields.merge(factoryTemplateInjectFields(in: file.tree)) { $0.union($1) }
         let fileBootstraps = bootstrapDeclarations(in: file.tree)
         result.bootstraps.append(contentsOf: fileBootstraps)
         guard !readBootstrap, let bootstrap = fileBootstraps.first else { continue }
@@ -315,7 +337,8 @@ private func renderControllerExtensions(
     _ parsed: [(path: String, tree: SourceFileSyntax)],
     factoryKeys: Set<String>,
     globalErrorMappings: [ErrorMapping],
-    harnessKey: DiscoveredTestingKey?
+    harnessKey: DiscoveredTestingKey?,
+    doublesThreadedFactoryKeys: Set<String>
 ) -> ControllerExtensionsResult {
     var extensions: [(name: String, source: String)] = []
     var located: [LocatedRouteDiagnostic] = []
@@ -358,7 +381,8 @@ private func renderControllerExtensions(
                 factoryKeys: factoryKeys,
                 globalErrorMappings: globalErrorMappings,
                 variantName: harnessKey.variantName,
-                keyedScopeEntry: entry
+                keyedScopeEntry: entry,
+                doublesThreadedFactoryKeys: doublesThreadedFactoryKeys
             )
             extensions.append((found.declaration.name + "Variant", variant.source))
         }
@@ -455,6 +479,74 @@ private final class FactoryKeyFinder: SyntaxVisitor {
         else { return .visitChildren }
         keys.insert(first.expression.trimmedDescription)
         return .visitChildren
+    }
+}
+
+/// The doubles-field names each `@Factory(key)` template `@Inject`s — key → the set of `_<Key>Doubles` fields
+/// its injected slots resolve to. A factory is **mock-consuming** under a `TestingKey` iff this set intersects
+/// the key's `@BindType` field names; then swift-wire re-emits it as a variant factory whose `create` takes
+/// doubles, and the variant witness's fold threads them. Uses the same `identifierName(forType:key:)` field
+/// rule as `@BindType` discovery, so the two agree blind — one hop (the factory's own `@Inject`s), matching
+/// swift-wire's variant-factory detection (which likewise inspects the factory's direct dependencies).
+private func factoryTemplateInjectFields(in sourceFile: SourceFileSyntax) -> [String: Set<String>] {
+    let finder = FactoryInjectFinder()
+    finder.walk(sourceFile)
+    return finder.injectFields
+}
+
+/// Walks a parsed file for every `@Factory(key)` template, recording the doubles-field name of each of its
+/// `@Inject` members (by-type from the member's type, keyed from its `@Inject(key)` argument).
+private final class FactoryInjectFinder: SyntaxVisitor {
+    private(set) var injectFields: [String: Set<String>] = [:]
+
+    init() { super.init(viewMode: .sourceAccurate) }
+
+    override func visit(_ node: StructDeclSyntax) -> SyntaxVisitorContinueKind {
+        record(attributes: node.attributes, members: node.memberBlock.members)
+        return .visitChildren
+    }
+    override func visit(_ node: ClassDeclSyntax) -> SyntaxVisitorContinueKind {
+        record(attributes: node.attributes, members: node.memberBlock.members)
+        return .visitChildren
+    }
+    override func visit(_ node: ActorDeclSyntax) -> SyntaxVisitorContinueKind {
+        record(attributes: node.attributes, members: node.memberBlock.members)
+        return .visitChildren
+    }
+
+    private func record(attributes: AttributeListSyntax, members: MemberBlockItemListSyntax) {
+        guard let key = attributeArgument(named: "Factory", in: attributes) else { return }
+        var fields: Set<String> = []
+        for member in members {
+            guard let variable = member.decl.as(VariableDeclSyntax.self),
+                let inject = attribute(named: "Inject", in: variable.attributes),
+                let type = variable.bindings.first?.typeAnnotation?.type.trimmedDescription
+            else { continue }
+            fields.insert(wireGenIdentifierName(forType: strippingAny(type), key: injectKeyArgument(inject)))
+        }
+        if !fields.isEmpty { injectFields[key, default: []].formUnion(fields) }
+    }
+
+    /// The attribute `named` on a declaration, or `nil`.
+    private func attribute(named name: String, in attributes: AttributeListSyntax) -> AttributeSyntax? {
+        for case let .attribute(attr) in attributes where attr.attributeName.trimmedDescription == name {
+            return attr
+        }
+        return nil
+    }
+
+    /// The first argument's canonical text of the attribute `named`, or `nil` (for `@Factory(key)`).
+    private func attributeArgument(named name: String, in attributes: AttributeListSyntax) -> String? {
+        guard let attr = attribute(named: name, in: attributes),
+            case let .argumentList(list) = attr.arguments, let first = list.first
+        else { return nil }
+        return first.expression.trimmedDescription
+    }
+
+    /// The `@Inject(<key>)` argument expression, or `nil` for the unkeyed `@Inject` form.
+    private func injectKeyArgument(_ attribute: AttributeSyntax) -> String? {
+        guard case let .argumentList(list) = attribute.arguments, let first = list.first else { return nil }
+        return first.expression.trimmedDescription
     }
 }
 

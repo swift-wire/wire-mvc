@@ -31,10 +31,15 @@ struct BindTests {
         #expect(mock.recordedNotes == ["x"])
     }
 
-    /// The **app-scoped** (`@Singleton`) `SummaryController`, marked `@TestScopable` — the seedless case. It's
-    /// built once against the real backend in production, but under the keyed suite the variant rebuilds it
-    /// per request from the doubles alone (`_wireEnterScope(doubles)`, no seed), so `GET /summary/{id}` serves
-    /// the supplied mock and the held instance records the call.
+    /// The **app-scoped** (`@Singleton`) `SummaryController`, marked `@TestScopable` — the seedless case, plus a
+    /// **mock-consuming middleware factory** (Phase B). It's built once against the real backend in production,
+    /// but under the keyed suite the variant rebuilds it per request from the doubles alone
+    /// (`_wireEnterScope(doubles)`, no seed), so `GET /summary/{id}` serves the supplied mock. Its
+    /// `@Middleware(SummaryAuditKeys.factory)` also `@Inject`s the backend — it can't hold the mock (built once
+    /// at facade time), so swift-wire re-emits it as a variant factory whose `create(doubles:)` sources the
+    /// mock per request, and the variant witness's fold threads the per-request doubles to that `create`. Both
+    /// the middleware and the handler touch the **same** supplied instance: it records the middleware's `audit`
+    /// call (before the chain forwards) and then the handler's `summary:x` call.
     @Test func appScopedTestScopableRouteServesMockSeedlessly() async throws {
         let mock = MockNoteBackend()
         try await withBindValues(noteBackend: mock, prefsBackendKeyedPrefsKeysPrimary: MockPrefsBackend()) {
@@ -42,7 +47,10 @@ struct BindTests {
             #expect(response.status == 200)
             #expect(try response.json(Note.self).value == "mock:summary:x")
         }
-        #expect(mock.recordedNotes == ["summary:x"])
+        // The exact supplied instance recorded the mock-consuming middleware's `audit` call *and* the handler's
+        // `summary:x` call, in order — the one mock threaded both the seedless reconstruction and the lifted
+        // variant factory's per-request `create(doubles:)`.
+        #expect(mock.recordedNotes == ["audit", "summary:x"])
     }
 
     /// The KEYED `@BindType(PrefsKeys.primary, …)` slot form: `PrefsController` injects the keyed binding
