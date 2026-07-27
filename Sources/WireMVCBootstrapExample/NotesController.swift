@@ -46,8 +46,10 @@ package struct NoteStamp: Sendable {
 }
 
 /// An app `@Singleton` that reads `any NoteBackend` **at its `init`** — the Phase-2 property. Marked
-/// `@Scopable` by the test's `TestingKey`, it is lifted into the request scope and rebuilt per entry under a
-/// keyed suite, so this init read sees the supplied mock. `AccountController` reaches the mock only through it.
+/// `@TestScopable` on the type, it is lifted into the request scope and rebuilt per entry under a keyed suite,
+/// so this init read sees the supplied mock. `AccountController` reaches the mock only through it. The mark is
+/// inert without a `TestingKey`'s `@BindType`, so it doesn't affect production.
+@TestScopable
 @Singleton
 package struct AccountRegistry: Sendable {
     package let tag: String
@@ -84,6 +86,23 @@ package struct AccountController: Sendable {
     @JSONResponse
     package func account(@Path id: String) -> Note {
         Note(value: registry.tag)  // the registry's init-time read of the (mocked, under a keyed suite) backend
+    }
+}
+
+/// An **app-scoped** (`@Singleton`) route contributor consuming the `@BindType`'d `NoteBackend` directly — the
+/// seedless case (Phase A). `@TestScopable`: under a keyed suite the variant rebuilds it per-request from the
+/// doubles alone (no seed), so `/summary` serves the mock; in production it's an ordinary shared singleton
+/// built once against the real backend.
+@TestScopable
+@Singleton
+@Controller("/summary")
+package struct SummaryController: Sendable {
+    @Inject var backend: any NoteBackend
+
+    @Get("/{id}")
+    @JSONResponse
+    package func summary(@Path id: String) async -> Note {
+        Note(value: await backend.note("summary:\(id)"))
     }
 }
 

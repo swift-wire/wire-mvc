@@ -17,15 +17,14 @@ import SwiftSyntax
 // serve separate graphs, so they can't cross.
 
 /// The keyed scope-entry descriptor for `controller` under `key`, or `nil` when the controller is not a
-/// keyed variant subject. Under a `TestingKey`, **every** `@Scoped(seed:)` controller is a subject: swift-wire
-/// emits a `Wire.bootstrap<Variant>_<Subject>Contributor` facade accepting the key's `_<Key>Doubles` for each
-/// seed-scoped subject — one that uses a `@BindType`d slot (directly or through a `@Scopable`-lifted singleton,
-/// or through a request-scoped intermediate) threads the mock, and one that uses none takes the doubles and
-/// ignores them. So there is no selection heuristic to match on: the keyed dispatch is uniform, and a request
-/// under a keyed suite always supplies doubles (else an explicit 500). `@Scopable` still marks the app
-/// singletons swift-wire's cascade lifts into the scope; wire-mvc no longer reads it to select subjects.
+/// keyed variant subject. A variant subject is either a `@Scoped(seed:)` controller (every one is keyed —
+/// "key-all") or an app-`@Singleton` `@TestScopable` controller (rebuilt per request seedlessly). swift-wire
+/// emits a `Wire.bootstrap<Variant>_<Subject>Contributor` facade for each; the seed-scoped path threads the
+/// doubles through `_wireEnterScope(request, doubles)`, the seedless path through `_wireEnterScope(doubles)`.
+/// A request under a keyed suite always supplies doubles (else an explicit 500). The `RouteBlockGenerator`
+/// selects the seed vs seedless dispatch from the controller's own `scopedSeedType`.
 func keyedScopeEntry(for controller: ControllerDeclaration, key: DiscoveredTestingKey) -> KeyedScopeEntry? {
-    guard controller.scopedSeedType != nil else { return nil }
+    guard controller.scopedSeedType != nil || controller.isTestScopable else { return nil }
     return KeyedScopeEntry(
         harnessEnumName: key.harnessEnumName,
         doublesStoreName: harnessDoublesStoreName,

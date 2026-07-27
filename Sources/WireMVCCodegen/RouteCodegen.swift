@@ -41,10 +41,11 @@ struct RouteBlockGenerator {
     var keyedScopeEntry: KeyedScopeEntry?
     private(set) var diagnostics: [RouteCodegenDiagnostic] = []
 
-    /// The expression the witness calls the controller through — a per-request `wireMVCController` local
-    /// for a scoped controller, else the held subject field (`self._wireSubject`).
+    /// The expression the witness calls the controller through — a per-request `wireMVCController` local for a
+    /// scoped controller *or any variant witness* (which reconstructs the subject per request), else the held
+    /// subject field (`self._wireSubject`) for a production app-`@Singleton` controller.
     var subjectExpression: String {
-        scopedSeedType == nil ? "self.\(subjectAccessor)" : scopeEntryLocalName
+        scopedSeedType == nil && keyedScopeEntry == nil ? "self.\(subjectAccessor)" : scopeEntryLocalName
     }
 
     /// The per-request scoped-controller local's name — deliberately `wireMVC`-prefixed so it can't
@@ -62,14 +63,20 @@ struct RouteBlockGenerator {
     /// errors are collected by the closure and discarded here (the response is the request's outcome). The
     /// seed is the register closure's `request` (seed-from-`HTTPRequest`).
     private var scopeEntryProloguePrefix: String {
-        guard scopedSeedType != nil else { return "" }
-        // A keyed variant witness enters request scope via the variant proxy (`self`) with the request's
-        // correlated doubles (resolved by the preamble); the production/keyless witness takes the plain scope
-        // entry. The `_wireEnterScope` call stays inside the `do` so its throw is mapped by the route's catch.
-        let entryCall =
-            keyedScopeEntry == nil
-            ? "self.\(contributorProxyScopeEntryAccessor)(request)"
-            : "self.\(contributorProxyScopeEntryAccessor)(request, wireMVCDoubles)"
+        // A production app-`@Singleton` controller is held (no scope entry); every scoped controller and every
+        // variant witness (including a seedless app-scoped one) enters per request.
+        guard scopedSeedType != nil || keyedScopeEntry != nil else { return "" }
+        // Production seed-scoped: plain entry. Variant seed-scoped: `(request, doubles)`. Variant **seedless**
+        // (app-`@Singleton` `@TestScopable`): `(doubles)` only — the controller can't consume the request, so
+        // the rebuild takes just the mock. The `_wireEnterScope` call stays in the `do` so its throw is mapped.
+        let entryCall: String
+        if keyedScopeEntry == nil {
+            entryCall = "self.\(contributorProxyScopeEntryAccessor)(request)"
+        } else if scopedSeedType != nil {
+            entryCall = "self.\(contributorProxyScopeEntryAccessor)(request, wireMVCDoubles)"
+        } else {
+            entryCall = "self.\(contributorProxyScopeEntryAccessor)(wireMVCDoubles)"
+        }
         return """
             let (\(scopeEntryLocalName), \(scopeTeardownLocalName)) = try await \(entryCall)
             defer { _ = await \(scopeTeardownLocalName)() }
@@ -86,7 +93,8 @@ struct RouteBlockGenerator {
     /// supplied mock — and a request that reaches the route with no supplied doubles (no header, or no store
     /// entry) is an explicit 500.
     private var scopeEntryPreamble: String {
-        guard scopedSeedType != nil, let keyed = keyedScopeEntry else { return "" }
+        // Emitted for any variant witness (seed-scoped or seedless); the production witness has no preamble.
+        guard let keyed = keyedScopeEntry else { return "" }
         let missingMessage =
             "WireMVC keyed test harness: no bound doubles for a request reaching this route under key "
             + "\(keyed.keyReference) — wrap the request in withBindValues(...)\\n"
