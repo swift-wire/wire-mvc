@@ -1541,7 +1541,11 @@ struct RouteContributorGenerationTests {
     @Test func doublesConstructionMatchesAlphabeticalStructOrder() {
         let rendered = generateRouteContributors(files: [("App.swift", phaseCFixture)], testEntry: true)
         #expect(rendered.diagnostics.isEmpty)
-        #expect(rendered.source.contains("_Binds_mockDoubles(sessionManager: sessionManager, todoRepository: todoRepository)"))
+        #expect(
+            rendered.source.contains(
+                "_Binds_mockDoubles(sessionManager: sessionManager, todoRepository: todoRepository)"
+            )
+        )
         // The user-facing parameter order stays source order (matches the @BindType declaration).
         #expect(rendered.source.contains("todoRepository: MockTodoRepository, sessionManager: MockSessionManager"))
     }
