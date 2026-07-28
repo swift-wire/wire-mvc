@@ -226,16 +226,27 @@ extension RouteBlockGenerator {
         middleware: [String]
     ) -> String? {
         guard let mapping = rawCallArgs(function) else { return nil }
+        // A scoped controller — or any variant witness (including a seedless app-`@Singleton` `@TestScopable`
+        // one) — reconstructs its subject per request, so the raw call dispatches on `subjectExpression`
+        // (`wireMVCController`) after the scope-entry prologue, not the held `_wireSubject`; a production
+        // app-`@Singleton` raw route stays `self._wireSubject`, byte-for-byte unchanged. When the fold threads
+        // doubles the correlation is hoisted above the fold, as in the typed path.
+        let call = "try await \(subjectExpression).\(function.name.text)(\(mapping.callArgs.joined(separator: ", ")))"
+        let foldThreadsDoubles = middleware.contains { $0.contains(Self.doublesCreateArgument) }
+        let terminalBody = "\(foldThreadsDoubles ? "" : scopeEntryPreamble)\(scopeEntryProloguePrefix)\(call)"
+        // Scope entry needs `request` (its seed, and the variant preamble's correlation), even when the
+        // handler itself doesn't take it.
+        let needsRequest = mapping.used.contains("request") || scopedSeedType != nil || keyedScopeEntry != nil
         return emitRegister(
             verb: verb,
             path: path,
             middleware: middleware,
-            requestName: mapping.used.contains("request") ? "request" : "_",
+            hoistedPreamble: foldThreadsDoubles ? scopeEntryPreamble : "",
+            requestName: needsRequest ? "request" : "_",
             contextName: mapping.used.contains("requestContext") ? "requestContext" : "_",
             parametersName: mapping.used.contains("pathParameters") ? "pathParameters" : "_",
             readerName: mapping.used.contains("reader") ? "reader" : "_",
-            terminalBody:
-                "try await self.\(subjectAccessor).\(function.name.text)(\(mapping.callArgs.joined(separator: ", ")))"
+            terminalBody: terminalBody
         )
     }
 
