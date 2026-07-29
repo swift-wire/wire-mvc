@@ -1,42 +1,58 @@
 public import HTTPAPIs
-public import NIOHTTPServer
 public import ServiceLifecycle
 public import Testing
 import WireMVC
 
-// Test support for a `@WireMVCBootstrap` app. The one public way to stand up a test server is the suite
-// trait `@Suite(.wiremvc())`: `WireMVCRouteGen` emits, in a test consumer, a `.wiremvc()` factory whose
+// Test support for a `@WireMVCBootstrap` app. The one public way to stand a suite up is the suite trait
+// `@Suite(.wiremvc(<mode>))`: `WireMVCRouteGen` emits, in a test consumer, a `.wiremvc(_:)` factory whose
 // closure inlines the SAME build-and-wrap the `@main` does (the finalized+wrapped handler is an opaque
 // `~Copyable` type that can't be returned or stored, so the build is inlined and the opaque handler handed
-// straight to `serveForSuite` — exactly as the `@main` hands it to `WireMVC.serve<Server, Handler>`). The
-// trait runs that closure once at suite entry: it serves on the caller-chosen (ephemeral) port, points
-// `TestClient.current` at the bound loopback port for the suite's tests, runs them, and cancels at suite
-// exit. Each test call drives one real HTTP round-trip end to end.
+// straight to a driver — exactly as the `@main` hands it to `WireMVC.serve<Server, Handler>`). The trait
+// runs that closure once at suite entry, points `TestClient.current` at the resulting transport for the
+// suite's tests, runs them, and tears down at suite exit.
+//
+// The ``WireMVCTestMode`` picks the transport, which is the only thing that differs between the two build
+// paths — both build the app's real router, middleware fold, error tiers and `@NotFound` fallback:
+//   • `.inProcess` builds over ``InProcessServer`` and calls the finalized handler directly
+//     (``driveInProcess(handler:services:runTests:)``) — no socket, no port, no `createServer()`;
+//   • `.swiftHttpServer` builds over the app's own `createServer()` and serves it on an ephemeral
+//     loopback port (``serveForSuite(on:handler:services:runTests:)``), driving real HTTP per call.
 
 /// A server that reports the port it bound. `serveForSuite` reads it to point `TestClient.current` at the
 /// ephemeral loopback port the OS assigned (the app binds port `0` under test). This is the one capability
-/// the seam needs beyond ``HTTPServer``, which surfaces no bound-address API — `NIOHTTPServer` conforms
-/// below via its `listeningAddresses`; a bootstrap returning another server type conforms it to opt that
-/// server into the suite trait.
+/// the seam needs beyond ``HTTPServer``, which surfaces no bound-address API. The `NIOHTTPServer`
+/// conformance ships in the opt-in `WireMVCTestingNIOHTTPServer` product — the only place
+/// `swift-http-server` enters the graph — so this module stays server-agnostic; a bootstrap returning
+/// another server type conforms it to opt that server into the suite trait.
 public protocol WireMVCTestServer {
     /// The port the server is listening on, once bound. Suspends until the first address binds.
     var wireMVCBoundPort: Int { get async throws }
 }
 
-extension NIOHTTPServer: WireMVCTestServer {
-    public var wireMVCBoundPort: Int {
-        get async throws {
-            guard let port = try await listeningAddresses.first?.port else {
-                throw WireMVCTestingError.noListeningPort
-            }
-            return port
-        }
-    }
+/// The transport a `@Suite(.wiremvc(_:))` suite runs on. Orthogonal to *which* variant graph the suite
+/// serves (the `TestingKey` argument) — this picks only how a request reaches the finalized handler.
+public enum WireMVCTestMode: Sendable {
+    /// Drive the finalized handler in memory: no socket, no port, and the app's `createServer()` is never
+    /// called. Covers route, controller, middleware, error-mapping and keyed-harness logic — everything
+    /// that doesn't depend on the transport. The default.
+    case inProcess
+
+    /// Serve the app's own `createServer()` on an ephemeral loopback port and drive real HTTP over it.
+    /// The end-to-end mode: it is the only one that exercises the app's real server construction, real
+    /// connection capabilities, and genuine streaming/backpressure. Needs the server's
+    /// ``WireMVCTestServer`` conformance in scope — for `NIOHTTPServer` that is the
+    /// `WireMVCTestingNIOHTTPServer` product.
+    case swiftHttpServer
 }
 
-/// A failure reaching the running test server — the server bound no listening address to read a port from.
+/// A failure reaching the running test server.
 public enum WireMVCTestingError: Error {
+    /// The server bound no listening address to read a port from.
     case noListeningPort
+    /// ``InProcessServer`` was handed to a serving helper. It is a build-time stand-in that lets the
+    /// `.inProcess` path construct the app's router over the in-memory types; the driver calls `handle`
+    /// on the finalized handler instead of serving.
+    case inProcessServerCannotServe
 }
 
 /// The suite trait standing up a `@WireMVCBootstrap` app's test server — `@Suite(.wiremvc())`. Non-generic
@@ -100,6 +116,45 @@ public enum WireMVCTesting {
             group.addTask { try await server.serve(handler: handler) }
             let port = try await server.wireMVCBoundPort
             try await TestClient.$currentStorage.withValue(TestClient(host: "127.0.0.1", port: port)) {
+                try await runTests()
+            }
+            group.cancelAll()
+        }
+    }
+
+    /// Run the graph's collated app-scoped `services`, point `TestClient.current` at an in-process client
+    /// over `handler`, run `runTests()`, then cancel. The `.inProcess` counterpart to
+    /// ``serveForSuite(on:handler:services:runTests:)`` — same services half, but each request calls
+    /// `handler.handle` directly instead of crossing a socket. The `Handler` bound pins the in-memory
+    /// associated types, so only a handler built over ``InProcessServer`` can be driven here.
+    ///
+    /// Services run in a child task exactly as they do live; whether they *should* run is the suite's
+    /// choice, and the caller passes an empty array to skip them.
+    public static func driveInProcess<Handler: HTTPServerRequestHandler>(
+        handler: Handler,
+        services: [any Service],
+        runTests: @concurrent @Sendable () async throws -> Void
+    ) async throws
+    where
+        Handler.RequestContext == InProcessRequestContext,
+        Handler.Reader == InProcessReader,
+        Handler.ResponseSender == InProcessResponseSender
+    {
+        // The opaque handler can't be named or stored, but it *is* `Sendable` — so the dispatch closure
+        // captures it and the non-generic `TestClient` carries it without knowing its type.
+        let client = TestClient { request, body in
+            let sink = ResponseSink()
+            try await handler.handle(
+                request: request,
+                requestContext: InProcessRequestContext(),
+                reader: InProcessReader(body),
+                responseSender: InProcessResponseSender(sink: sink)
+            )
+            return sink.response
+        }
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { try await WireMVC.runServices(services) }
+            try await TestClient.$currentStorage.withValue(client) {
                 try await runTests()
             }
             group.cancelAll()

@@ -1,3 +1,9 @@
+// The retroactive `NIOHTTPServer: WireMVCTestServer` conformance. The generated `.wiremvc(_:)` factory
+// emits both mode branches, and the live one hands this app's `NIOHTTPServer` to `serveForSuite`, whose
+// bound requires that conformance — so it has to be imported by this module. Conformance lookup is
+// module-wide, so this one import covers the generated file too.
+import WireMVCTestingNIOHTTPServer
+
 package import Wire
 package import WireMVCBootstrapExample
 

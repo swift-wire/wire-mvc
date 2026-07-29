@@ -11,11 +11,12 @@ import WireMVCCodegen
 // CLI: WireMVCRouteGen <output-path> [--test-entry] [--import <Module>]... <source-files...>
 //
 // `--test-entry` marks a test consumer (one depending on the `WireMVCTesting` product): the generated
-// `@WireMVCBootstrap` entry becomes the `.wiremvc()` suite-trait factory (plus `import WireMVCTesting` and
-// `import Testing`) instead of the `@main`, which can't live in a test bundle. `--import <Module>` names a Wire-aware
-// dependency module re-parsed into this consumer, so the generated extensions can name its
-// `package`/`public` types (a test target re-composing the app). Both are optional; absent, the tool emits
-// the `@main` and no extra imports (the plain program-consumer path).
+// `@WireMVCBootstrap` entry becomes the `.wiremvc(_:)` suite-trait factory (plus `import WireMVCTesting` and
+// `import Testing`) instead of the `@main`, which can't live in a test bundle. `--import <Module>` names a
+// module the generated content depends on — a Wire-aware dependency re-parsed into this consumer, so the
+// generated extensions can name its `package`/`public` types (a test target re-composing the app), or a
+// test transport whose retroactive `WireMVCTestServer` conformance the generated factory needs in scope.
+// Both are optional; absent, the tool emits the `@main` and no extra imports (the plain program-consumer path).
 //
 // On any route-shape diagnostic it prints compiler-style `file:line:col: error:` lines and exits
 // non-zero, writing no output — the build plugin treats a missing output as a failed generation step.
@@ -23,7 +24,9 @@ import WireMVCCodegen
 let arguments = CommandLine.arguments
 guard arguments.count >= 2 else {
     FileHandle.standardError.write(
-        Data("usage: WireMVCRouteGen <output-path> [--test-entry] [--import <Module>]... <source-files...>\n".utf8)
+        Data(
+            "usage: WireMVCRouteGen <output-path> [--test-entry] [--import <Module>]... <source-files...>\n".utf8
+        )
     )
     exit(1)
 }

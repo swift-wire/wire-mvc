@@ -136,9 +136,12 @@ public let contributorProxyScopeEntryAccessor = "_wireEnterScope"
 /// e.g. the executable) gets the `@main`; `testEntry == true` (a test consumer that depends on the
 /// `WireMVCTesting` product) gets the `.wiremvc()` suite-trait factory (and `import WireMVCTesting` +
 /// `import Testing`) *instead* — the two are mutually exclusive because a `@main` in a test bundle collides
-/// with the runner's own entry. `extraImports` are `import <Module>` lines for the Wire-aware dependency modules whose sources
-/// were re-parsed into this consumer (a test target re-composing the app), so the generated extensions
-/// can name the app's `package`/`public` controllers, response types, and factories.
+/// with the runner's own entry. `extraImports` are `import <Module>` lines for the modules the generated
+/// content depends on: the Wire-aware dependencies whose sources were re-parsed into this consumer (a test
+/// target re-composing the app), so the extensions can name the app's `package`/`public` controllers,
+/// response types, and factories; and a test consumer's test-transport modules (e.g.
+/// `WireMVCTestingNIOHTTPServer`), whose retroactive `WireMVCTestServer` conformance the generated factory
+/// needs in scope to hand the app's concrete server to `serveForSuite`.
 public func generateRouteContributors(
     files: [(path: String, source: String)],
     testEntry: Bool = false,
@@ -191,8 +194,10 @@ public func generateRouteContributors(
     )
     located.append(contentsOf: controllerExtensions.diagnostics)
 
-    // Re-parsed Wire-aware dependency modules are named by the generated extensions/entry, so import each —
-    // but only when there is generated content that references them (avoids an unused-import otherwise).
+    // The caller-supplied modules the generated extensions/entry depend on — re-parsed Wire-aware
+    // dependencies (whose types they name) and test-transport modules (whose retroactive
+    // `WireMVCTestServer` conformance the entry needs in scope). Imported only when there is generated
+    // content that references them (avoids an unused-import otherwise).
     if !controllerExtensions.extensions.isEmpty || !composition.bootstraps.isEmpty {
         composition.imports.formUnion(extraImports.map { "import \($0)" })
     }
@@ -416,9 +421,9 @@ private func bootstrapArtifacts(
             )
         }
     }
-    // A test consumer gets the `.wiremvc()` suite-trait factory (its closure inlines the same build and
-    // serves via `WireMVCTesting.serveForSuite` so a suite drives the app over real HTTP); a program
-    // consumer gets the `@main`. Never both — the `@main` would collide with the test runner's entry.
+    // A test consumer gets the `.wiremvc(_:)` suite-trait factory (its closure inlines the same build once
+    // per mode and hands it to the matching `WireMVCTesting` driver); a program consumer gets the `@main`.
+    // Never both — the `@main` would collide with the test runner's entry.
     let entry =
         testEntry
         ? renderBootstrapTestEntry(

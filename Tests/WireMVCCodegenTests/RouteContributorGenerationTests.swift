@@ -130,11 +130,13 @@ struct RouteContributorGenerationTests {
         )
     }
 
-    /// The generated `.wiremvc()` suite-trait factory: a `SuiteTrait` extension whose `WireMVCSuiteTrait`
-    /// closure inlines the SAME build as the `@main` (graph → server → builder → apply → registrations →
-    /// finalize → `wrapGlobalMiddleware`) and hands the opaque handler to `WireMVCTesting.serveForSuite`
-    /// instead of serving forever. The build sequence is shared with the `@main` (both wrap
-    /// `bootstrapBuildLines`), so it matches the `@main`'s build lines.
+    /// The generated `.wiremvc(_:)` suite-trait factory: a `SuiteTrait` extension whose `WireMVCSuiteTrait`
+    /// closure switches on the ``WireMVCTestMode`` and inlines one build per mode (graph → server → builder →
+    /// apply → registrations → finalize → `wrapGlobalMiddleware`), handing the opaque handler to that mode's
+    /// driver instead of serving forever. The two builds can't share a local — each produces a *different*
+    /// opaque handler type — and differ only in the `server` line: `InProcessServer()` vs the app's
+    /// `createServer()`. The build sequence is shared with the `@main` (all wrap `bootstrapBuildLines`), so
+    /// the live branch matches the `@main`'s build lines.
     @Test func bootstrapGeneratesTestServerEntry() {
         let source = """
             @Singleton
@@ -149,19 +151,34 @@ struct RouteContributorGenerationTests {
         #expect(
             renderBootstrapTestEntry(bootstrap: decl, notFoundRegistration: fallback, factoryKeys: []) == """
                 extension SuiteTrait where Self == WireMVCSuiteTrait {
-                    static func wiremvc() -> WireMVCSuiteTrait {
+                    static func wiremvc(_ mode: WireMVCTestMode = .swiftHttpServer) -> WireMVCSuiteTrait {
                         WireMVCSuiteTrait { runTests in
-                            let graph = try await Wire.bootstrap()
-                            let bootstrap = graph.appBootstrap
-                            let server = try bootstrap.createServer()
-                            var builder = bootstrap.createRouteBuilder(for: server)
-                            let services = try WireMVC.apply(graph, to: &builder)
-                            builder.registerNotFound { _, _, _, _, responseSender in
-                                try await responseSender.sendAndFinish(HTTPResponse(status: .notFound))
+                            switch mode {
+                            case .inProcess:
+                                let graph = try await Wire.bootstrap()
+                                let bootstrap = graph.appBootstrap
+                                let server = InProcessServer()
+                                var builder = bootstrap.createRouteBuilder(for: server)
+                                let services = try WireMVC.apply(graph, to: &builder)
+                                builder.registerNotFound { _, _, _, _, responseSender in
+                                    try await responseSender.sendAndFinish(HTTPResponse(status: .notFound))
+                                }
+                                let handler = builder.finalize()
+                                let wireMVCServed = graph._WireGlobalMiddleware_AppBootstrap.wrapGlobalMiddleware(handler)
+                                try await WireMVCTesting.driveInProcess(handler: wireMVCServed, services: services, runTests: runTests)
+                            case .swiftHttpServer:
+                                let graph = try await Wire.bootstrap()
+                                let bootstrap = graph.appBootstrap
+                                let server = try bootstrap.createServer()
+                                var builder = bootstrap.createRouteBuilder(for: server)
+                                let services = try WireMVC.apply(graph, to: &builder)
+                                builder.registerNotFound { _, _, _, _, responseSender in
+                                    try await responseSender.sendAndFinish(HTTPResponse(status: .notFound))
+                                }
+                                let handler = builder.finalize()
+                                let wireMVCServed = graph._WireGlobalMiddleware_AppBootstrap.wrapGlobalMiddleware(handler)
+                                try await WireMVCTesting.serveForSuite(on: server, handler: wireMVCServed, services: services, runTests: runTests)
                             }
-                            let handler = builder.finalize()
-                            let wireMVCServed = graph._WireGlobalMiddleware_AppBootstrap.wrapGlobalMiddleware(handler)
-                            try await WireMVCTesting.serveForSuite(on: server, handler: wireMVCServed, services: services, runTests: runTests)
                         }
                     }
                 }
@@ -393,7 +410,7 @@ struct RouteContributorGenerationTests {
         #expect(!rendered.source.contains("@main"))
         #expect(!rendered.source.contains("struct _WireMVCBootstrapEntry {"))
         #expect(rendered.source.contains("extension SuiteTrait where Self == WireMVCSuiteTrait {"))
-        #expect(rendered.source.contains("static func wiremvc() -> WireMVCSuiteTrait {"))
+        #expect(rendered.source.contains("static func wiremvc(_ mode: WireMVCTestMode = .swiftHttpServer)"))
         #expect(rendered.source.contains("WireMVCSuiteTrait { runTests in"))
         #expect(
             rendered.source.contains(
@@ -1313,7 +1330,11 @@ struct RouteContributorGenerationTests {
         #expect(rendered.source.contains("enum _WireMVCKeyed_Binds_mock {"))
         #expect(rendered.source.contains("static let doubles = TestBindStore<_Binds_mockDoubles>()"))
         #expect(rendered.source.contains("func withBindValues<R>(noteBackend: MockNoteBackend,"))
-        #expect(rendered.source.contains("static func wiremvc(_ key: TestingKey) -> WireMVCSuiteTrait"))
+        #expect(
+            rendered.source.contains(
+                "static func wiremvc(_ key: TestingKey, _ mode: WireMVCTestMode = .swiftHttpServer)"
+            )
+        )
         // The keyed factory bootstraps the variant graph and hand-registers each variant proxy's routes.
         #expect(rendered.source.contains("let graph = try await Wire.bootstrapBinds_mock()"))
         #expect(
