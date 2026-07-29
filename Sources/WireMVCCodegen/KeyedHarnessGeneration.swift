@@ -42,10 +42,16 @@ func renderKeyedHarnessStatics(key: DiscoveredTestingKey) -> String {
     lines.append("    static let \(harnessDoublesStoreName) = TestBindStore<\(key.doublesTypeName)>()")
     lines.append("}")
 
-    // The typed `withBindValues` — one parameter per `@BindType` slot, building the concrete `_<Key>Doubles`
-    // and handing it to the H1 core with this key's store. `@discardableResult` mirrors the core.
+    // The typed `withBindValues` — one parameter per `@BindType` slot (in source order, matching the
+    // declaration), building the concrete `_<Key>Doubles` and handing it to the H1 core with this key's store.
+    // The construction arguments are ordered by field name to match WireGen's `renderDoublesStruct`, which
+    // sorts the struct's fields alphabetically — Swift's memberwise init requires the call to follow the
+    // declaration order. `@discardableResult` mirrors the core.
     let parameters = key.substitutions.map { "\($0.fieldName): \($0.mockType)" }.joined(separator: ", ")
-    let doublesArgs = key.substitutions.map { "\($0.fieldName): \($0.fieldName)" }.joined(separator: ", ")
+    let doublesArgs = key.substitutions
+        .map(\.fieldName).sorted()
+        .map { "\($0): \($0)" }
+        .joined(separator: ", ")
     lines.append(
         """
 

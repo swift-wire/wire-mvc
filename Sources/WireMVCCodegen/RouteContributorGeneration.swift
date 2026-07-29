@@ -502,29 +502,51 @@ private final class FactoryInjectFinder: SyntaxVisitor {
     init() { super.init(viewMode: .sourceAccurate) }
 
     override func visit(_ node: StructDeclSyntax) -> SyntaxVisitorContinueKind {
-        record(attributes: node.attributes, members: node.memberBlock.members)
+        record(attributes: node.attributes, generics: node.genericParameterClause, members: node.memberBlock.members)
         return .visitChildren
     }
     override func visit(_ node: ClassDeclSyntax) -> SyntaxVisitorContinueKind {
-        record(attributes: node.attributes, members: node.memberBlock.members)
+        record(attributes: node.attributes, generics: node.genericParameterClause, members: node.memberBlock.members)
         return .visitChildren
     }
     override func visit(_ node: ActorDeclSyntax) -> SyntaxVisitorContinueKind {
-        record(attributes: node.attributes, members: node.memberBlock.members)
+        record(attributes: node.attributes, generics: node.genericParameterClause, members: node.memberBlock.members)
         return .visitChildren
     }
 
-    private func record(attributes: AttributeListSyntax, members: MemberBlockItemListSyntax) {
+    private func record(
+        attributes: AttributeListSyntax,
+        generics: GenericParameterClauseSyntax?,
+        members: MemberBlockItemListSyntax
+    ) {
         guard let key = attributeArgument(named: "Factory", in: attributes) else { return }
+        // A `@Inject var x: Param` spelled as an injected generic parameter is bound to the slot named by the
+        // parameter's constraint (`Repository: TodoRepository` → the `TodoRepository` slot). Resolve it so the
+        // field name lines up with the `@BindType` slot — matching swift-wire's constraint-based detection.
+        let constraints = genericConstraints(generics)
         var fields: Set<String> = []
         for member in members {
             guard let variable = member.decl.as(VariableDeclSyntax.self),
                 let inject = attribute(named: "Inject", in: variable.attributes),
                 let type = variable.bindings.first?.typeAnnotation?.type.trimmedDescription
             else { continue }
-            fields.insert(wireGenIdentifierName(forType: strippingAny(type), key: injectKeyArgument(inject)))
+            let resolvedType = constraints[type] ?? type
+            fields.insert(wireGenIdentifierName(forType: strippingAny(resolvedType), key: injectKeyArgument(inject)))
         }
         if !fields.isEmpty { injectFields[key, default: []].formUnion(fields) }
+    }
+
+    /// Each generic parameter's constraint (inheritance clause) — `Repository: TodoRepository` →
+    /// `["Repository": "TodoRepository"]`; an unconstrained parameter is omitted.
+    private func genericConstraints(_ clause: GenericParameterClauseSyntax?) -> [String: String] {
+        guard let clause else { return [:] }
+        var constraints: [String: String] = [:]
+        for parameter in clause.parameters {
+            if let inherited = parameter.inheritedType?.trimmedDescription {
+                constraints[parameter.name.text] = inherited
+            }
+        }
+        return constraints
     }
 
     /// The attribute `named` on a declaration, or `nil`.

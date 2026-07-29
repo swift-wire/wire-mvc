@@ -1473,4 +1473,80 @@ struct RouteContributorGenerationTests {
             Issue.record("no variant witness generated for SummaryController")
         }
     }
+
+    /// The wire-mvc-examples shapes (Phase C): a generic `@TestScopable` controller carrying a **generic**
+    /// mock-consuming `@Factory` (`Audit<…, Repository: TodoRepository>`, `@Inject var repository: Repository`)
+    /// and a `@RawRoute`, under a two-slot key whose source order differs from alphabetical.
+    private let phaseCFixture = """
+        @Singleton
+        @WireMVCBootstrap
+        struct AppBootstrap {}
+
+        enum AuditKeys { static let factory = FactoryKey() }
+
+        @Factory(AuditKeys.factory)
+        @MiddlewareFactory(.responseSender, .reader, .requestContext)
+        struct Audit<Sender, Reader, Ctx, Repository: TodoRepository> {
+            @Inject var repository: Repository
+        }
+
+        @TestScopable
+        @Singleton
+        @Controller("/todos")
+        @Middleware(AuditKeys.factory)
+        struct TodosController<Repository: TodoRepository> {
+            @Inject var repository: Repository
+            @Get
+            @JSONResponse
+            func list() -> Note { fatalError() }
+            @Get("/stream")
+            @RawRoute
+            func stream<Sender: HTTPResponseSender & ~Copyable & SendableMetatype>(responseSender: consuming Sender) { fatalError() }
+        }
+
+        enum Binds {
+            @BindType(TodoRepository.self, MockTodoRepository.self)
+            @BindType(SessionManager.self, MockSessionManager.self)
+            static let mock = TestingKey()
+        }
+        """
+
+    /// Issue 01 (wire-mvc half): a mock-consuming factory **generic over its injected axis** — the mocked dep is
+    /// spelled as the generic param `Repository`, matched via its constraint `TodoRepository`. The variant fold
+    /// threads doubles to its `create`, agreeing with swift-wire's constraint-based variant factory.
+    @Test func genericMockConsumingFactoryFoldThreadsDoubles() {
+        let rendered = generateRouteContributors(files: [("App.swift", phaseCFixture)], testEntry: true)
+        #expect(rendered.diagnostics.isEmpty)
+        #expect(
+            rendered.source.contains(
+                "self._wireFactory_AuditKeys_factory.create(doubles: wireMVCDoubles, "
+                    + "Builder.RequestContext.self, Builder.Reader.self, Builder.ResponseSender.self)"
+            )
+        )
+    }
+
+    /// Issue 09: a `@RawRoute` on a variant (seedless `@TestScopable`) witness dispatches on the reconstructed
+    /// `wireMVCController` after `_wireEnterScope(wireMVCDoubles)`, not the held `_wireSubject` (which a seedless
+    /// variant proxy doesn't have). The production witness keeps `self._wireSubject`.
+    @Test func rawRouteOnVariantWitnessEntersSeedlessScope() {
+        let rendered = generateRouteContributors(files: [("App.swift", phaseCFixture)], testEntry: true)
+        #expect(rendered.diagnostics.isEmpty)
+        #expect(rendered.source.contains("try await wireMVCController.stream(responseSender: responseSender)"))
+        #expect(rendered.source.contains("try await self._wireSubject.stream(responseSender: responseSender)"))
+    }
+
+    /// Issue 08: the doubles **construction** is ordered by field name (`sessionManager` before `todoRepository`)
+    /// to match WireGen's alphabetically-sorted `_<Key>Doubles` struct — even though the `@BindType` source
+    /// order (and the `withBindValues` parameters) is `todoRepository` first.
+    @Test func doublesConstructionMatchesAlphabeticalStructOrder() {
+        let rendered = generateRouteContributors(files: [("App.swift", phaseCFixture)], testEntry: true)
+        #expect(rendered.diagnostics.isEmpty)
+        #expect(
+            rendered.source.contains(
+                "_Binds_mockDoubles(sessionManager: sessionManager, todoRepository: todoRepository)"
+            )
+        )
+        // The user-facing parameter order stays source order (matches the @BindType declaration).
+        #expect(rendered.source.contains("todoRepository: MockTodoRepository, sessionManager: MockSessionManager"))
+    }
 }
