@@ -1,9 +1,7 @@
 public import AsyncStreaming
+public import BasicContainers
 public import HTTPAPIs
 public import HTTPTypes
-
-public import BasicContainers
-
 import Synchronization
 
 // The in-process transport — the `.inProcess` mode's implementation of the proposal's server-side types,

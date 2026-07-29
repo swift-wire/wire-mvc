@@ -1,6 +1,5 @@
 import Testing
 import WireMVCTesting
-
 // The retroactive `NIOHTTPServer: WireMVCTestServer` conformance. This suite runs `.inProcess` and never
 // binds a port, but the generated `.wiremvc(_:)` factory emits both mode branches, so the live one's
 // `serveForSuite` bound still has to be satisfiable for the factory to type-check.
