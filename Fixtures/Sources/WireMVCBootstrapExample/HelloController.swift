@@ -1,3 +1,6 @@
+import BasicContainers
+import HTTPAPIs
+import HTTPTypes
 package import Wire
 import WireMVC
 
@@ -17,6 +20,20 @@ package struct HelloController<G: Greeter> {
     @JSONResponse
     package func hello(@Path name: String) -> Greeting {
         Greeting(message: greeter.greet(name))
+    }
+
+    // A raw route on an otherwise typed controller. `@RawRoute` hands the handler the primitives and it
+    // writes the response itself, so nothing about the payload is derivable — but the request line still is,
+    // which is what the generated shim gives a suite: `rawGreeting(name:)` for `GET /hello/raw/{name}`.
+    @Get("/raw/{name}")
+    @RawRoute
+    package func rawGreeting<Sender: HTTPResponseSender & ~Copyable & SendableMetatype>(
+        pathParameters: [String: Substring],
+        responseSender: consuming Sender
+    ) async throws where Sender.Writer: ~Copyable {
+        let name = pathParameters["name"].map(String.init) ?? "?"
+        var body = UniqueArray<UInt8>(copying: Array("raw:\(greeter.greet(name))".utf8))
+        try await responseSender.sendAndFinish(HTTPResponse(status: .ok), buffer: &body)
     }
 
     // M5.5 Phase 3: this controller declares no `@ErrorResponse`, so `TenantMissing` is unmapped here.

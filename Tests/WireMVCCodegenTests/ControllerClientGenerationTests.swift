@@ -115,9 +115,11 @@ struct ControllerClientGenerationTests {
         #expect(!rendered.contains(".json("))
     }
 
-    /// `@RawRoute` has no derivable shape — it owns its own wire format — so it contributes no method and no
-    /// diagnostic. It stays reachable through `TestClient`'s untyped verbs.
-    @Test func rawRoutesAreSkipped() {
+    /// A `@RawRoute` gets a shim, not a typed method: its parameters are all roles and it writes its own
+    /// response, so nothing on either side is typed — but the request line still is. The shim is shaped after
+    /// the proposal's `HTTPClient.perform`, handing the response head and a body reader to a closure, and
+    /// applies no status rule because a raw route may answer a non-2xx by design.
+    @Test func rawRoutesGetAnUntypedShim() {
         let declaration = controller(
             """
             @Controller("/exports")
@@ -133,19 +135,57 @@ struct ControllerClientGenerationTests {
             """
         )
         let rendered = try! #require(renderControllerClient(controller: declaration, pathPrefix: "/exports"))
-        #expect(rendered.contains("func fetch(id: String)"))
-        #expect(!rendered.contains("stream"))
+        #expect(rendered.contains("func fetch(id: String) async throws -> Export"))
+        #expect(rendered.contains("func stream<WireMVCRawReturn: ~Copyable>("))
+        #expect(
+            rendered.contains(
+                "responseHandler: (HTTPResponse, consuming TestResponseReader) async throws -> WireMVCRawReturn"
+            )
+        )
+        #expect(rendered.contains(#"client.performRawRoute(method: "GET", path: "/exports/stream""#))
+        // The typed route keeps the status rule; the raw one must not.
+        #expect(rendered.contains(#"client.routeResponse(method: "GET", path: "/exports/{id}""#))
     }
 
-    /// A controller whose every route is raw gets no client at all — an empty struct is noise.
-    @Test func aControllerWithNoTypedRouteEmitsNothing() {
+    /// A raw route declares no bindings, so its arguments come from the path template's placeholders — which
+    /// is the whole point of the shim: the path is derived, so renaming the route breaks the test.
+    @Test func aRawRoutesPlaceholdersBecomeParameters() {
         let declaration = controller(
             """
             @Controller("/exports")
             struct ExportController {
-                @Get("/stream")
+                @Get("/{id}/parts/{part}")
                 @RawRoute
-                func stream<S: HTTPResponseSender & ~Copyable>(responseSender: consuming S) async throws {}
+                func part<S: HTTPResponseSender & ~Copyable>(
+                    pathParameters: [String: Substring],
+                    responseSender: consuming S
+                ) async throws {}
+            }
+            """
+        )
+        let rendered = try! #require(renderControllerClient(controller: declaration, pathPrefix: "/exports"))
+        #expect(rendered.contains("func part<WireMVCRawReturn: ~Copyable>(id: String, part: String,"))
+        #expect(rendered.contains(#"pathParameters: ["id": String(id), "part": String(part)]"#))
+    }
+
+    /// Placeholder extraction is the shim's only source of parameters, so it is pinned directly: order of
+    /// appearance, duplicates collapsed, and a name that isn't a valid identifier sanitised for the
+    /// parameter while the wire name stays as written.
+    @Test func placeholdersAreReadInOrderAndSanitised() {
+        let parameters = pathPlaceholderParameters(in: "/a/{user-id}/b/{tail}/c/{tail}")
+        #expect(parameters.map(\.name) == ["userId", "tail"])
+        #expect(parameters.map(\.wireName) == ["user-id", "tail"])
+        #expect(parameters.allSatisfy { $0.type == "String" })
+    }
+
+    /// A controller with no verb-annotated route at all gets no client — an empty struct is noise. (One with
+    /// only raw routes *does* get one: the shims are the point.)
+    @Test func aControllerWithNoRouteEmitsNothing() {
+        let declaration = controller(
+            """
+            @Controller("/exports")
+            struct ExportController {
+                func notARoute() {}
             }
             """
         )

@@ -20,8 +20,15 @@ The typed client, which needed nothing from swift-wire:
   whole-query set which leaves `/`, `&`, `=` and `+` legal, so a path parameter containing one would have
   reshaped the URL.
 - `WireMVCCodegen/ControllerClientGeneration.swift` — emits `struct <Name>Client` plus a module-scope
-  `var <name>` per controller, for a test consumer only. `@RawRoute` contributes no method (it owns its own
-  wire format) and a controller with no typed route emits no client.
+  `var <name>` per controller, for a test consumer only. A controller with no verb-annotated route emits no
+  client.
+- **`@RawRoute` gets a shim, not nothing.** Its parameters are all *roles* and it writes its own response, so
+  neither side is typeable — but the request line still is. The shim takes one `String` per `{placeholder}`
+  in the path template (a raw route declares no bindings, so the template is the only source), plus a
+  pass-through `headers:`, and returns the untyped `TestResponse`. It applies no status rule: a raw route may
+  answer a non-2xx or stream a `206` by design. So a raw route stops being a stringly-typed path in the test
+  even though its payload stays untyped. Only `@NotFound` gets nothing — an unmatched path is not
+  addressable as a route.
 - `WireMVCCodegen/RouteShape.swift` — the verb/path/attribute rules the witness and the client both read, so
   they cannot drift on route shape.
 
@@ -31,9 +38,9 @@ a 401 — so the alternative (a typed envelope) would have made every happy-path
 serve the failure case. Instead the happy path carries no status assertion and no decode, and a failure reads
 `#require(throws: WireMVCRouteError.self)` then asserts `error.status`.
 
-What is **not** typed, deliberately: `@RawRoute` streaming, the `@NotFound` fallback, and the Bootstrap's
-introspection mount. None is addressable as a controller route, so `TestClient`'s untyped verbs remain
-first-class rather than becoming an unmaintained fallback.
+What has **no** generated surface at all: the `@NotFound` fallback and the Bootstrap's introspection mount —
+neither is addressable as a controller route. `TestClient`'s untyped verbs remain first-class for those, and
+for any request a test wants to malform deliberately.
 
 ## The two problems
 

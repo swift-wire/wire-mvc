@@ -149,6 +149,9 @@ let loopbackHost = "127.0.0.1"
 public enum WireMVCTestingError: Error {
     /// The server bound no listening address to read a port from.
     case noListeningPort
+    /// A route returned without sending a response — there is no head to report. Live, the server aborts the
+    /// connection; in-process there is nothing to abort, so it surfaces here rather than as a plausible 500.
+    case routeDidNotRespond(String)
 }
 
 /// The suite trait standing up a `@WireMVCBootstrap` app's test server — `@Suite(.wiremvc())`. Non-generic
