@@ -204,6 +204,12 @@ public func generateRouteContributors(
     if !controllerExtensions.extensions.isEmpty || !composition.bootstraps.isEmpty {
         composition.imports.formUnion(extraImports.map { "import \($0)" })
     }
+    // A raw-route shim's signature names `HTTPResponse` (HTTPTypes) and `HTTPClientRequestBody` (HTTPAPIs),
+    // which a consumer's own sources may not import.
+    if controllerExtensions.clients.contains(where: { $0.source.contains("HTTPClientRequestBody") }) {
+        composition.imports.insert("import HTTPTypes")
+        composition.imports.insert("import HTTPAPIs")
+    }
 
     // The `@WireMVCBootstrap` composition root's generated entry (and the keyed harness), emitted last at
     // module scope.

@@ -42,12 +42,15 @@ struct ReplaceTests {
 
     /// The raw-route shim. `@RawRoute` writes its own response, so nothing about the payload is typed — but
     /// the request line is: `rawGreeting(name:)` is `GET /hello/raw/{name}`, derived from the route's own
-    /// annotation, so renaming it breaks this at compile time. The response comes back untyped, and a
-    /// non-2xx would not be a failure here the way it is for a typed method.
+    /// annotation, so renaming it breaks this at compile time. The shim is shaped after the proposal's
+    /// `HTTPClient.perform` — head and body reader into a closure — and a non-2xx would not be a failure here
+    /// the way it is for a typed method.
     @Test func rawRouteShimDerivesThePath() async throws {
-        let response = try await helloController.rawGreeting(name: "Alice")
-        #expect(response.status == 200)
-        #expect(response.bodyText == "raw:FAKE:Alice")
+        let body = try await helloController.rawGreeting(name: "Alice") { response, reader in
+            #expect(response.status == .ok)
+            return try await reader.collectText()
+        }
+        #expect(body == "raw:FAKE:Alice")
     }
 
     /// Mode parity, 2/3 — the `@NotFound` `@RawRoute` fallback. No typed method exists for it: an unmatched

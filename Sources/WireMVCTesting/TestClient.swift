@@ -1,5 +1,5 @@
 public import Foundation
-import HTTPTypes
+public import HTTPTypes
 
 #if canImport(FoundationNetworking)
 import FoundationNetworking
@@ -100,17 +100,30 @@ public struct TestClient: Sendable {
         case .loopback:
             let request = makeRequest(method, path, body: body, headers: headers)
             let (data, response) = try await URLSession.shared.data(for: request)
-            return TestResponse(status: (response as? HTTPURLResponse)?.statusCode ?? -1, body: data)
+            return TestResponse(head: Self.head(of: response), body: data)
         case .inProcess(let dispatch):
             let request = makeHTTPRequest(method, path, headers: headers)
             guard let response = try await dispatch(request, body.map(Array.init) ?? []) else {
                 // The handler returned without sending a response. Live, the server would abort the
                 // connection; in-process there is nothing to abort, so surface it as a distinguishable
                 // status rather than a plausible-looking 500.
-                return TestResponse(status: -1, body: Data())
+                return TestResponse(head: nil, body: Data())
             }
-            return TestResponse(status: response.head.status.code, body: Data(response.body))
+            return TestResponse(head: response.head, body: Data(response.body))
         }
+    }
+
+    /// Rebuild the proposal's response head from Foundation's. `URLSession` reports the status and header
+    /// fields separately from the body, so this is the loopback transport's one lossy seam — header *order*
+    /// and repeated fields are not recoverable from `allHeaderFields`.
+    private static func head(of response: URLResponse) -> HTTPResponse? {
+        guard let http = response as? HTTPURLResponse else { return nil }
+        var head = HTTPResponse(status: .init(code: http.statusCode))
+        for (rawName, rawValue) in http.allHeaderFields {
+            guard let rawName = rawName as? String, let name = HTTPField.Name(rawName) else { continue }
+            head.headerFields[name] = String(describing: rawValue)
+        }
+        return head
     }
 
     /// The correlation header value for the current request, or `nil` outside a `withBindValues` closure.
@@ -170,12 +183,25 @@ public struct TestClient: Sendable {
     }
 }
 
-/// The result of a `TestClient` request — status code and body, with typed JSON decoding.
+/// The result of a `TestClient` request — the response head and body, with typed JSON decoding.
 public struct TestResponse: Sendable {
-    /// The HTTP status code.
-    public let status: Int
+    /// The full response head: status *and* header fields. Carried whole rather than reduced to a status
+    /// code, because a `@RawRoute` writes its own framing — a multipart boundary, a cache header — and a
+    /// suite driving one needs to assert it.
+    ///
+    /// `nil` when the handler returned without responding at all: there is genuinely no head then, and
+    /// inventing one would mean an out-of-range `HTTPResponse.Status` (whose `init` preconditions on
+    /// `0...999`) or a plausible-looking `500` that hides the bug.
+    public let head: HTTPResponse?
     /// The raw response body bytes.
     public let body: Data
+
+    /// The HTTP status code, or ``TestResponse/unanswered`` when the handler never responded.
+    public var status: Int { head?.status.code ?? Self.unanswered }
+
+    /// The `status` of a response that was never sent. Not a real HTTP code, so it can't be confused with
+    /// one the app chose.
+    public static let unanswered = -1
 
     /// The response body decoded as UTF-8 text.
     public var bodyText: String {

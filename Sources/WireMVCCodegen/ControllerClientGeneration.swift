@@ -87,11 +87,21 @@ func renderControllerClient(controller: ControllerDeclaration, pathPrefix: Strin
 /// is a single `routeResponse` call plus a decode.
 private func renderClientMethod(_ route: ClientRoute) -> String {
     var signatureParts = route.parameters.map { "\($0.name): \($0.type)" }
-    // A raw route declares no header binding to derive from, but a test may still need to send one — and
-    // without this the only way to reach the route would be the untyped client, losing the derived path.
-    if route.isRaw { signatureParts.append("headers: [String: String] = [:]") }
+    if route.isRaw {
+        // A raw route declares no header or body binding to derive from, but a test may still need to send
+        // them — without these the only way to reach the route would be the untyped client, losing the
+        // derived path. Both the body and the response handler mirror the proposal's `HTTPClient.perform`,
+        // so a route that reads or writes incrementally is expressible in the same shape the app's own
+        // clients use.
+        signatureParts.append("headers: [String: String] = [:]")
+        signatureParts.append("body: consuming HTTPClientRequestBody<TestRequestWriter>? = nil")
+        signatureParts.append(
+            "responseHandler: (HTTPResponse, consuming TestResponseReader) async throws -> WireMVCRawReturn"
+        )
+    }
     let signature = signatureParts.joined(separator: ", ")
-    let returns = route.isRaw ? " -> TestResponse" : route.responseType.map { " -> \($0)" } ?? ""
+    let generics = route.isRaw ? "<WireMVCRawReturn: ~Copyable>" : ""
+    let returns = route.isRaw ? " -> WireMVCRawReturn" : route.responseType.map { " -> \($0)" } ?? ""
 
     // `@Path`/`@Query`/`@Header` values are converted with `String(_:)`, the exact inverse of the
     // `LosslessStringConvertible` parse the route's binding does — so what the test passes is what the
@@ -105,6 +115,8 @@ private func renderClientMethod(_ route: ClientRoute) -> String {
     if let queryItems { arguments.append("query: \(queryItems)") }
     if route.isRaw {
         arguments.append("headers: headers")
+        arguments.append("body: body")
+        arguments.append("responseHandler: responseHandler")
     } else if let headers {
         arguments.append("headers: \(headers)")
     }
@@ -112,11 +124,11 @@ private func renderClientMethod(_ route: ClientRoute) -> String {
         arguments.append("json: \(body.name)")
     }
 
-    let entryPoint = route.isRaw ? "rawRouteResponse" : "routeResponse"
+    let entryPoint = route.isRaw ? "performRawRoute" : "routeResponse"
     let call = "try await client.\(entryPoint)(\(arguments.joined(separator: ", ")))"
     let body: String
     if route.isRaw {
-        // The raw route owns its response, so the shim hands it back untouched — status included.
+        // The raw route owns its response, so the shim forwards the handler's return untouched.
         body = "return \(call)"
     } else if let responseType = route.responseType {
         body = """
@@ -128,10 +140,13 @@ private func renderClientMethod(_ route: ClientRoute) -> String {
         body = "_ = \(call)"
     }
 
-    let note = route.isRaw ? " — `@RawRoute`, so the response is untyped and a non-2xx is not a failure" : ""
+    let note =
+        route.isRaw
+        ? " — `@RawRoute`: the response head and body reader are handed to `responseHandler`, and a non-2xx is not a failure"
+        : ""
     return """
         /// `\(route.wireMethod) \(route.pathTemplate)`\(note)
-        func \(route.functionName)(\(signature)) async throws\(returns) {
+        func \(route.functionName)\(generics)(\(signature)) async throws\(returns) {
         \(body)
         }
         """

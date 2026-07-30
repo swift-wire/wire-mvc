@@ -28,6 +28,14 @@ private struct RouteEchoHandler: HTTPServerRequestHandler {
         _ = try await reader.collect(into: &received, maximumSize: 1_000_000)
 
         let path = request.path ?? ""
+        if path.hasPrefix("/echo-body") {
+            var body = UniqueArray<UInt8>(copying: Array(#"""#.utf8))
+            body.append(moving: received.startIndex..<received.endIndex, from: &received)
+            var closing = UniqueArray<UInt8>(copying: Array(#"""#.utf8))
+            body.append(moving: closing.startIndex..<closing.endIndex, from: &closing)
+            try await responseSender.sendAndFinish(HTTPResponse(status: .ok), buffer: &body)
+            return
+        }
         if path.hasPrefix("/fail") {
             var body = UniqueArray<UInt8>(copying: Array("nope".utf8))
             try await responseSender.sendAndFinish(HTTPResponse(status: .unauthorized), buffer: &body)
@@ -94,6 +102,48 @@ private struct RouteEchoHandler: HTTPServerRequestHandler {
             #expect(error.bodyText == "nope")
             #expect(error.route == "GET /fail")
             #expect(error.description.contains("401"))
+        }
+    }
+
+    /// The raw form hands over the response head and a body reader, applying no status rule — and the head
+    /// is the whole `HTTPResponse`, so a raw route's own framing is assertable where a status code alone
+    /// would lose it.
+    @Test func theRawFormHandsOverTheHeadAndReader() async throws {
+        let mode = WireMVCTestMode.inProcess
+        try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: RouteEchoHandler(), services: []) {
+            let text = try await TestClient.current.performRawRoute(method: "GET", path: "/fail") {
+                response,
+                reader in
+                // A non-2xx is not a failure for a raw route: the closure still runs.
+                #expect(response.status == .unauthorized)
+                return try await reader.collectText()
+            }
+            #expect(text == "nope")
+        }
+    }
+
+    /// The request body is the proposal's `HTTPClientRequestBody`, so both directions of a raw shim carry
+    /// `perform`'s shape. A caller streaming into the writer reaches the route as one body — collected today,
+    /// since neither transport is incremental yet, but expressed in the shape that survives that change.
+    @Test func aStreamedRequestBodyReachesTheRoute() async throws {
+        let mode = WireMVCTestMode.inProcess
+        try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: RouteEchoHandler(), services: []) {
+            let echoed = try await TestClient.current.performRawRoute(
+                method: "POST",
+                path: "/echo-body",
+                body: .restartable { writer in
+                    var writer = writer
+                    var first = UniqueArray<UInt8>(copying: Array("one".utf8))
+                    try await writer.write(buffer: &first)
+                    var last = UniqueArray<UInt8>(copying: Array("two".utf8))
+                    try await writer.finish(buffer: &last, finalElement: nil)
+                }
+            ) { response, reader in
+                #expect(response.status == .ok)
+                return try await reader.collectText()
+            }
+            // The handler echoes the request body it received, so the two writes arrive as one body.
+            #expect(echoed == #""onetwo""#)
         }
     }
 

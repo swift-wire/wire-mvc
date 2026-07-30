@@ -1,5 +1,9 @@
+public import AsyncStreaming
+public import BasicContainers
 public import Foundation
+public import HTTPAPIs
 public import HTTPTypes
+import Synchronization
 
 // The runtime half of the generated per-controller clients. `WireMVCRouteGen` emits, for each `@Controller`
 // in a test consumer, a `struct <Name>Client` with one method per typed route — the method's parameters are
@@ -39,6 +43,96 @@ extension WireMVCRouteError: CustomStringConvertible {
     public var description: String {
         let detail = bodyText.isEmpty ? "" : " — \(bodyText)"
         return "\(route) answered \(status.code) \(status.reasonPhrase)\(detail)"
+    }
+}
+
+/// Collects a request body a caller streams in. A `Sendable` reference because the writer that fills it is
+/// `consuming`-threaded through `HTTPClientRequestBody.produce(into:)`.
+final class RequestBodySink: Sendable {
+    private let collected = Mutex<[UInt8]>([])
+
+    func append(_ bytes: [UInt8]) {
+        guard !bytes.isEmpty else { return }
+        collected.withLock { $0.append(contentsOf: bytes) }
+    }
+
+    var bytes: [UInt8] { collected.withLock { $0 } }
+}
+
+/// The writer a raw-route shim's request body is produced into — the caller's end of the request, matching
+/// what the proposal's `HTTPClient.perform` hands an `HTTPClientRequestBody`.
+///
+/// Buffer-backed today for the same reason ``TestResponseReader`` is: neither transport streams yet, so the
+/// body is collected and sent whole. The *shape* is what matters — a caller writing incrementally, or
+/// declaring a seekable body for a resumable upload, compiles against this now and keeps working when the
+/// transports become incremental.
+public struct TestRequestWriter: CallerAsyncWriter {
+    public typealias WriteElement = UInt8
+    public typealias WriteFailure = Never
+    public typealias FinalElement = HTTPFields?
+
+    let sink: RequestBodySink
+
+    public mutating func write<Buffer: RangeReplaceableContainer<UInt8> & ~Copyable>(
+        buffer: inout Buffer
+    ) async throws(Never) where Buffer.Element: ~Copyable {
+        sink.append(drainBytes(&buffer))
+    }
+
+    public consuming func finish<Buffer: RangeReplaceableContainer<UInt8> & ~Copyable>(
+        buffer: inout Buffer,
+        finalElement: consuming FinalElement
+    ) async throws(Never) where Buffer.Element: ~Copyable {
+        sink.append(drainBytes(&buffer))
+    }
+}
+
+/// The response body reader a raw-route shim hands to its response handler. An `AsyncReader` over the
+/// response bytes, matching what the proposal's `HTTPClient.perform` gives its closure — the same shape the
+/// route's own handler writes through, read from the other end.
+///
+/// Buffer-backed today: it delivers the whole body in one read, fused with the end-of-stream signal, because
+/// neither transport streams yet. It is a separate type from ``InProcessReader`` (which reads a *request*
+/// body) rather than a reuse, precisely because the two diverge once the response side becomes incremental.
+public struct TestResponseReader: AsyncReader {
+    public typealias ReadElement = UInt8
+    public typealias ReadFailure = Never
+    public typealias FinalElement = HTTPFields?
+    public typealias Buffer = UniqueArray<UInt8>
+
+    private let bytes: Data
+
+    init(_ bytes: Data) { self.bytes = bytes }
+
+    public mutating func read<Return: ~Copyable, Failure: Error>(
+        body: (inout Buffer, consuming FinalElement?) async throws(Failure) -> Return
+    ) async throws(EitherError<ReadFailure, Failure>) -> Return {
+        var buffer = UniqueArray<UInt8>(copying: Array(bytes))
+        do {
+            // `.some(nil)` — the terminal chunk, carrying no trailers.
+            return try await body(&buffer, .some(nil))
+        } catch {
+            throw EitherError.second(error)
+        }
+    }
+}
+
+extension TestResponseReader {
+    /// Drain the body to bytes. A convenience over `collect(into:maximumSize:)` so a suite asserting a raw
+    /// route's payload doesn't manage a buffer.
+    public consuming func collectBytes(maximumSize: Int = 1_000_000) async throws -> [UInt8] {
+        var buffer = UniqueArray<UInt8>()
+        _ = try await collect(into: &buffer, maximumSize: maximumSize)
+        let span = buffer.span
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(span.count)
+        for index in 0..<span.count { bytes.append(span[index]) }
+        return bytes
+    }
+
+    /// Drain the body and decode it as UTF-8 — the common assertion for a text or framed raw response.
+    public consuming func collectText(maximumSize: Int = 1_000_000) async throws -> String {
+        String(decoding: try await collectBytes(maximumSize: maximumSize), as: UTF8.self)
     }
 }
 
@@ -84,27 +178,53 @@ extension TestClient {
         )
     }
 
-    /// Drive a `@RawRoute` and return its response **as-is**, including a non-2xx.
+    /// Drive a `@RawRoute`, handing its response head and body reader to `responseHandler`.
     ///
-    /// A raw route writes its own response — status, framing and all — so there is no declared type to
-    /// decode and no status that counts as the failure case: a route may answer `404` or stream a
-    /// `206` by design. The generated shim therefore returns ``TestResponse`` rather than a value, and
-    /// this does not throw for status the way ``routeResponse(method:path:pathParameters:query:headers:)``
-    /// does. What it still gives is the *path*: the template comes from the route's own verb annotation, so
-    /// renaming the route breaks the test.
-    public func rawRouteResponse(
+    /// Shaped after the proposal's `HTTPClient.perform(request:body:options:responseHandler:)`: a raw route
+    /// owns its response — status, headers, framing and all — so there is nothing to decode and nothing that
+    /// counts as the failure case (a route may answer `404` or stream a `206` by design). Handing back the
+    /// whole `HTTPResponse` rather than a status code makes a raw route's own framing assertable — the
+    /// `Content-Type` boundary of a multipart export, a cache header, a trailer — which a buffered
+    /// status-plus-body value cannot express.
+    ///
+    /// What the shim still derives is the request line: the verb and the path template come from the route's
+    /// own annotation, so renaming the route breaks the test.
+    ///
+    /// - Note: The body is currently delivered in **one** chunk, so this reader observes the response after
+    ///   the handler has finished writing it — the closure shape is honest about ownership but does not yet
+    ///   make incremental framing or backpressure observable. Both transports buffer: in-process accumulates
+    ///   into a sink, and the loopback client uses `URLSession.data`. Genuine streaming needs in-process to
+    ///   hand each `write` to the consumer through a rendezvous channel (as `WireMVCServerTransport`'s bridge
+    ///   does) and the loopback path to move to an incremental client. Tests written against this signature
+    ///   do not change when that lands.
+    ///
+    /// The request body is the proposal's own `HTTPClientRequestBody`, so both directions carry `perform`'s
+    /// shape rather than only the response. A caller sending a fixed buffer writes `body: .data(…)`; one
+    /// exercising a route that reads incrementally writes `.restartable { writer in … }` or
+    /// `.seekable { offset, writer in … }` and keeps working unchanged when the transports stream.
+    public func performRawRoute<Return: ~Copyable>(
         method: String,
         path: String,
         pathParameters: [String: String] = [:],
         query: [(name: String, value: String)] = [],
-        headers: [String: String] = [:]
-    ) async throws -> TestResponse {
-        try await send(
-            method,
-            Self.resolve(template: path, pathParameters: pathParameters, query: query),
-            body: nil,
-            headers: headers
-        )
+        headers: [String: String] = [:],
+        body: consuming HTTPClientRequestBody<TestRequestWriter>? = nil,
+        responseHandler: (HTTPResponse, consuming TestResponseReader) async throws -> Return
+    ) async throws -> Return {
+        let resolved = Self.resolve(template: path, pathParameters: pathParameters, query: query)
+        var requestBody: Data?
+        if let body {
+            // Drive the caller's body through a writer, exactly as a proposal client does. It is collected
+            // rather than streamed to the socket, so a `.seekable` body is produced once from offset 0.
+            let sink = RequestBodySink()
+            try await body.produce(into: TestRequestWriter(sink: sink))
+            requestBody = Data(sink.bytes)
+        }
+        let received = try await send(method, resolved, body: requestBody, headers: headers)
+        guard let head = received.head else {
+            throw WireMVCTestingError.routeDidNotRespond("\(method) \(resolved)")
+        }
+        return try await responseHandler(head, TestResponseReader(received.body))
     }
 
     /// Send an already-resolved request and apply the non-2xx rule. Both public forms resolve the template
@@ -116,7 +236,11 @@ extension TestClient {
         body: Data?
     ) async throws -> TestResponse {
         let response = try await send(method, resolved, body: body, headers: headers)
-        let status = HTTPResponse.Status(code: response.status)
+        // A handler that returned without responding has no status to classify — and `Status(code:)`
+        // preconditions on `0...999`, so the `unanswered` sentinel must not reach it.
+        guard let status = response.head?.status else {
+            throw WireMVCTestingError.routeDidNotRespond("\(method) \(resolved)")
+        }
         guard status.kind == .successful else {
             throw WireMVCRouteError(status: status, body: response.body, route: "\(method) \(resolved)")
         }

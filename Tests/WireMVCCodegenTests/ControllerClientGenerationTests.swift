@@ -116,8 +116,9 @@ struct ControllerClientGenerationTests {
     }
 
     /// A `@RawRoute` gets a shim, not a typed method: its parameters are all roles and it writes its own
-    /// response, so nothing on either side is typed — but the request line still is. The shim returns the
-    /// untyped `TestResponse` and applies no status rule, because a raw route may answer a non-2xx by design.
+    /// response, so nothing on either side is typed — but the request line still is. The shim is shaped after
+    /// the proposal's `HTTPClient.perform`, handing the response head and a body reader to a closure, and
+    /// applies no status rule because a raw route may answer a non-2xx by design.
     @Test func rawRoutesGetAnUntypedShim() {
         let declaration = controller(
             """
@@ -135,8 +136,13 @@ struct ControllerClientGenerationTests {
         )
         let rendered = try! #require(renderControllerClient(controller: declaration, pathPrefix: "/exports"))
         #expect(rendered.contains("func fetch(id: String) async throws -> Export"))
-        #expect(rendered.contains("func stream(headers: [String: String] = [:]) async throws -> TestResponse"))
-        #expect(rendered.contains(#"client.rawRouteResponse(method: "GET", path: "/exports/stream""#))
+        #expect(rendered.contains("func stream<WireMVCRawReturn: ~Copyable>("))
+        #expect(
+            rendered.contains(
+                "responseHandler: (HTTPResponse, consuming TestResponseReader) async throws -> WireMVCRawReturn"
+            )
+        )
+        #expect(rendered.contains(#"client.performRawRoute(method: "GET", path: "/exports/stream""#))
         // The typed route keeps the status rule; the raw one must not.
         #expect(rendered.contains(#"client.routeResponse(method: "GET", path: "/exports/{id}""#))
     }
@@ -158,7 +164,7 @@ struct ControllerClientGenerationTests {
             """
         )
         let rendered = try! #require(renderControllerClient(controller: declaration, pathPrefix: "/exports"))
-        #expect(rendered.contains("func part(id: String, part: String, headers: [String: String] = [:])"))
+        #expect(rendered.contains("func part<WireMVCRawReturn: ~Copyable>(id: String, part: String,"))
         #expect(rendered.contains(#"pathParameters: ["id": String(id), "part": String(part)]"#))
     }
 
