@@ -666,22 +666,11 @@ extension RouteBlockGenerator {
         let name: String?
     }
 
-    private func verbMethod(for name: String) -> String? {
-        switch name {
-        case "Get": return ".get"
-        case "Post": return ".post"
-        case "Put": return ".put"
-        case "Patch": return ".patch"
-        case "Delete": return ".delete"
-        default: return nil
-        }
-    }
-
     fileprivate func verb(from attributes: AttributeListSyntax) -> Verb? {
         for case let .attribute(attr) in attributes {
             let name = attr.attributeName.trimmedDescription
-            if let method = verbMethod(for: name) {
-                return Verb(method: method, path: firstStringLiteral(attr.arguments))
+            if let method = routeVerbMethod(for: name) {
+                return Verb(method: method, path: routeFirstStringLiteral(attr.arguments))
             }
         }
         return nil
@@ -691,7 +680,7 @@ extension RouteBlockGenerator {
         for case let .attribute(attr) in attributes {
             let name = attr.attributeName.trimmedDescription
             if routeBindingWrappers.contains(name) {
-                return Binding(wrapper: name, name: firstStringLiteral(attr.arguments))
+                return Binding(wrapper: name, name: routeFirstStringLiteral(attr.arguments))
             }
         }
         return nil
@@ -717,23 +706,15 @@ extension RouteBlockGenerator {
         return nil
     }
 
-    private func firstStringLiteral(_ arguments: AttributeSyntax.Arguments?) -> String? {
-        guard case let .argumentList(list) = arguments, let first = list.first else { return nil }
-        return first.expression.as(StringLiteralExprSyntax.self)?.representedLiteralValue
-    }
-
     /// Join a controller prefix and a verb subpath into one `{name}`-template path.
     private func joinPath(_ prefix: String, _ sub: String) -> String {
-        let head = prefix.hasSuffix("/") ? String(prefix.dropLast()) : prefix
-        let tail = sub.isEmpty ? "" : (sub.hasPrefix("/") ? sub : "/" + sub)
-        let joined = head + tail
-        return joined.isEmpty ? "/" : joined
+        routeJoinPath(prefix, sub)
     }
 }
 
 /// The binding-wrapper attribute names a handler parameter can carry. File-scope (not a stored property)
 /// so the generator's methods can live in extensions.
-private let routeBindingWrappers: Set<String> = ["Path", "Query", "JSONBody", "Header"]
+let routeBindingWrappers: Set<String> = ["Path", "Query", "JSONBody", "Header"]
 
 // MARK: - Error response codegen (`@ErrorResponse`)
 

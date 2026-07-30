@@ -88,7 +88,9 @@ public struct TestClient: Sendable {
         return merged
     }
 
-    private func send(
+    /// The one send both surfaces funnel through — the untyped verbs above and the generated typed clients'
+    /// `routeResponse`, which layers path templating and the non-2xx rule on top.
+    func send(
         _ method: String,
         _ path: String,
         body: Data?,

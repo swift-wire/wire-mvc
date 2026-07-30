@@ -1,12 +1,39 @@
 # Controller-scoped testing — a design note
 
-> **Status:** idea, for revisiting after Phase 5 of `../TestingArchitecture.md`. Nothing here is built.
+> **Status:** the **typed client half is built** (2026-07-30) — see "What was built" below. The
+> per-controller *bind values* half is not, and still depends on swift-wire keeping its per-subject doubles
+> sets. Originally an idea note, written for revisiting after Phase 5 of `../TestingArchitecture.md`.
 > Related: swift-wire's `PendingIssues/11` (one `TestingKey` per target), which this would partly obviate.
 
 Most WireMVC testing happens at the **controller** level: a suite exercises one controller's routes with its
 dependencies mocked. But neither half of the harness is scoped to a controller — the doubles you supply are
 scoped to the *key*, and the client you drive is scoped to *nothing*. This note proposes making the
 controller the unit of both.
+
+## What was built
+
+The typed client, which needed nothing from swift-wire:
+
+- `WireMVCTesting/TypedRouteClient.swift` — `WireMVCRouteError` (status, body, and the route that produced
+  it) and `TestClient.routeResponse(...)`, which owns path templating, the query string, and the non-2xx
+  rule. Percent-encoding uses RFC 3986's unreserved set, not Foundation's `.urlQueryAllowed`: that is a
+  whole-query set which leaves `/`, `&`, `=` and `+` legal, so a path parameter containing one would have
+  reshaped the URL.
+- `WireMVCCodegen/ControllerClientGeneration.swift` — emits `struct <Name>Client` plus a module-scope
+  `var <name>` per controller, for a test consumer only. `@RawRoute` contributes no method (it owns its own
+  wire format) and a controller with no typed route emits no client.
+- `WireMVCCodegen/RouteShape.swift` — the verb/path/attribute rules the witness and the client both read, so
+  they cannot drift on route shape.
+
+**The decision that shaped it:** a typed method returns the decoded response and *throws* `WireMVCRouteError`
+on a non-2xx. Error assertions are first-class — in the examples' mocked suite, one of the two tests asserts
+a 401 — so the alternative (a typed envelope) would have made every happy-path test unwrap an optional to
+serve the failure case. Instead the happy path carries no status assertion and no decode, and a failure reads
+`#require(throws: WireMVCRouteError.self)` then asserts `error.status`.
+
+What is **not** typed, deliberately: `@RawRoute` streaming, the `@NotFound` fallback, and the Bootstrap's
+introspection mount. None is addressable as a controller route, so `TestClient`'s untyped verbs remain
+first-class rather than becoming an unmaintained fallback.
 
 ## The two problems
 

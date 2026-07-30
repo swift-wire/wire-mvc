@@ -21,9 +21,10 @@ struct ReplaceTests {
     /// resolves to the target's `@Replaces` `FakeGreeter` — so the body is `FAKE:Alice`, not the real
     /// `Hello, Alice!`. This is the whole point: the app's real binding was superseded by the test double.
     @Test func serveHelloUsesReplacedFakeGreeter() async throws {
-        let response = try await TestClient.current.get("/hello/Alice")
-        #expect(response.status == 200)
-        let greeting = try response.json(Greeting.self)
+        // Through the generated typed client: `hello(name:)` is `GET /hello/{name}`, and its return is the
+        // route's own `@JSONResponse` type. No path string, no status assertion, no decode — and renaming
+        // the route or changing `Greeting` breaks this at compile time rather than at runtime.
+        let greeting = try await helloController.hello(name: "Alice")
         #expect(greeting.message == "FAKE:Alice")
         #expect(greeting.message != "Hello, Alice!")
     }
@@ -32,11 +33,16 @@ struct ReplaceTests {
     /// /hello/tenant` throws, and the tier maps it to a 400 in-process exactly as it does live: the tier is
     /// folded into the route by the same build, so the transport never sees it.
     @Test func globalErrorTierMapsToBadRequest() async throws {
-        let response = try await TestClient.current.get("/hello/tenant")
-        #expect(response.status == 400)
+        // A typed method returns the decoded response, so a non-2xx arrives as a throw carrying the status.
+        let error = try await #require(throws: WireMVCRouteError.self) {
+            try await helloController.tenant()
+        }
+        #expect(error.status == .badRequest)
     }
 
-    /// Mode parity, 2/3 — the `@NotFound` `@RawRoute` fallback. An unmatched path reaches the Bootstrap's own
+    /// Mode parity, 2/3 — the `@NotFound` `@RawRoute` fallback. No typed method exists for it: an unmatched
+    /// path is not addressable by route, so this stays on the untyped client, which is exactly what that
+    /// surface is for. An unmatched path reaches the Bootstrap's own
     /// handler, which writes its 404 through the response sender directly (the raw path, not a typed
     /// response) — so this also covers ``InProcessResponseSender`` serving a route that owns its own writes.
     @Test func notFoundFallbackServes() async throws {
@@ -45,7 +51,8 @@ struct ReplaceTests {
         #expect(response.bodyText.contains("no route here"))
     }
 
-    /// Mode parity, 3/3 — the `@Middleware`-guarded introspection mount. `/wiring` is registered before
+    /// Mode parity, 3/3 — the `@Middleware`-guarded introspection mount. Also untyped: `/wiring` is mounted
+    /// by the Bootstrap, not declared on a `@Controller`, so no client covers it. `/wiring` is registered before
     /// `finalize()` with its guard chain folded around it, so it is a real route in-process too and answers
     /// the graph's wiring model as JSON.
     @Test func guardedIntrospectionRouteServes() async throws {
