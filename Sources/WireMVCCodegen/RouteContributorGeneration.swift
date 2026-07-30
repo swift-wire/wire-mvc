@@ -139,9 +139,8 @@ public let contributorProxyScopeEntryAccessor = "_wireEnterScope"
 /// with the runner's own entry. `extraImports` are `import <Module>` lines for the modules the generated
 /// content depends on: the Wire-aware dependencies whose sources were re-parsed into this consumer (a test
 /// target re-composing the app), so the extensions can name the app's `package`/`public` controllers,
-/// response types, and factories; and a test consumer's test-transport modules (e.g.
-/// `WireMVCTestingNIOHTTPServer`), whose retroactive `WireMVCTestServer` conformance the generated factory
-/// needs in scope to hand the app's concrete server to `serveForSuite`.
+/// response types, and factories. The generated factory names no concrete server, so nothing else has to be
+/// imported for it: whatever bound a transport needs is discharged where the test writes its mode.
 public func generateRouteContributors(
     files: [(path: String, source: String)],
     testEntry: Bool = false,

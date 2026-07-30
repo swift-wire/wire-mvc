@@ -10,9 +10,9 @@ import WireMVCRouter
 // The WireMVC-native composition root. `@Singleton` makes it a graph binding (its `@Inject` resolves);
 // `@WireMVCBootstrap` makes the plugin generate the program entry point (`@main`) for a program consumer,
 // or the companion `.wiremvc()` suite-trait factory for a test consumer. There is no `main.swift` and no
-// hand-written `@main` — `swift run
-// WireMVCBootstrapExample` bootstraps the graph, constructs this type, registers the collated
-// `HelloController` onto the package `WireRouter`, and serves on 127.0.0.1 (an ephemeral port).
+// hand-written `@main` — `swift run WireMVCBootstrapExample` bootstraps the graph, constructs this type,
+// registers the collated `HelloController` onto the package `WireRouter`, and serves on `127.0.0.1:8080`
+// (the port its `ServerConfig` binding carries).
 
 @Singleton
 @WireMVCBootstrap
