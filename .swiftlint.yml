@@ -9,6 +9,9 @@ analyzer_rules:
   - unused_import
 included:
   - Sources
+  # The runnable fixtures live in their own package (see Fixtures/Package.swift) but are still this
+  # repo's code, so they stay linted.
+  - Fixtures/Sources
 line_length: 150
 function_body_length:
   warning: 50

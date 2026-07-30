@@ -40,16 +40,13 @@ let package = Package(
         // core (and the ServerTransport adapter) don't pull it in.
         .library(name: "WireMVCRouter", targets: ["WireMVCRouter"]),
         .library(name: "WireMVCServerTransport", targets: ["WireMVCServerTransport"]),
-        // Test support for a `@WireMVCBootstrap` app — the generated `.wiremvc()` suite trait serves the
-        // app on an ephemeral port and points `TestClient.current` at it. The generated `_WireRoutes.swift`
-        // emits that factory (and imports this) for a test consumer, so a `@WireMVCBootstrap` test target links it.
-        // Server-agnostic: it names only the proposal's abstract `HTTPServer`, so a consumer of this (or of
-        // `WireMVC`) resolves no concrete server package.
+        // Test support for a `@WireMVCBootstrap` app — the generated `.wiremvc(_:)` suite trait stands the app
+        // up on the server its mode carries and points `TestClient.current` at it. The generated
+        // `_WireRoutes.swift` emits that factory (and imports this) for a test consumer, so a
+        // `@WireMVCBootstrap` test target links it. Server-agnostic by default: it names only the proposal's
+        // abstract `HTTPServer`, so a consumer resolves no concrete server package unless it enables the
+        // `NIOHTTPServer` trait.
         .library(name: "WireMVCTesting", targets: ["WireMVCTesting"]),
-        // The opt-in NIO half of the test support — `extension NIOHTTPServer: WireMVCTestServer`. A test
-        // target whose app serves on `NIOHTTPServer` depends on this; it is the only product that pulls
-        // `swift-http-server` into a consumer's graph.
-        .library(name: "WireMVCTestingNIOHTTPServer", targets: ["WireMVCTestingNIOHTTPServer"]),
         // The adapter-owned build plugin a WireMVC consumer applies (instead of swift-wire's
         // WireBuildPlugin) — it runs WireGen + WireMVCRouteGen, emitting the proxy structs + witnesses.
         .plugin(name: "WireMVCBuildPlugin", targets: ["WireMVCBuildPlugin"]),
@@ -59,7 +56,12 @@ let package = Package(
         // stays proposal-only and doesn't resolve OpenAPIRuntime; enable it to use the
         // `WireMVCServerTransport` adapter, which serves proposal-native WireMVC controllers on a
         // `some ServerTransport` (Hummingbird/Vapor via swift-openapi-hummingbird/-vapor).
-        .trait(name: "ServerTransport")
+        .trait(name: "ServerTransport"),
+        // Opt-in `NIOHTTPServer` test support — the `WireMVCTestServer` conformance and the
+        // `.swiftHttpServer` suite mode. Off by default so `swift-http-server` is pruned from the graph
+        // of a consumer that doesn't serve on it: a framework-agnostic package depending on `WireMVC`
+        // resolves no NIO stack at all. Enable it on the wire-mvc dependency to run a live suite.
+        .trait(name: "NIOHTTPServer"),
     ],
     dependencies: [
         .package(url: "https://github.com/tachyonics/swift-wire.git", branch: "main"),
@@ -140,9 +142,9 @@ let package = Package(
         // calls (`WireMVCSuiteTrait` + `WireMVCTesting.serveForSuite` + `TestClient`). Serves on an ephemeral
         // port and drives real HTTP over `URLSession`, so it depends on `Foundation`. Its `serveForSuite`
         // mirrors `WireMVC.serve`'s generics so the opaque `~Copyable` handler flows in by inference, and it
-        // names only the abstract `HTTPServer` + the `WireMVCTestServer` bound-port seam — the concrete
-        // `NIOHTTPServer` conformance lives in `WireMVCTestingNIOHTTPServer`, so this target (and every
-        // consumer of it or of `WireMVC`) resolves no concrete server package.
+        // names only the abstract `HTTPServer` + the `WireMVCTestServer` bound-port seam. The concrete
+        // `NIOHTTPServer` conformance and the `.swiftHttpServer` mode are `#if NIOHTTPServer`, so with the
+        // trait off this target — and every consumer of it or of `WireMVC` — resolves no server package.
         .target(
             name: "WireMVCTesting",
             dependencies: [
@@ -156,20 +158,15 @@ let package = Package(
                 // `UniqueArray` — the in-process reader's buffer type.
                 .product(name: "BasicContainers", package: "swift-collections"),
                 .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
-            ],
-            swiftSettings: proposalSettings
-        ),
-        // The opt-in NIO half of the test support: `extension NIOHTTPServer: WireMVCTestServer` (the bound-port
-        // read-back off `listeningAddresses`). Split out of `WireMVCTesting` so `swift-http-server` is pulled
-        // in only by a target that actually serves on it — a framework-agnostic consumer of the `WireMVC` or
-        // `WireMVCTesting` products stays clean.
-        .target(
-            name: "WireMVCTestingNIOHTTPServer",
-            dependencies: [
-                "WireMVCTesting",
-                .product(name: "NIOHTTPServer", package: "swift-http-server"),
-                // The framework-owned test server needs a `Logger` to construct `NIOHTTPServer`.
-                .product(name: "Logging", package: "swift-log"),
+                // The `NIOHTTPServer: WireMVCTestServer` conformance and the `.swiftHttpServer` mode, both
+                // behind the `NIOHTTPServer` trait — off by default, so this target names only the abstract
+                // `HTTPServer` and the NIO stack leaves the graph entirely.
+                .product(
+                    name: "NIOHTTPServer",
+                    package: "swift-http-server",
+                    condition: .when(traits: ["NIOHTTPServer"])
+                ),
+                .product(name: "Logging", package: "swift-log", condition: .when(traits: ["NIOHTTPServer"])),
             ],
             swiftSettings: proposalSettings
         ),
@@ -185,135 +182,6 @@ let package = Package(
                 .product(name: "HTTPTypes", package: "swift-http-types"),
             ],
             swiftSettings: proposalSettings
-        ),
-        .executableTarget(
-            name: "WireMVCExample",
-            dependencies: [
-                "WireMVC",
-                "WireMVCRouter",
-                .product(name: "Wire", package: "swift-wire"),
-                .product(name: "HTTPAPIs", package: "swift-http-api-proposal"),
-                .product(name: "AsyncStreaming", package: "swift-async-algorithms"),
-                .product(name: "HTTPTypes", package: "swift-http-types"),
-                .product(name: "BasicContainers", package: "swift-collections"),
-                .product(name: "NIOHTTPServer", package: "swift-http-server"),
-                .product(name: "Logging", package: "swift-log"),
-                // The generated `_WireGraph: WireMVCComposable` conformance references `any Service`.
-                .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
-            ],
-            swiftSettings: proposalSettings,
-            plugins: [.plugin(name: "WireMVCBuildPlugin")]
-        ),
-        // The WireMVC-native composition root (M5.5). A thin `@Singleton @WireMVCBootstrap` app whose
-        // `@main` is *generated* by `WireMVCRouteGen` — proves the assembly `WireMVCExample` hand-writes
-        // collapses to the macro. Kept separate from `WireMVCExample` (which stays the full-matrix
-        // self-checker); this target's `@main` serves, so its correctness is the compile gate + the
-        // codegen golden test.
-        .executableTarget(
-            name: "WireMVCBootstrapExample",
-            dependencies: [
-                "WireMVC",
-                "WireMVCRouter",
-                .product(name: "Wire", package: "swift-wire"),
-                .product(name: "HTTPAPIs", package: "swift-http-api-proposal"),
-                .product(name: "HTTPTypes", package: "swift-http-types"),
-                .product(name: "BasicContainers", package: "swift-collections"),  // UniqueArray (@NotFound body)
-                .product(name: "NIOHTTPServer", package: "swift-http-server"),
-                .product(name: "Logging", package: "swift-log"),
-                .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
-            ],
-            swiftSettings: proposalSettings,
-            // No `WireMVCTesting` dependency: without it the plugin generates the `@main` (a program
-            // consumer) and NOT the `.wiremvc()` suite-trait factory, so the production executable never
-            // links the test client. The test targets below opt in by depending on `WireMVCTesting`.
-            plugins: [.plugin(name: "WireMVCBuildPlugin")]
-        ),
-        // Integration test on the REAL graph. Its own `WireMVCBuildPlugin` re-composes the app's graph
-        // (the app carries `_WireExports.swift`) — inheriting `RealGreeter` unchanged, but replacing
-        // `ServerConfig` with an ephemeral port so it doesn't collide with the sibling replace-suite on
-        // `8080`. Depending on `WireMVCTesting` makes the plugin emit the `.wiremvc()` suite-trait factory
-        // (not a `@main`, which can't live in a test bundle); the test drives `GET /hello/Alice` over real HTTP.
-        .testTarget(
-            name: "WireMVCBootstrapExampleTests",
-            dependencies: [
-                "WireMVCBootstrapExample",
-                "WireMVCTesting",
-                // The `NIOHTTPServer: WireMVCTestServer` conformance the live suite mode needs — this app's
-                // `createServer()` returns `NIOHTTPServer`, so the test target opts into the NIO half. Being
-                // retroactive, it must also be `import`ed by one of the target's own sources.
-                "WireMVCTestingNIOHTTPServer",
-                // A direct dependency so the plugin re-parses WireMVC's adapter directives
-                // (`wireMVCControllerAlias` / `wireMVCBootstrapAlias` / `wireMVCComposition`) when
-                // re-composing the app's graph — without it WireGen wouldn't synthesise the route-contributor
-                // proxies, the global-middleware proxy, or the `WireMVCComposable` conformance.
-                "WireMVC",
-                "WireMVCRouter",
-                .product(name: "Wire", package: "swift-wire"),
-                .product(name: "HTTPAPIs", package: "swift-http-api-proposal"),
-                .product(name: "HTTPTypes", package: "swift-http-types"),
-                .product(name: "BasicContainers", package: "swift-collections"),
-                .product(name: "NIOHTTPServer", package: "swift-http-server"),
-                .product(name: "Logging", package: "swift-log"),
-                .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
-            ],
-            swiftSettings: proposalSettings,
-            plugins: [.plugin(name: "WireMVCBuildPlugin")]
-        ),
-        // The FAKE-graph test: same re-composition, but its `@Replaces FakeGreeter` supersedes the app's
-        // `RealGreeter`. `GET /hello/Alice` returns the fake's `FAKE:Alice` — proving `@Replaces` swapped the
-        // app's real binding for the test double. A separate target because `@Replaces` is target-wide, so
-        // the real-graph integration suite and this fake-graph suite can't share one.
-        //
-        // Also the `.inProcess` gate, and the clearest demonstration of what the mode API buys: this target
-        // names NO concrete server. The generated factory is generic over whatever server its
-        // `WireMVCTestMode` carries, so a socket-free suite depends on neither `NIOHTTPServer` nor
-        // `WireMVCTestingNIOHTTPServer` — unlike its two live siblings.
-        .testTarget(
-            name: "WireMVCBootstrapExampleReplaceTests",
-            dependencies: [
-                "WireMVCBootstrapExample",
-                "WireMVCTesting",
-                // Direct dependency so the plugin re-parses WireMVC's adapter directives — see the sibling
-                // integration test target.
-                "WireMVC",
-                "WireMVCRouter",
-                .product(name: "Wire", package: "swift-wire"),
-                .product(name: "HTTPAPIs", package: "swift-http-api-proposal"),
-                .product(name: "HTTPTypes", package: "swift-http-types"),
-                .product(name: "BasicContainers", package: "swift-collections"),
-                .product(name: "Logging", package: "swift-log"),
-                .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
-            ],
-            swiftSettings: proposalSettings,
-            plugins: [.plugin(name: "WireMVCBuildPlugin")]
-        ),
-        // H2.2b — the keyed test harness. Re-composes the app's graph and declares a `TestingKey` whose
-        // `@BindType` binds the app's request-scoped `NoteBackend` to a mock. The generated keyed
-        // `.wiremvc(NoteTestBinds.mockBackend)` factory threads a `withBindValues`-supplied mock into request
-        // scope through the variant contributor proxy, so `GET /notes/{id}` observes the mock over real HTTP.
-        // Depends on `WireMVCTesting` (the doubles-supply runtime + the suite trait), so the plugin emits the
-        // keyed factory instead of a `@main`.
-        .testTarget(
-            name: "WireMVCBootstrapExampleBindTests",
-            dependencies: [
-                "WireMVCBootstrapExample",
-                "WireMVCTesting",
-                // The `NIOHTTPServer: WireMVCTestServer` conformance the live suite mode needs — this app's
-                // `createServer()` returns `NIOHTTPServer`, so the test target opts into the NIO half. Being
-                // retroactive, it must also be `import`ed by one of the target's own sources.
-                "WireMVCTestingNIOHTTPServer",
-                "WireMVC",
-                "WireMVCRouter",
-                .product(name: "Wire", package: "swift-wire"),
-                .product(name: "HTTPAPIs", package: "swift-http-api-proposal"),
-                .product(name: "HTTPTypes", package: "swift-http-types"),
-                .product(name: "BasicContainers", package: "swift-collections"),
-                .product(name: "NIOHTTPServer", package: "swift-http-server"),
-                .product(name: "Logging", package: "swift-log"),
-                .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
-            ],
-            swiftSettings: proposalSettings,
-            plugins: [.plugin(name: "WireMVCBuildPlugin")]
         ),
         // Opt-in ServerTransport adapter — gated on the `ServerTransport` trait, so OpenAPIRuntime is
         // pruned from resolution unless a consumer enables it. Its sources are `#if ServerTransport`,

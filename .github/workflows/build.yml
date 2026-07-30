@@ -7,12 +7,13 @@ on:
     branches: [ main ]
 
 # wire-mvc is proposal-native and swift-tools-version 6.4: it depends on the swift-http-api-proposal
-# stack (via swift-http-server's NIOHTTPServer) and swift-syntax's pre-release 604 line, so it builds
-# only on a Swift 6.4 toolchain — the build/format jobs run on the nightly 6.4 container, since
+# stack and swift-syntax's pre-release 604 line, so it builds only on a Swift 6.4 toolchain — the build/format jobs run on the nightly 6.4 container, since
 # SwiftyLab/setup-swift installs released toolchains only. swift-syntax 604 is pinned via its
 # release/6.4.x branch in Package.swift (SPM version ranges don't resolve pre-release tags; the
 # branch pin also overrides swift-wire's transitive 603 requirement).
 jobs:
+  # Two packages: the framework (this directory) and its runnable fixtures (Fixtures/). The split exists so
+  # the framework's manifest names no concrete HTTP server — see the resolution guard below.
   BuildAndRun:
     name: Swift 6.4 nightly
     runs-on: ubuntu-24.04
@@ -24,16 +25,45 @@ jobs:
         run: apt-get update && apt-get install -y libssl-dev curl
       - name: Build
         run: swift build
+      - name: Verify the core graph resolves no concrete server
+        # The point of the `NIOHTTPServer` trait: with it off, every `swift-http-server` product dependency
+        # is gated, so SwiftPM prunes the package outright and a framework-agnostic consumer of `WireMVC`
+        # resolves no server. This is a regression guard on that — an ungated reference anywhere in the
+        # manifest would silently put the NIO server back into every downstream `Package.resolved`.
+        run: |
+          swift package resolve
+          if grep -q '"identity" : "swift-http-server"' Package.resolved; then
+            echo "swift-http-server is back in the core graph — a swift-http-server product dependency is not trait-gated"
+            exit 1
+          fi
+      - name: Test
+        run: swift test
+      - name: Test ServerTransport adapter (trait)
+        # The opt-in WireMVCServerTransport adapter is behind the `ServerTransport` trait (which pulls
+        # in OpenAPIRuntime); enable it to build the adapter + run its test. The steps above leave the
+        # trait off, so the core never resolves OpenAPIRuntime.
+        run: swift test --traits ServerTransport
+      - name: Build fixtures
+        # The runnable examples and the integration suites live in their own package (Fixtures/) because
+        # they serve on NIOHTTPServer: anything naming swift-http-server unconditionally in wire-mvc's
+        # manifest would defeat the trait. They enable it on their path dependency.
+        working-directory: Fixtures
+        run: swift build
+      - name: Test fixtures
+        working-directory: Fixtures
+        run: swift test
       - name: Run end-to-end example
         # @Controller generates the RouteContributor witnesses; Wire collates them; WireMVC.router
         # turns them into NIOHTTPServer's request handler and the example drives every route over
         # real HTTP on an ephemeral loopback port. Prints "wire-mvc example OK" or exits non-zero.
+        working-directory: Fixtures
         run: swift run WireMVCExample
       - name: Run @WireMVCBootstrap example (boot, probe, stop)
         # The generated @main serves indefinitely, so — unlike WireMVCExample — it can't run to
         # completion. Boot it, poll until it binds, assert one route's response, then stop it. Validates
         # that the generated composition-root @main bootstraps the graph, constructs AppBootstrap, and
         # serves the collated HelloController on the WireMVCRouter trie.
+        working-directory: Fixtures
         run: |
           BIN="$(swift build --show-bin-path)/WireMVCBootstrapExample"
           # Line-buffer stdout so the global middleware's `access:` prints reach the log as each request is
@@ -72,11 +102,6 @@ jobs:
           # ONLY — it must fire for /wiring but not for a plain route.
           grep -q '^introspection-guard: /wiring' serverlog.txt || { echo "introspection guard did not run on /wiring"; exit 1; }
           grep -q '^introspection-guard: /hello' serverlog.txt && { echo "introspection guard leaked onto a non-introspection route"; exit 1; } || true
-      - name: Test ServerTransport adapter (trait)
-        # The opt-in WireMVCServerTransport adapter is behind the `ServerTransport` trait (which pulls
-        # in OpenAPIRuntime); enable it to build the adapter + run its test. The steps above leave the
-        # trait off, so the core never resolves OpenAPIRuntime.
-        run: swift test --traits ServerTransport
 
   SwiftFormat:
     name: swift-format (6.4 toolchain)

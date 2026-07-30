@@ -192,8 +192,6 @@ public struct InProcessResponseSender: HTTPResponseSender {
 
     let sink: ResponseSink
 
-    init(sink: ResponseSink) { self.sink = sink }
-
     public mutating func sendInformational(_ response: HTTPResponse) async throws {}
 
     public consuming func send(_ response: HTTPResponse) async throws -> InProcessWriter {
