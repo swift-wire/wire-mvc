@@ -141,6 +141,36 @@ exists to keep. Recorded as option 1 in swift-wire's `PendingIssues/11`.
 - **Keyless suites.** Bind values only exist under a keyed suite; a typed client arguably shouldn't. Or it
   could be offered keylessly too, as pure route-shape sugar over the real graph.
 
+## Where to start
+
+The pieces this would touch, so a fresh reading doesn't have to rediscover them.
+
+**swift-wire — the consumed-doubles set (the part wire-mvc can't derive):**
+- `WireGen/TestingVariants.swift` — `buildVariant` merges per-scope doubles fields into one variant-wide set
+  at `mergedDoublesFields`. Keeping them un-merged per subject is the change.
+- `WireGen/TestingVariantSeedlessRoots.swift` — the seedless reconstructions already carry
+  `reconstruction.doublesFields` individually; the seed-scoped path accumulates across partitions.
+- `WireGenCore/TestingGraph.swift` — `renderDoublesStruct(typeName:fields:)` emits the struct (fields sorted
+  by name, memberwise init); `DoublesField` is `(name, mockType)`.
+
+**wire-mvc — the typed client (fully derivable here):**
+- `WireMVCCodegen/ControllerDeclaration.swift` + `RouteContributorGeneration.swift`'s `ControllerFinder` —
+  the `@Controller` decl and its path prefix.
+- `WireMVCCodegen/RouteCodegen.swift` — everything a typed signature needs, because the witness needs it:
+  verb + path template, `@Path`/`@Query`/`@Header`/`@JSONBody` bindings with types, return type,
+  `@JSONResponse`/`@ResponseStatus` mode, and the `@ErrorResponse` tiers (which give the declared failure
+  statuses).
+- `WireMVCCodegen/KeyedHarnessGeneration.swift` — `renderKeyedHarnessStatics` emits today's per-key
+  `TestBindStore` + `withBindValues`; this is what a per-controller entry point replaces.
+- `WireMVCCodegen/RouteCodegen.swift`'s `scopeEntryPreamble` — where a request's doubles are correlated off
+  the `X-WireMVC-Test-Binds` header and where the missing-doubles 500 is written. A per-route check lands
+  here.
+- `WireMVCTesting/TestBindStore.swift` — `WireMVCTesting.withBindValues(_:in:_:)` is already generic over the
+  doubles type, so it needs no change if swift-wire emits the struct.
+
+**Sequencing note.** The typed client needs nothing from swift-wire, so it can land first and independently
+of the doubles question — which is also the half that pays off in every suite, keyed or not.
+
 ## Why this weakens the case for multi-key
 
 A common reason to want two `TestingKey`s in one target is "these two suites need different mock sets".
