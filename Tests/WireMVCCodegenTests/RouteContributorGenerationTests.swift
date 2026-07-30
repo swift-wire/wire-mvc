@@ -1277,7 +1277,7 @@ struct RouteContributorGenerationTests {
                 }
                 """
         )
-        let key = discoverTestingKey(in: [file])
+        let key = discoverTestingKeys(in: [("Keys.swift", file)]).key
         #expect(key?.keyReference == "Suite.setup")
         #expect(key?.variantName == "Suite_setup")
         #expect(key?.doublesTypeName == "_Suite_setupDoubles")
@@ -1299,7 +1299,7 @@ struct RouteContributorGenerationTests {
                 }
                 """
         )
-        let key = discoverTestingKey(in: [file])
+        let key = discoverTestingKeys(in: [("Keys.swift", file)]).key
         #expect(key?.substitutions.first?.fieldName == "prefsBackendKeyedPrefsKeysPrimary")
         #expect(key?.substitutions.first?.mockType == "MockPrefs")
     }
@@ -1316,7 +1316,7 @@ struct RouteContributorGenerationTests {
                 }
                 """
         )
-        let key = discoverTestingKey(in: [file])
+        let key = discoverTestingKeys(in: [("Keys.swift", file)]).key
         #expect(key?.substitutions.first?.fieldName == "appConfigKeyedAppConfigAlternate")
     }
 
@@ -1424,6 +1424,40 @@ struct RouteContributorGenerationTests {
     }
 
     /// A `@WireMVCBootstrap` root, a `@Scoped(seed:)` controller injecting the `@BindType`d slot, and the key.
+    /// One `TestingKey` per target. A second key is an error against its own declaration, naming the one
+    /// that won — the harness emits a single `.wiremvc(_ key:, _ mode:)` factory bound to one variant graph,
+    /// so a suite passing the second key would silently be served the first's mocks. Serving several
+    /// variants from one target is deferred (swift-wire's PendingIssues/11); this keeps the deferral loud.
+    @Test func aSecondTestingKeyIsRejected() {
+        let source = keyedHarnessFixture.replacingOccurrences(
+            of: "enum Binds {",
+            with: """
+                enum OtherBinds {
+                    @BindType(NoteBackend.self, OtherMockNoteBackend.self)
+                    static let mock = TestingKey()
+                }
+
+                enum Binds {
+                """
+        )
+        let rendered = generateRouteContributors(files: [("App.swift", source)], testEntry: true)
+        let messages = rendered.diagnostics.map(\.message.message)
+        #expect(messages.count == 1)
+        #expect(messages[0].contains("OtherBinds.mock") || messages[0].contains("Binds.mock"))
+        #expect(messages[0].contains("one TestingKey per target"))
+        #expect(messages[0].contains("PendingIssues/11"))
+    }
+
+    /// The keyless path is untouched by the rule: no key, no diagnostic.
+    @Test func noTestingKeyIsNotAnError() {
+        let source = """
+            @Singleton
+            @WireMVCBootstrap
+            struct AppBootstrap {}
+            """
+        #expect(generateRouteContributors(files: [("App.swift", source)], testEntry: true).diagnostics.isEmpty)
+    }
+
     private let keyedHarnessFixture = """
         @Singleton
         @WireMVCBootstrap

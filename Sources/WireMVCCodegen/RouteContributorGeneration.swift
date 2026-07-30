@@ -169,8 +169,11 @@ public func generateRouteContributors(
 
     // The keyed test harness's `TestingKey` (H2.2b), discovered only for a test consumer that links
     // `WireMVCTesting` (`testEntry`) — the sole context the keyed factory + doubles-aware dispatch belong in.
-    // Single-key scope: the first key found drives the harness.
-    let harnessKey = testEntry ? discoverTestingKey(in: parsed.map(\.tree)) : nil
+    // One key per target: a second is an error, since only one factory is emitted for it to be served by.
+    let harness: (key: DiscoveredTestingKey?, diagnostics: [LocatedRouteDiagnostic]) =
+        testEntry ? discoverTestingKeys(in: parsed) : (key: nil, diagnostics: [])
+    let harnessKey = harness.key
+    located.append(contentsOf: harness.diagnostics)
 
     // The lifted `@Factory`s that consume the harness key's mocked slots — mock-consuming under this key, so
     // swift-wire re-emits each as a variant factory whose `create` takes doubles. One hop: a factory whose

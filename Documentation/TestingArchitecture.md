@@ -95,58 +95,32 @@ loopback configuration the harness owns — not a separate mechanism.
 - **Services `.run` vs `.skip`** (all modes). Whether the graph's collated `ServiceLifecycle` services start.
   Defaults per mode: `.inProcess` → `.skip` (isolation), live → `.run` (E2E). Not a mode — it cross-cuts them.
 
-## Selecting a variant — multiple testing keys via source-location identity
+## Selecting a variant — one testing key per target
 
-`.wiremvc(_ key: TestingKey, …)` names the variant app graph to serve. Each `TestingKey` produces one variant
-graph (its `@BindType` substitutions), so a target with several keys has several variants — but the harness is
-**single-key today** (`discoverTestingKey` takes "the first `TestingKey` found"). The blocker is identity: a
-`TestingKey()` **value** is opaque at runtime, so `.wiremvc(someKey)` can't tell *which* generated variant that
-value corresponds to. Naming the variant after the key's source *reference* (`Binds.mock`) doesn't help — the
-reference is a compile-time name the runtime value doesn't carry.
+`.wiremvc(_ key: TestingKey, _ mode:)` names the variant app graph to serve. Each `TestingKey` produces one
+variant graph (its `@BindType` substitutions), and swift-wire's WireGen already emits **one variant per key**.
+wire-mvc, though, emits a single `.wiremvc(_ key:, _ mode:)` factory bound to one variant — so a second key
+has nothing to be served by.
 
-**Source location is the bridge** — the one stable, unique identity a plain value *can* capture at runtime.
-`TestingKey.init` captures its declaration site via default arguments, so users still write `TestingKey()`:
+**Decided 2026-07-30: keep it at one key per target, and reject a second at build time.** It used to be
+silently ignored (`discoverTestingKey` took the first match), which meant a suite passing the second key was
+handed the *first* key's mocks — failing as a mysteriously wrong double rather than as a build error. Now
+`WireMVCDiagnostic.multipleTestingKeys` names both declarations and points at the workaround (put the second
+key in its own test target; test targets are cheap here, and the in-package fixtures already split that way).
 
-```swift
-public struct TestingKey: Sendable {
-    package let fileID: String       // package-private: exists only for the generated dispatch, not user code
-    package let line: Int
-    public init(fileID: String = #fileID, line: Int = #line) { self.fileID = fileID; self.line = line }
-}
-```
-
-The `fileID`/`line` are **package-private** (`package`, not `public`) — they serve the generated `.wiremvc`
-dispatch and the framework's own code, and are not part of the user-facing surface. WireGen already sees every
-`@BindType(…) static let … = TestingKey()` at a known location while building each variant, so it generates
-`.wiremvc(_ key:)` as a switch over `(fileID, line)` rather than a single-key factory:
-
-```swift
-static func wiremvc(_ key: TestingKey, _ mode: …) -> WireMVCSuiteTrait {
-    switch (key.fileID, key.line) {
-    case ("…MockedTests/MockableProtocols.swift", 22): /* serve variant A on `mode` */
-    case (…, …):                                       /* serve variant B on `mode` */
-    default: fatalError("no variant graph generated for TestingKey at \(key.fileID):\(key.line)")
-    }
-}
-```
-
-This switches on the **key** (which variant) orthogonally to the **mode** (which transport) — the two arguments
-of `.wiremvc`.
-
-**The precision requirement:** WireGen must reproduce exactly the `#fileID`/`#line` the compiler stamps on the
-`TestingKey()` **init call** — `#fileID` is `Module/Basename.swift`, and `#line` is the line of the
-`TestingKey()` expression (not necessarily the `static let`, if split across lines). This is a codegen detail,
-not a runtime fragility: the generated `switch` and the compiled key value are produced from the same source in
-the same build (the plugin regenerates every build), so they cannot drift relative to each other.
-
-**Validation the identity enables** (today a second key is silently ignored):
-- a `.wiremvc(key)` whose location matches no generated variant is a clear `fatalError`/diagnostic, not a
-  silently-wrong graph;
-- WireGen can reject two keys sharing a source location.
-
-Rejected alternatives: per-key generated factory names (`.wiremvcBindsMock()`) drop the uniform `.wiremvc(key)`
-surface; an explicit user-supplied id (`TestingKey("mock")`) is boilerplate and collision-prone. Source
-location is the only option that is both auto-captured and keeps the API uniform.
+Why not just build it: the dispatch half is easy, and the mechanism for it is **merged and tested** in
+swift-wire — `TestingKey.init` captures its declaration site via `#fileID`/`#line` defaults and the type is
+`Hashable`, so a generated `switch` can match a key value by reconstructing `TestingKey(fileID:line:)`
+(`Sources/Wire/TestingKey.swift`, `Tests/WireTests/TestingKeyTests.swift`; the tests pin that `#line` is
+stamped at the `TestingKey()` *call*, not the `static let`, when they differ). What stops it is the **doubles
+model**, which is per-key and demands every one of a key's doubles on every request — even for a route that
+consumes none. Making the fields optional to fix that turns the per-key `withBindValues` overloads ambiguous,
+so multi-key and the doubles model are one problem. The preferred direction is per-controller bind values
+(`with<Controller>BindValues`, taking exactly what that controller's scope consumes, all required), which
+keeps the compile-time guarantee at the granularity testing happens *and* weakens the case for multi-key.
+Recorded in full as swift-wire's `PendingIssues/11`, and — together with a typed per-route client derived
+from the same controller — in [Notes/ControllerScopedTesting.md](Notes/ControllerScopedTesting.md), to
+revisit after Phase 5.
 
 ## Module structure (the coupling fix)
 
@@ -376,13 +350,21 @@ Complete the mode surface + retire the config hack.
 - **Gate:** met. A fixed-port suite compiles with no `WireMVCTestServer` in scope; the ephemeral one still
   reads back; no suite calls `createServer()`; `swift test` and `swift test --filter` are both green.
 
-### Phase 4 — Multi-key via source-location identity. swift-wire → wire-mvc. Risk: medium.
-- swift-wire: `TestingKey` gains `package let fileID`/`line` captured via `#fileID`/`#line` init defaults
-  (users still write `TestingKey()`). Merge first.
-- wire-mvc: WireGen records each key's `TestingKey()` **init-call** location (matching the compiler's
-  `#fileID`/`#line` exactly) and emits `.wiremvc(_ key:, _ mode:)` as a `switch (key.fileID, key.line)` over the
-  variants, with a `default` diagnostic and a duplicate-location check.
-- **Gate:** two `TestingKey`s in one target each serve their own variant; an unmatched key errors clearly.
+### Phase 4 — One key per target, enforced. swift-wire → wire-mvc. Risk: low. **Done.**
+- **swift-wire (merged):** `TestingKey` gains `private let fileID`/`line` captured via `#fileID`/`#line` init
+  defaults (users still write `TestingKey()`) plus `Hashable`, so a generated dispatch could match a key by
+  reconstructing it. `WireTests/TestingKeyTests` covers distinctness, stability, reconstruction, and the
+  init-call-vs-declaration line rule. Nothing dispatches on it yet — it is the piece that would otherwise be
+  missing when multi-key is picked up.
+- **wire-mvc:** `discoverTestingKeys(in:)` collects every key and reports each one past the first as an error
+  against its own declaration, naming the one that won.
+- **Scope change from the original plan:** the plan was to *serve* several keys via a `switch` over
+  `(fileID, line)`. Building it showed multi-key is inseparable from the per-key doubles model — see the
+  section above and swift-wire's `PendingIssues/11` — and the use case is narrow enough (different *graph
+  substitutions*, not different mock instances) that a second test target is a fine answer. Deferred
+  deliberately, with the deferral enforced rather than latent.
+- **Gate:** a second `TestingKey` in one target fails the build with a message naming both keys; a single key
+  and the keyless path are unchanged.
 
 ### Phase 5 — Migration + package-graph cleanup. wire-mvc + examples. Risk: low–medium.
 - Migrate wire-mvc's in-package `WireMVCBootstrapExample*` suites and the examples-repo suites to the mode API
