@@ -134,7 +134,7 @@ private struct SilentHandler: HTTPServerRequestHandler {
     /// on the `HTTPRequest`'s header fields, where `wireMVCTestCorrelationID` reads it back — the same
     /// function the generated dispatch calls.
     @Test func correlationHeaderIsStampedOnTheInProcessRequest() async throws {
-        let client = TestClient { _, _ in nil }
+        let client = TestClient(dispatch: InProcessDispatch())
 
         let outside = client.makeHTTPRequest("GET", "/notes", headers: [:])
         #expect(wireMVCTestCorrelationID(in: outside) == nil)

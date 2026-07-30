@@ -97,7 +97,7 @@ extension WireMVCTestMode where Server == InProcessServer {
         WireMVCTestMode(defaultServices: .skip) {
             InProcessServer()
         } client: { server in
-            TestClient(dispatch: await server.dispatch.current)
+            TestClient(dispatch: server.dispatch)
         }
     }
 }

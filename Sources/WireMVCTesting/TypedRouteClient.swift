@@ -1,3 +1,4 @@
+import AsyncAlgorithms
 public import AsyncStreaming
 public import BasicContainers
 public import Foundation
@@ -91,26 +92,54 @@ public struct TestRequestWriter: CallerAsyncWriter {
 /// response bytes, matching what the proposal's `HTTPClient.perform` gives its closure — the same shape the
 /// route's own handler writes through, read from the other end.
 ///
-/// Buffer-backed today: it delivers the whole body in one read, fused with the end-of-stream signal, because
-/// neither transport streams yet. It is a separate type from ``InProcessReader`` (which reads a *request*
-/// body) rather than a reuse, precisely because the two diverge once the response side becomes incremental.
+/// On the in-process transport this reads the response **as the handler writes it**: each `read` takes one
+/// chunk off the exchange's rendezvous channel, so the handler's next `write` cannot proceed until this one
+/// is consumed. That is genuine backpressure, in a mode with no socket. The loopback transport still buffers
+/// (`URLSession.data` hands back a whole body), so there the first read delivers everything.
 public struct TestResponseReader: AsyncReader {
     public typealias ReadElement = UInt8
     public typealias ReadFailure = Never
     public typealias FinalElement = HTTPFields?
     public typealias Buffer = UniqueArray<UInt8>
 
-    private let bytes: Data
+    /// Where the bytes come from — one buffer, or a live channel.
+    private enum Source {
+        case buffered(Data)
+        case streaming(AsyncChannel<ArraySlice<UInt8>>)
+        case exhausted
+    }
 
-    init(_ bytes: Data) { self.bytes = bytes }
+    private var source: Source
+
+    init(_ bytes: Data) { self.source = .buffered(bytes) }
+    /// `AsyncChannel`'s iterator is a stateless handle on the channel's shared storage, so a fresh one per
+    /// read takes the next chunk — no iterator has to be carried across isolation.
+    init(streaming channel: AsyncChannel<ArraySlice<UInt8>>) { self.source = .streaming(channel) }
 
     public mutating func read<Return: ~Copyable, Failure: Error>(
         body: (inout Buffer, consuming FinalElement?) async throws(Failure) -> Return
     ) async throws(EitherError<ReadFailure, Failure>) -> Return {
-        var buffer = UniqueArray<UInt8>(copying: Array(bytes))
-        do {
+        var buffer = UniqueArray<UInt8>()
+        var final: FinalElement?
+        switch source {
+        case let .buffered(bytes):
+            buffer = UniqueArray<UInt8>(copying: Array(bytes))
+            source = .exhausted
             // `.some(nil)` — the terminal chunk, carrying no trailers.
-            return try await body(&buffer, .some(nil))
+            final = .some(nil)
+        case let .streaming(channel):
+            var iterator = channel.makeAsyncIterator()
+            if let chunk = await iterator.next() {
+                buffer = UniqueArray<UInt8>(copying: Array(chunk))
+            } else {
+                source = .exhausted
+                final = .some(nil)
+            }
+        case .exhausted:
+            final = .some(nil)
+        }
+        do {
+            return try await body(&buffer, final)
         } catch {
             throw EitherError.second(error)
         }
@@ -190,13 +219,13 @@ extension TestClient {
     /// What the shim still derives is the request line: the verb and the path template come from the route's
     /// own annotation, so renaming the route breaks the test.
     ///
-    /// - Note: The body is currently delivered in **one** chunk, so this reader observes the response after
-    ///   the handler has finished writing it — the closure shape is honest about ownership but does not yet
-    ///   make incremental framing or backpressure observable. Both transports buffer: in-process accumulates
-    ///   into a sink, and the loopback client uses `URLSession.data`. Genuine streaming needs in-process to
-    ///   hand each `write` to the consumer through a rendezvous channel (as `WireMVCServerTransport`'s bridge
-    ///   does) and the loopback path to move to an incremental client. Tests written against this signature
-    ///   do not change when that lands.
+    /// - Note: On `.inProcess` this **streams**: the head arrives as soon as the handler sends it, and each
+    ///   read takes one chunk off a rendezvous channel, so the handler's next `write` cannot proceed until
+    ///   the test consumes this one. Incremental framing and backpressure are both observable with no socket.
+    ///   The loopback transport still buffers — `URLSession.data` hands back a whole body — so there the
+    ///   first read delivers everything. Making that incremental means either `URLSession.bytes` (with a
+    ///   Linux `FoundationNetworking` caveat) or a proposal client, which reintroduces the NIO stack unless
+    ///   it sits behind the `NIOHTTPServer` trait. This signature does not change when that lands.
     ///
     /// The request body is the proposal's own `HTTPClientRequestBody`, so both directions carry `perform`'s
     /// shape rather than only the response. A caller sending a fixed buffer writes `body: .data(…)`; one
@@ -220,11 +249,25 @@ extension TestClient {
             try await body.produce(into: TestRequestWriter(sink: sink))
             requestBody = Data(sink.bytes)
         }
-        let received = try await send(method, resolved, body: requestBody, headers: headers)
-        guard let head = received.head else {
-            throw WireMVCTestingError.routeDidNotRespond("\(method) \(resolved)")
+        switch transport {
+        case .inProcess(let dispatch):
+            // Stream: hand over the head as soon as it is published, and read the body off the rendezvous as
+            // the handler writes it.
+            let exchange = try await dispatch.start(
+                makeHTTPRequest(method, resolved, headers: headers),
+                body: requestBody
+            )
+            guard let head = try await exchange.startedHead() else {
+                throw WireMVCTestingError.routeDidNotRespond("\(method) \(resolved)")
+            }
+            return try await responseHandler(head, TestResponseReader(streaming: exchange.body))
+        case .loopback:
+            let received = try await send(method, resolved, body: requestBody, headers: headers)
+            guard let head = received.head else {
+                throw WireMVCTestingError.routeDidNotRespond("\(method) \(resolved)")
+            }
+            return try await responseHandler(head, TestResponseReader(received.body))
         }
-        return try await responseHandler(head, TestResponseReader(received.body))
     }
 
     /// Send an already-resolved request and apply the non-2xx rule. Both public forms resolve the template

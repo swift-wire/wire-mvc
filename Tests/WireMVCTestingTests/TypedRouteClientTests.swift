@@ -3,6 +3,7 @@ import BasicContainers
 import Foundation
 import HTTPAPIs
 import HTTPTypes
+import Synchronization
 import Testing
 
 @testable import WireMVCTesting
@@ -43,6 +44,40 @@ private struct RouteEchoHandler: HTTPServerRequestHandler {
         }
         var body = UniqueArray<UInt8>(copying: Array(#""\#(path)""#.utf8))
         try await responseSender.sendAndFinish(HTTPResponse(status: .ok), buffer: &body)
+    }
+}
+
+/// Counts completed writes, so a reader can observe how far ahead the handler got. A reference because
+/// `Mutex` is non-copyable and the handler must be a `Sendable` value.
+private final class WriteProgress: Sendable {
+    private let count = Mutex(0)
+    func recordWrite() { count.withLock { $0 += 1 } }
+    var completed: Int { count.withLock { $0 } }
+}
+
+/// Streams three chunks, counting the writes it has completed so a reader can observe how far ahead it got.
+private struct ChunkedHandler: HTTPServerRequestHandler {
+    typealias RequestContext = InProcessRequestContext
+    typealias Reader = InProcessReader
+    typealias ResponseSender = InProcessResponseSender
+
+    let progress: WriteProgress
+
+    func handle(
+        request: HTTPRequest,
+        requestContext: consuming InProcessRequestContext,
+        reader: consuming sending InProcessReader,
+        responseSender: consuming sending InProcessResponseSender
+    ) async throws {
+        var writer = try await responseSender.send(HTTPResponse(status: .ok))
+        for chunk in ["one", "two"] {
+            var buffer = UniqueArray<UInt8>(copying: Array(chunk.utf8))
+            try await writer.write(buffer: &buffer)
+            progress.recordWrite()
+        }
+        var last = UniqueArray<UInt8>(copying: Array("three".utf8))
+        try await writer.finish(buffer: &last, finalElement: nil)
+        progress.recordWrite()
     }
 }
 
@@ -144,6 +179,44 @@ private struct RouteEchoHandler: HTTPServerRequestHandler {
             }
             // The handler echoes the request body it received, so the two writes arrive as one body.
             #expect(echoed == #""onetwo""#)
+        }
+    }
+
+    /// In-process genuinely streams. The handler writes three chunks and records how many it has completed;
+    /// the test reads one and checks the handler has *not* run ahead. That is only true if `write` suspends
+    /// on the rendezvous until the reader takes the chunk — i.e. real backpressure, with no socket.
+    @Test func inProcessAppliesBackpressurePerChunk() async throws {
+        let progress = WriteProgress()
+        let handler = ChunkedHandler(progress: progress)
+        let mode = WireMVCTestMode.inProcess
+        try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: handler, services: []) {
+            let all = try await TestClient.current.performRawRoute(method: "GET", path: "/chunks") {
+                response,
+                reader in
+                #expect(response.status == .ok)
+
+                // The head arrived before the body was written at all — a buffered transport could not do
+                // this, because it only has a response once the handler has returned.
+                var reader = reader
+                var collected: [String] = []
+                var done = false
+                while !done {
+                    try await reader.read { buffer, final in
+                        if buffer.count > 0 {
+                            var chunk: [UInt8] = []
+                            var consumer = buffer.consumeAll()
+                            while let byte = consumer.next() { chunk.append(byte) }
+                            collected.append(String(decoding: chunk, as: UTF8.self))
+                            // The handler cannot be more than one chunk ahead of us: it is suspended in
+                            // `write` until this read releases it.
+                            #expect(progress.completed <= collected.count)
+                        }
+                        if final != nil { done = true }
+                    }
+                }
+                return collected
+            }
+            #expect(all == ["one", "two", "three"])
         }
     }
 
