@@ -1,9 +1,5 @@
 import Testing
 import WireMVCTesting
-// The retroactive `NIOHTTPServer: WireMVCTestServer` conformance. This suite runs `.inProcess` and never
-// binds a port, but the generated `.wiremvc(_:)` factory emits both mode branches, so the live one's
-// `serveForSuite` bound still has to be satisfiable for the factory to type-check.
-import WireMVCTestingNIOHTTPServer
 
 @testable import WireMVCBootstrapExample
 
@@ -15,9 +11,9 @@ import WireMVCTestingNIOHTTPServer
 // It is also the in-process gate. `@Replaces` is a graph-level mechanism — the transport observes nothing
 // about it — so this suite runs on `.inProcess`: same build (the app's real router, global middleware, error
 // tiers and `@NotFound` fallback), same assertions, but the handler is called directly instead of over a
-// socket. Two things follow, and are the point of the mode: the target needs no
-// `WireMVCTestingNIOHTTPServer` (nothing reads a bound port), and it needs no `@Replaces ServerConfig(port: 0)`
-// (nothing binds one), so it can't collide with the sibling live suite on a port.
+// socket. The payoff is visible in this target's manifest: it names no concrete server at all. The generated
+// factory is generic over whatever server the mode carries, so a socket-free suite pulls in neither
+// `NIOHTTPServer` nor `WireMVCTestingNIOHTTPServer`.
 
 @Suite(.wiremvc(.inProcess))
 struct ReplaceTests {

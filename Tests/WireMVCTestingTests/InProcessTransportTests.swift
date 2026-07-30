@@ -9,9 +9,10 @@ import Testing
 
 // Unit coverage for the in-process transport, independent of the codegen: a hand-written
 // `HTTPServerRequestHandler` over the in-memory associated types, driven through
-// `WireMVCTesting.driveInProcess`. It covers the two response shapes a real route takes — the typed path's
-// one-shot `sendAndFinish` and the raw path's `send(_:)` + incremental `write`/`finish` — plus the request
-// body reader, which the in-package fixture app's GET-only routes can't reach.
+// `WireMVCTesting.runSuite(.inProcess, …)` — the same entry point a generated suite factory uses. It
+// covers the two response shapes a real route takes (the typed path's one-shot `sendAndFinish` and the raw
+// path's `send(_:)` + incremental `write`/`finish`) plus the request body reader, which the in-package
+// fixture app's GET-only routes can't reach.
 
 /// Echoes the request body, its method/path, and any header the request asked to be reflected. `/stream`
 /// takes the raw path (`send` then incremental writes); everything else takes the one-shot path.
@@ -75,10 +76,11 @@ private struct SilentHandler: HTTPServerRequestHandler {
         let note: String
     }
 
-    /// `driveInProcess` points `TestClient.current` at the handler for the duration of the body, and each
-    /// verb reaches it with its method and path intact.
+    /// `runSuite` points `TestClient.current` at the handler for the duration of the body, and each verb
+    /// reaches it with its method and path intact.
     @Test func driverBindsClientAndRoutesMethodAndPath() async throws {
-        try await WireMVCTesting.driveInProcess(handler: EchoHandler(), services: []) {
+        let mode = WireMVCTestMode.inProcess
+        try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: EchoHandler(), services: []) {
             let get = try await TestClient.current.get("/hello")
             #expect(get.status == 200)
             #expect(get.bodyText == "GET /hello|")
@@ -86,14 +88,15 @@ private struct SilentHandler: HTTPServerRequestHandler {
             let delete = try await TestClient.current.delete("/hello")
             #expect(delete.bodyText == "DELETE /hello|")
         }
-        // The client is scoped to the driver's body, exactly as the loopback driver scopes it.
+        // The client is scoped to the run, exactly as it is for a live transport.
         #expect(TestClient.currentStorage == nil)
     }
 
     /// A JSON body reaches the handler through ``InProcessReader`` — the request-body path a GET-only route
     /// never exercises — and the `Content-Type` the client sets arrives as a header field.
     @Test func requestBodyAndHeadersReachTheHandler() async throws {
-        try await WireMVCTesting.driveInProcess(handler: EchoHandler(), services: []) {
+        let mode = WireMVCTestMode.inProcess
+        try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: EchoHandler(), services: []) {
             let response = try await TestClient.current.post(
                 "/notes",
                 json: Payload(note: "hi"),
@@ -108,7 +111,8 @@ private struct SilentHandler: HTTPServerRequestHandler {
     /// `finish` accumulate into one body. In-process buffers rather than streams, so the client sees the
     /// whole concatenation — the route logic is covered, its streaming *behaviour* is not.
     @Test func streamedWritesAccumulateIntoOneBody() async throws {
-        try await WireMVCTesting.driveInProcess(handler: EchoHandler(), services: []) {
+        let mode = WireMVCTestMode.inProcess
+        try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: EchoHandler(), services: []) {
             let response = try await TestClient.current.get("/stream")
             #expect(response.status == 202)
             #expect(response.bodyText == "onetwothree")
@@ -118,7 +122,8 @@ private struct SilentHandler: HTTPServerRequestHandler {
     /// A handler that never responds has no status to report, so the client surfaces `-1` rather than
     /// inventing a plausible 500.
     @Test func handlerThatNeverRespondsIsDistinguishable() async throws {
-        try await WireMVCTesting.driveInProcess(handler: SilentHandler(), services: []) {
+        let mode = WireMVCTestMode.inProcess
+        try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: SilentHandler(), services: []) {
             let response = try await TestClient.current.get("/anything")
             #expect(response.status == -1)
             #expect(response.body.isEmpty)

@@ -10,10 +10,12 @@ import Synchronization
 // (`handle(request:requestContext:reader:responseSender:)`), and the response is whatever the handler
 // wrote into a shared sink by the time that call returns.
 //
-// The point of ``InProcessServer`` is that it is a real ``HTTPServer``: the generated `.inProcess` build
-// path passes it to the app's own `createRouteBuilder(for:)`, so the suite exercises the app's *actual*
-// router, middleware fold, error tiers and `@NotFound` fallback — only the transport underneath differs.
-// `serve(handler:)` is never called on it; the driver invokes `handle` per request instead.
+// The point of ``InProcessServer`` is that it is a real ``HTTPServer``, all the way down: the generated
+// factory passes it to the app's own `createRouteBuilder(for:)` (so the suite exercises the app's *actual*
+// router, middleware fold, error tiers and `@NotFound` fallback), and then `serve(handler:)` — the same
+// call the live modes make — installs a dispatch over the finalized handler and parks until the suite ends.
+// Because in-process serving is a genuine `HTTPServer.serve`, the harness needs no per-mode branch: one
+// driver serves whatever server the mode carries.
 //
 // These types are ordinary *copyable* structs. `AsyncReader`/`HTTPResponseSender`/`CallerAsyncWriter` are
 // declared `~Copyable`/`~Escapable`, but that *relaxes* the constraint for conformers rather than
@@ -22,20 +24,22 @@ import Synchronization
 // needs no region gymnastics.
 
 /// The in-process server: an ``HTTPServer`` whose request context, body reader, and response sender are
-/// the in-memory types below. It exists so the generated `.inProcess` build path can call the app's
-/// `createRouteBuilder(for:)` — and therefore build the app's real router over the in-memory types.
-/// It never serves; ``WireMVCTesting/driveInProcess(handler:services:runTests:)`` drives the finalized
-/// handler directly.
+/// the in-memory types below. The app's `createRouteBuilder(for:)` builds its real router over those
+/// types, and `serve(handler:)` publishes a dispatch over the finalized handler for ``TestClient`` to call.
 public struct InProcessServer: HTTPServer {
     public typealias RequestContext = InProcessRequestContext
     public typealias Reader = InProcessReader
     public typealias ResponseSender = InProcessResponseSender
 
+    /// Carries the dispatch from `serve` (running in the suite's serving child task) to the client the
+    /// driver builds. A reference, so the copyable server value can be handed around freely.
+    let dispatch = InProcessDispatch()
+
     public init() {}
 
-    /// Not a serving transport — the in-process driver calls `handle` per request instead. Reaching this
-    /// means an in-process build path was handed to a serving helper (`WireMVC.serve` /
-    /// `WireMVCTesting.serveForSuite`) rather than to the driver.
+    /// Publish a dispatch over `handler`, then park until cancelled — the in-memory analogue of a real
+    /// server holding a listening socket open for the suite's lifetime. Each dispatched request builds the
+    /// four arguments `handle` takes, runs it, and reads back what the sender captured.
     public func serve<Handler: HTTPServerRequestHandler>(handler: Handler) async throws
     where
         Handler.RequestContext: ~Copyable,
@@ -45,7 +49,68 @@ public struct InProcessServer: HTTPServer {
         Handler.ResponseSender == ResponseSender,
         Handler.ResponseSender: ~Copyable
     {
-        throw WireMVCTestingError.inProcessServerCannotServe
+        dispatch.install { request, body in
+            let sink = ResponseSink()
+            try await handler.handle(
+                request: request,
+                requestContext: InProcessRequestContext(),
+                reader: InProcessReader(body),
+                responseSender: InProcessResponseSender(sink: sink)
+            )
+            return sink.response
+        }
+        // Serving ends only when the suite cancels it, exactly as a socket-backed `serve` does.
+        while !Task.isCancelled {
+            do {
+                try await Task.sleep(for: .seconds(60))
+            } catch {
+                return
+            }
+        }
+    }
+}
+
+/// The one-shot channel carrying the request dispatch from ``InProcessServer/serve(handler:)`` to the
+/// ``TestClient`` the driver builds. The two race — serving runs in a child task while the driver builds
+/// the client — so a client asked for before `serve` has installed suspends until it has.
+final class InProcessDispatch: Sendable {
+    /// One request: the head and body in, the handler's response out (`nil` if it never responded).
+    typealias Dispatch = @Sendable (HTTPRequest, [UInt8]) async throws -> (head: HTTPResponse, body: [UInt8])?
+
+    private enum State {
+        case waiting([CheckedContinuation<Dispatch, Never>])
+        case installed(Dispatch)
+    }
+
+    private let state = Mutex<State>(.waiting([]))
+
+    /// Publish the dispatch, waking anything already waiting for it.
+    func install(_ dispatch: @escaping Dispatch) {
+        let waiting: [CheckedContinuation<Dispatch, Never>] = state.withLock { state in
+            defer { state = .installed(dispatch) }
+            guard case let .waiting(continuations) = state else { return [] }
+            return continuations
+        }
+        for continuation in waiting { continuation.resume(returning: dispatch) }
+    }
+
+    /// The installed dispatch, suspending until `serve` publishes one.
+    var current: Dispatch {
+        get async {
+            await withCheckedContinuation { continuation in
+                let installed: Dispatch? = state.withLock { state in
+                    switch state {
+                    case let .installed(dispatch):
+                        return dispatch
+                    case var .waiting(continuations):
+                        continuations.append(continuation)
+                        state = .waiting(continuations)
+                        return nil
+                    }
+                }
+                if let installed { continuation.resume(returning: installed) }
+            }
+        }
     }
 }
 
