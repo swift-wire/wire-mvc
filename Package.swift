@@ -168,6 +168,8 @@ let package = Package(
             dependencies: [
                 "WireMVCTesting",
                 .product(name: "NIOHTTPServer", package: "swift-http-server"),
+                // The framework-owned test server needs a `Logger` to construct `NIOHTTPServer`.
+                .product(name: "Logging", package: "swift-log"),
             ],
             swiftSettings: proposalSettings
         ),
@@ -262,16 +264,15 @@ let package = Package(
         // app's real binding for the test double. A separate target because `@Replaces` is target-wide, so
         // the real-graph integration suite and this fake-graph suite can't share one.
         //
-        // Also the `.inProcess` gate: the suite itself runs socket-free. It still carries
-        // `WireMVCTestingNIOHTTPServer`, because the generated factory emits both mode branches and the live
-        // one needs the app server's `WireMVCTestServer` conformance to type-check. Shedding that from an
-        // in-process-only target is the Phase-5 trait's job.
+        // Also the `.inProcess` gate, and the clearest demonstration of what the mode API buys: this target
+        // names NO concrete server. The generated factory is generic over whatever server its
+        // `WireMVCTestMode` carries, so a socket-free suite depends on neither `NIOHTTPServer` nor
+        // `WireMVCTestingNIOHTTPServer` — unlike its two live siblings.
         .testTarget(
             name: "WireMVCBootstrapExampleReplaceTests",
             dependencies: [
                 "WireMVCBootstrapExample",
                 "WireMVCTesting",
-                "WireMVCTestingNIOHTTPServer",
                 // Direct dependency so the plugin re-parses WireMVC's adapter directives — see the sibling
                 // integration test target.
                 "WireMVC",
@@ -280,7 +281,6 @@ let package = Package(
                 .product(name: "HTTPAPIs", package: "swift-http-api-proposal"),
                 .product(name: "HTTPTypes", package: "swift-http-types"),
                 .product(name: "BasicContainers", package: "swift-collections"),
-                .product(name: "NIOHTTPServer", package: "swift-http-server"),
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
             ],
@@ -360,6 +360,8 @@ let package = Package(
                 .product(name: "HTTPTypes", package: "swift-http-types"),
                 .product(name: "AsyncStreaming", package: "swift-async-algorithms"),
                 .product(name: "BasicContainers", package: "swift-collections"),
+                // The services-axis tests stand up a real `ServiceLifecycle` service.
+                .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
             ],
             swiftSettings: proposalSettings
         ),

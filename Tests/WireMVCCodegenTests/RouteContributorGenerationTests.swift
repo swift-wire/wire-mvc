@@ -117,13 +117,13 @@ struct RouteContributorGenerationTests {
                         let bootstrap = graph.appBootstrap
                         let server = try bootstrap.createServer()
                         var builder = bootstrap.createRouteBuilder(for: server)
-                        let services = try WireMVC.apply(graph, to: &builder)
+                        let wireMVCServices = try WireMVC.apply(graph, to: &builder)
                         builder.registerNotFound { _, _, _, _, responseSender in
                             try await responseSender.sendAndFinish(HTTPResponse(status: .notFound))
                         }
                         let handler = builder.finalize()
                         let wireMVCServed = graph._WireGlobalMiddleware_AppBootstrap.wrapGlobalMiddleware(handler)
-                        try await WireMVC.serve(on: server, handler: wireMVCServed, services: services)
+                        try await WireMVC.serve(on: server, handler: wireMVCServed, services: wireMVCServices)
                     }
                 }
                 """
@@ -131,12 +131,12 @@ struct RouteContributorGenerationTests {
     }
 
     /// The generated `.wiremvc(_:)` suite-trait factory: a `SuiteTrait` extension whose `WireMVCSuiteTrait`
-    /// closure switches on the ``WireMVCTestMode`` and inlines one build per mode (graph → server → builder →
-    /// apply → registrations → finalize → `wrapGlobalMiddleware`), handing the opaque handler to that mode's
-    /// driver instead of serving forever. The two builds can't share a local — each produces a *different*
-    /// opaque handler type — and differ only in the `server` line: `InProcessServer()` vs the app's
-    /// `createServer()`. The build sequence is shared with the `@main` (all wrap `bootstrapBuildLines`), so
-    /// the live branch matches the `@main`'s build lines.
+    /// closure inlines ONE build (graph → server → builder → apply → registrations → finalize →
+    /// `wrapGlobalMiddleware`) and hands the opaque handler to `WireMVCTesting.runSuite`. It is generic over
+    /// the server the mode carries, because the route builder takes its `~Copyable` associated types from
+    /// that server — which is also why the generated code names no concrete server, and why there is one
+    /// build path rather than one per transport. The build sequence is shared with the `@main` (both wrap
+    /// `bootstrapBuildLines`); only the `server` line differs.
     @Test func bootstrapGeneratesTestServerEntry() {
         let source = """
             @Singleton
@@ -151,39 +151,52 @@ struct RouteContributorGenerationTests {
         #expect(
             renderBootstrapTestEntry(bootstrap: decl, notFoundRegistration: fallback, factoryKeys: []) == """
                 extension SuiteTrait where Self == WireMVCSuiteTrait {
-                    static func wiremvc(_ mode: WireMVCTestMode = .appServer) -> WireMVCSuiteTrait {
+                    static func wiremvc<WireMVCTestServerType: HTTPServer>(
+                        _ mode: WireMVCTestMode<WireMVCTestServerType>,
+                        services: WireMVCTestServices? = nil
+                    ) -> WireMVCSuiteTrait
+                    where
+                        WireMVCTestServerType.RequestContext: ~Copyable,
+                        WireMVCTestServerType.Reader: ~Copyable,
+                        WireMVCTestServerType.ResponseSender: ~Copyable,
+                        WireMVCTestServerType.ResponseSender.Writer: ~Copyable
+                    {
                         WireMVCSuiteTrait { runTests in
-                            switch mode {
-                            case .inProcess:
-                                let graph = try await Wire.bootstrap()
-                                let bootstrap = graph.appBootstrap
-                                let server = InProcessServer()
-                                var builder = bootstrap.createRouteBuilder(for: server)
-                                let services = try WireMVC.apply(graph, to: &builder)
-                                builder.registerNotFound { _, _, _, _, responseSender in
-                                    try await responseSender.sendAndFinish(HTTPResponse(status: .notFound))
-                                }
-                                let handler = builder.finalize()
-                                let wireMVCServed = graph._WireGlobalMiddleware_AppBootstrap.wrapGlobalMiddleware(handler)
-                                try await WireMVCTesting.driveInProcess(handler: wireMVCServed, services: services, runTests: runTests)
-                            case .appServer:
-                                let graph = try await Wire.bootstrap()
-                                let bootstrap = graph.appBootstrap
-                                let server = try bootstrap.createServer()
-                                var builder = bootstrap.createRouteBuilder(for: server)
-                                let services = try WireMVC.apply(graph, to: &builder)
-                                builder.registerNotFound { _, _, _, _, responseSender in
-                                    try await responseSender.sendAndFinish(HTTPResponse(status: .notFound))
-                                }
-                                let handler = builder.finalize()
-                                let wireMVCServed = graph._WireGlobalMiddleware_AppBootstrap.wrapGlobalMiddleware(handler)
-                                try await WireMVCTesting.serveForSuite(on: server, handler: wireMVCServed, services: services, runTests: runTests)
+                            let graph = try await Wire.bootstrap()
+                            let bootstrap = graph.appBootstrap
+                            let server = mode.makeTestServer()
+                            var builder = bootstrap.createRouteBuilder(for: server)
+                            let wireMVCServices = try WireMVC.apply(graph, to: &builder)
+                            builder.registerNotFound { _, _, _, _, responseSender in
+                                try await responseSender.sendAndFinish(HTTPResponse(status: .notFound))
                             }
+                            let handler = builder.finalize()
+                            let wireMVCServed = graph._WireGlobalMiddleware_AppBootstrap.wrapGlobalMiddleware(handler)
+                            try await WireMVCTesting.runSuite(mode, on: server, handler: wireMVCServed, services: wireMVCServices, servicePolicy: services, runTests: runTests)
                         }
                     }
                 }
                 """
         )
+    }
+
+    /// The app's own `createServer()` belongs to the `@main` only. A suite serves the server its mode
+    /// carries, so production server configuration (TLS, bind interface, timeouts, HTTP/2) never has to be
+    /// un-configured for tests.
+    @Test func testEntryNeverCallsCreateServer() {
+        let source = """
+            @Singleton
+            @WireMVCBootstrap
+            struct AppBootstrap {
+                func createServer() throws -> NIOHTTPServer { fatalError() }
+            }
+            """
+        let decl = controller(source)
+        let entry = renderBootstrapTestEntry(bootstrap: decl, notFoundRegistration: "", factoryKeys: [])
+        #expect(!entry.contains("createServer()"))
+        #expect(entry.contains("let server = mode.makeTestServer()"))
+        // The @main is the one place it is still called.
+        #expect(renderBootstrapEntry(bootstrap: decl, notFoundRegistration: "", factoryKeys: []).contains("createServer()"))
     }
 
     /// A `mountIntrospectionAt() -> String?` method makes the generated `@main` register the graph's wiring
@@ -410,11 +423,12 @@ struct RouteContributorGenerationTests {
         #expect(!rendered.source.contains("@main"))
         #expect(!rendered.source.contains("struct _WireMVCBootstrapEntry {"))
         #expect(rendered.source.contains("extension SuiteTrait where Self == WireMVCSuiteTrait {"))
-        #expect(rendered.source.contains("static func wiremvc(_ mode: WireMVCTestMode = .appServer)"))
+        #expect(rendered.source.contains("static func wiremvc<WireMVCTestServerType: HTTPServer>("))
+        #expect(rendered.source.contains("_ mode: WireMVCTestMode<WireMVCTestServerType>,"))
         #expect(rendered.source.contains("WireMVCSuiteTrait { runTests in"))
         #expect(
             rendered.source.contains(
-                "try await WireMVCTesting.serveForSuite(on: server, handler: wireMVCServed, services: services, runTests: runTests)"
+                "try await WireMVCTesting.runSuite(mode, on: server, handler: wireMVCServed, services: wireMVCServices, servicePolicy: services, runTests: runTests)"
             )
         )
         #expect(rendered.source.contains("import WireMVCTesting\n"))
@@ -1332,7 +1346,7 @@ struct RouteContributorGenerationTests {
         #expect(rendered.source.contains("func withBindValues<R>(noteBackend: MockNoteBackend,"))
         #expect(
             rendered.source.contains(
-                "static func wiremvc(_ key: TestingKey, _ mode: WireMVCTestMode = .appServer)"
+                "_ key: TestingKey, _ mode: WireMVCTestMode<WireMVCTestServerType>,"
             )
         )
         // The keyed factory bootstraps the variant graph and hand-registers each variant proxy's routes.

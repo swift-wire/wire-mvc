@@ -97,20 +97,18 @@ func renderBootstrapKeyedTestEntry(
     }
     .joined(separator: "\n")
     // The mode is orthogonal to the key: the key picks which variant graph is bootstrapped, the mode picks
-    // the transport it is reached over. Both branches bootstrap the same variant.
+    // the transport it is reached over. Same single build path as the keyless factory — only the bootstrap
+    // call and the variant-proxy registrations differ.
     let raw = """
         extension SuiteTrait where Self == WireMVCSuiteTrait {
-            static func wiremvc(_ key: TestingKey, _ mode: WireMVCTestMode = .appServer) -> WireMVCSuiteTrait {
-                WireMVCSuiteTrait { runTests in
-        \(modeSwitch(
+        \(suiteFactory(
+            signatureParameters: "_ key: TestingKey, _ mode: WireMVCTestMode<WireMVCTestServerType>",
             bootstrap: bootstrap,
             notFoundRegistration: notFoundRegistration,
             factoryKeys: factoryKeys,
             bootstrapCall: "Wire.\(variantBootstrapMethodName(variantName: key.variantName))()",
             extraRegistrations: variantRegistrations
         ))
-                }
-            }
         }
         """
     return Parser.parse(source: raw).formatted().description

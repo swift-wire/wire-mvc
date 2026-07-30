@@ -25,16 +25,17 @@ func graphBindingPropertyName(_ typeName: String) -> String {
     return first.lowercased() + typeName.dropFirst()
 }
 
-/// Which server the build sequence constructs its route builder over — the *only* difference between the
-/// two generated build paths. Everything downstream (the builder, `apply`, the registrations, `finalize()`,
-/// the global-middleware wrap) is identical, so both paths exercise the app's real router, middleware fold,
-/// error tiers and `@NotFound` fallback.
+/// Which server the build sequence constructs its route builder over. The `@main` uses the app's own
+/// `createServer()`; a suite uses the one its ``WireMVCTestMode`` carries, so the app's production server
+/// configuration (TLS, bind interface, timeouts, HTTP/2, graceful shutdown) never has to be un-configured
+/// for tests. It is the *only* line that differs — the builder, `apply`, the registrations, `finalize()`
+/// and the global-middleware wrap are identical, so a suite exercises the app's real router, middleware
+/// fold, error tiers and `@NotFound` fallback whichever transport it runs on.
 enum BootstrapTransport {
-    /// The app's own `createServer()` — the `@main` and the live suite mode.
+    /// The app's own `createServer()` — the `@main`'s production entry.
     case appServer
-    /// `WireMVCTesting`'s in-memory ``InProcessServer`` — the `.inProcess` suite mode. The app's
-    /// `createServer()` is never called, so its `ServerConfig` (host, port, TLS) does not apply.
-    case inProcess
+    /// The server the suite's mode carries — every test transport, in-process and live alike.
+    case suiteMode
 
     /// The line binding the `server` local the route builder is created for.
     func serverLine(bootstrap: ControllerDeclaration) -> String {
@@ -44,18 +45,17 @@ enum BootstrapTransport {
             // is prefixed with `try` when the declaration is `throws`.
             let createServerTry = functionThrows(named: "createServer", in: bootstrap) ? "try " : ""
             return "let server = \(createServerTry)bootstrap.createServer()"
-        case .inProcess:
-            return "let server = InProcessServer()"
+        case .suiteMode:
+            return "let server = mode.makeTestServer()"
         }
     }
 }
 
 /// The shared build sequence every generated entry inlines — graph → bootstrap → server → builder →
 /// `apply` → registrations → `finalize()` → `wrapGlobalMiddleware`, producing the locals `server`,
-/// `services`, and the opaque `~Copyable` `wireMVCServed` handler. The handler can't be returned or
+/// `wireMVCServices`, and the opaque `~Copyable` `wireMVCServed` handler. The handler can't be returned or
 /// stored (opaque `~Copyable`), so each entry inlines this and hands the locals straight to a generic
-/// helper by inference — the `@main` to `WireMVC.serve`, the live suite mode to
-/// `WireMVCTesting.serveForSuite`, the in-process mode to `WireMVCTesting.driveInProcess`.
+/// helper by inference — the `@main` to `WireMVC.serve`, a suite to `WireMVCTesting.runSuite`.
 func bootstrapBuildLines(
     bootstrap: ControllerDeclaration,
     notFoundRegistration: String,
@@ -85,7 +85,7 @@ func bootstrapBuildLines(
         let bootstrap = graph.\(property)
         \(transport.serverLine(bootstrap: bootstrap))
         var builder = bootstrap.createRouteBuilder(for: server)
-        let services = try WireMVC.apply(graph, to: &builder)
+        let wireMVCServices = try WireMVC.apply(graph, to: &builder)
         \(registrations)
         let handler = builder.finalize()
         let wireMVCServed = graph.\(proxyProperty).wrapGlobalMiddleware(handler)
@@ -110,7 +110,7 @@ func renderBootstrapEntry(
         struct \(bootstrapEntryTypeName) {
             static func main() async throws {
                 \(buildLines)
-                try await WireMVC.serve(on: server, handler: wireMVCServed, services: services)
+                try await WireMVC.serve(on: server, handler: wireMVCServed, services: wireMVCServices)
             }
         }
         """
@@ -132,56 +132,64 @@ func renderBootstrapTestEntry(
 ) -> String {
     let raw = """
         extension SuiteTrait where Self == WireMVCSuiteTrait {
-            static func wiremvc(_ mode: WireMVCTestMode = .appServer) -> WireMVCSuiteTrait {
-                WireMVCSuiteTrait { runTests in
-        \(modeSwitch(
+        \(suiteFactory(
+            signatureParameters: "_ mode: WireMVCTestMode<WireMVCTestServerType>",
             bootstrap: bootstrap,
             notFoundRegistration: notFoundRegistration,
             factoryKeys: factoryKeys
         ))
-                }
-            }
         }
         """
     return Parser.parse(source: raw).formatted().description
 }
 
-/// The suite closure's body: one `case` per ``WireMVCTestMode``, each inlining its own build. The two builds
-/// cannot be factored into a shared local — they produce *different* opaque `~Copyable` handler types, so
-/// each branch must build and consume its handler in place. The driver call is the last line of each branch:
-/// `driveInProcess` calls `handle` per request, `serveForSuite` serves on an ephemeral loopback port.
+/// One generated suite-trait factory: generic over the server its ``WireMVCTestMode`` carries, with a
+/// single inlined build over `mode.httpServer`. Generic because the app's `createRouteBuilder(for:)` is —
+/// the route builder takes its `~Copyable` associated types from the server, so the mode has to supply the
+/// server for the build to have types at all. Two consequences fall out and are the point of the shape:
+/// the generated code names no concrete server (whatever bound a transport needs is discharged where the
+/// test writes `.inProcess` / `.swiftHttpServer` / `.server(_:)`), and there is exactly one build path
+/// rather than one per mode.
 ///
-/// Both branches are always emitted, so a test consumer needs the app server's ``WireMVCTestServer``
-/// conformance in scope (it imports the module supplying it) whichever mode its suites actually select —
-/// `serveForSuite`'s bound is checked when the factory is type-checked, not when the case is reached.
-func modeSwitch(
+/// `signatureParameters` is the factory's parameter list before the shared `services:` override, so the
+/// keyed form can prepend its `TestingKey`. `runTests` is the trait's type-erasing hook: the closure builds
+/// the app afresh each suite entry, so the opaque `~Copyable` handler stays a local that never escapes —
+/// which is exactly why the build is inlined here rather than shared through a `buildApplication`.
+func suiteFactory(
+    signatureParameters: String,
     bootstrap: ControllerDeclaration,
     notFoundRegistration: String,
     factoryKeys: Set<String>,
     bootstrapCall: String = "Wire.bootstrap()",
     extraRegistrations: String = ""
 ) -> String {
-    func build(_ transport: BootstrapTransport) -> String {
-        bootstrapBuildLines(
-            bootstrap: bootstrap,
-            notFoundRegistration: notFoundRegistration,
-            factoryKeys: factoryKeys,
-            bootstrapCall: bootstrapCall,
-            extraRegistrations: extraRegistrations,
-            transport: transport
-        )
-    }
-    // The drivers stay qualified on the `WireMVCTesting` enum — mirroring how the `@main` names `WireMVC`
-    // types unqualified but calls `WireMVC.serve`. `runTests` is the trait's type-erasing hook: the closure
-    // builds the app afresh each suite entry, so the opaque handler is a local that never escapes.
+    let buildLines = bootstrapBuildLines(
+        bootstrap: bootstrap,
+        notFoundRegistration: notFoundRegistration,
+        factoryKeys: factoryKeys,
+        bootstrapCall: bootstrapCall,
+        extraRegistrations: extraRegistrations,
+        transport: .suiteMode
+    )
+    // The `~Copyable` suppressions the proposal's `HTTPServer` declares must be restated here: a generic
+    // context that merely names `Server` re-imposes `Copyable` on its associated types, and no proposal
+    // server satisfies that. `runSuite` stays qualified on the `WireMVCTesting` enum, mirroring how the
+    // `@main` names `WireMVC` types unqualified but calls `WireMVC.serve`.
     return """
-        switch mode {
-        case .inProcess:
-        \(build(.inProcess))
-        try await WireMVCTesting.driveInProcess(handler: wireMVCServed, services: services, runTests: runTests)
-        case .appServer:
-        \(build(.appServer))
-        try await WireMVCTesting.serveForSuite(on: server, handler: wireMVCServed, services: services, runTests: runTests)
+        static func wiremvc<WireMVCTestServerType: HTTPServer>(
+            \(signatureParameters),
+            services: WireMVCTestServices? = nil
+        ) -> WireMVCSuiteTrait
+        where
+            WireMVCTestServerType.RequestContext: ~Copyable,
+            WireMVCTestServerType.Reader: ~Copyable,
+            WireMVCTestServerType.ResponseSender: ~Copyable,
+            WireMVCTestServerType.ResponseSender.Writer: ~Copyable
+        {
+            WireMVCSuiteTrait { runTests in
+                \(buildLines)
+                try await WireMVCTesting.runSuite(mode, on: server, handler: wireMVCServed, services: wireMVCServices, servicePolicy: services, runTests: runTests)
+            }
         }
         """
 }

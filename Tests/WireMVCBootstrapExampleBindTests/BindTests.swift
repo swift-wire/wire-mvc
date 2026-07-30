@@ -1,9 +1,10 @@
 import Testing
 import WireMVCTesting
+import WireMVCTestingNIOHTTPServer
 
 @testable import WireMVCBootstrapExample
 
-// H2.2b gate — the keyed test harness end to end over real HTTP. `@Suite(.wiremvc(NoteTestBinds.mockBackend))`
+// H2.2b gate — the keyed test harness end to end over real HTTP. `@Suite(.wiremvc(NoteTestBinds.mockBackend, .swiftHttpServer))`
 // stands up the app on an ephemeral loopback port and parks the variant contributor proxies for the key; each
 // test supplies its per-request mocks with the generated `withBindValues(noteBackend:prefsBackendKeyed…:)` —
 // the key carries a by-type `@BindType(NoteBackend.self, …)` slot AND a keyed `@BindType(PrefsKeys.primary, …)`
@@ -15,7 +16,7 @@ import WireMVCTesting
 // concurrent requests by correlation id, so the tests must run — and pass — under real concurrency.
 // `differentlyMockedRequestsInterleaveWithoutCrossing` proves it directly, forcing two differently-mocked
 // requests to be simultaneously in-flight.
-@Suite(.wiremvc(NoteTestBinds.mockBackend))
+@Suite(.wiremvc(NoteTestBinds.mockBackend, .swiftHttpServer))
 struct BindTests {
     /// A supplied mock flows through the variant proxy's scope entry into the request-scoped controller —
     /// the response is `stamped:mock:x` (the app `@Singleton` `NoteStamp` still stamps, proving the borrow),
