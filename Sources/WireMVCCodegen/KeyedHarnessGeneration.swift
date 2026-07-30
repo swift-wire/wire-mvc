@@ -96,19 +96,19 @@ func renderBootstrapKeyedTestEntry(
             """
     }
     .joined(separator: "\n")
-    let buildLines = bootstrapBuildLines(
-        bootstrap: bootstrap,
-        notFoundRegistration: notFoundRegistration,
-        factoryKeys: factoryKeys,
-        bootstrapCall: "Wire.\(variantBootstrapMethodName(variantName: key.variantName))()",
-        extraRegistrations: variantRegistrations
-    )
+    // The mode is orthogonal to the key: the key picks which variant graph is bootstrapped, the mode picks
+    // the transport it is reached over. Both branches bootstrap the same variant.
     let raw = """
         extension SuiteTrait where Self == WireMVCSuiteTrait {
-            static func wiremvc(_ key: TestingKey) -> WireMVCSuiteTrait {
+            static func wiremvc(_ key: TestingKey, _ mode: WireMVCTestMode = .appServer) -> WireMVCSuiteTrait {
                 WireMVCSuiteTrait { runTests in
-                    \(buildLines)
-                    try await WireMVCTesting.serveForSuite(on: server, handler: wireMVCServed, services: services, runTests: runTests)
+        \(modeSwitch(
+            bootstrap: bootstrap,
+            notFoundRegistration: notFoundRegistration,
+            factoryKeys: factoryKeys,
+            bootstrapCall: "Wire.\(variantBootstrapMethodName(variantName: key.variantName))()",
+            extraRegistrations: variantRegistrations
+        ))
                 }
             }
         }

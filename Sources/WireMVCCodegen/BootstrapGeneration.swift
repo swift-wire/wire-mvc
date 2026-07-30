@@ -25,23 +25,47 @@ func graphBindingPropertyName(_ typeName: String) -> String {
     return first.lowercased() + typeName.dropFirst()
 }
 
-/// The shared build sequence both generated entries inline — graph → bootstrap → server → builder →
+/// Which server the build sequence constructs its route builder over — the *only* difference between the
+/// two generated build paths. Everything downstream (the builder, `apply`, the registrations, `finalize()`,
+/// the global-middleware wrap) is identical, so both paths exercise the app's real router, middleware fold,
+/// error tiers and `@NotFound` fallback.
+enum BootstrapTransport {
+    /// The app's own `createServer()` — the `@main` and the live suite mode.
+    case appServer
+    /// `WireMVCTesting`'s in-memory ``InProcessServer`` — the `.inProcess` suite mode. The app's
+    /// `createServer()` is never called, so its `ServerConfig` (host, port, TLS) does not apply.
+    case inProcess
+
+    /// The line binding the `server` local the route builder is created for.
+    func serverLine(bootstrap: ControllerDeclaration) -> String {
+        switch self {
+        case .appServer:
+            // `createServer` may throw (building a server configuration conventionally does), so the call
+            // is prefixed with `try` when the declaration is `throws`.
+            let createServerTry = functionThrows(named: "createServer", in: bootstrap) ? "try " : ""
+            return "let server = \(createServerTry)bootstrap.createServer()"
+        case .inProcess:
+            return "let server = InProcessServer()"
+        }
+    }
+}
+
+/// The shared build sequence every generated entry inlines — graph → bootstrap → server → builder →
 /// `apply` → registrations → `finalize()` → `wrapGlobalMiddleware`, producing the locals `server`,
 /// `services`, and the opaque `~Copyable` `wireMVCServed` handler. The handler can't be returned or
 /// stored (opaque `~Copyable`), so each entry inlines this and hands the locals straight to a generic
-/// serve helper by inference — the `@main` to `WireMVC.serve`, the `.wiremvc()` factory closure to
-/// `WireMVCTesting.serveForSuite`. `createServer` may throw (building a server configuration
-/// conventionally does), so the call is prefixed with `try` when the declaration is `throws`.
+/// helper by inference — the `@main` to `WireMVC.serve`, the live suite mode to
+/// `WireMVCTesting.serveForSuite`, the in-process mode to `WireMVCTesting.driveInProcess`.
 func bootstrapBuildLines(
     bootstrap: ControllerDeclaration,
     notFoundRegistration: String,
     factoryKeys: Set<String>,
     bootstrapCall: String = "Wire.bootstrap()",
-    extraRegistrations: String = ""
+    extraRegistrations: String = "",
+    transport: BootstrapTransport = .appServer
 ) -> String {
     let property = graphBindingPropertyName(bootstrap.name)
     let proxyProperty = graphBindingPropertyName(globalMiddlewareProxyTypeName(bootstrap.name))
-    let createServerTry = functionThrows(named: "createServer", in: bootstrap) ? "try " : ""
     let mountIntrospection = introspectionMount(
         bootstrap: bootstrap,
         factoryKeys: factoryKeys,
@@ -59,7 +83,7 @@ func bootstrapBuildLines(
     return """
         let graph = try await \(bootstrapCall)
         let bootstrap = graph.\(property)
-        let server = \(createServerTry)bootstrap.createServer()
+        \(transport.serverLine(bootstrap: bootstrap))
         var builder = bootstrap.createRouteBuilder(for: server)
         let services = try WireMVC.apply(graph, to: &builder)
         \(registrations)
@@ -93,12 +117,10 @@ func renderBootstrapEntry(
     return Parser.parse(source: raw).formatted().description
 }
 
-/// The generated `.wiremvc()` suite-trait factory for the `@WireMVCBootstrap` composition root — the one
-/// public way to stand up a test server (`@Suite(.wiremvc())`), emitted into the test module (module
-/// scope, in place of the `@main`) as a `SuiteTrait` extension. Its `WireMVCSuiteTrait` closure inlines the
-/// SAME build as the `@main` and, instead of serving forever, hands the locals to
-/// `WireMVCTesting.serveForSuite`: the trait serves on an ephemeral port once at suite entry, points
-/// `TestClient.current` at the bound loopback port, runs the suite's tests, and cancels at suite exit. The
+/// The generated `.wiremvc(_:)` suite-trait factory for the `@WireMVCBootstrap` composition root — the one
+/// public way to stand a suite up (`@Suite(.wiremvc(<mode>))`), emitted into the test module (module scope,
+/// in place of the `@main`) as a `SuiteTrait` extension. Its `WireMVCSuiteTrait` closure inlines the SAME
+/// build as the `@main` and, instead of serving forever, hands the locals to a `WireMVCTesting` driver. The
 /// opaque `~Copyable` handler is a local inside the closure (it never escapes it) — exactly why the build
 /// composes here. Inlining is forced by that handler (it can't be returned from a shared `buildApplication`),
 /// so this duplicates the build the way the `@main` does — the string-building is the only thing shared,
@@ -108,26 +130,60 @@ func renderBootstrapTestEntry(
     notFoundRegistration: String,
     factoryKeys: Set<String>
 ) -> String {
-    let buildLines = bootstrapBuildLines(
-        bootstrap: bootstrap,
-        notFoundRegistration: notFoundRegistration,
-        factoryKeys: factoryKeys
-    )
-    // The `serveForSuite` helper stays qualified on the `WireMVCTesting` enum — mirroring how the `@main`
-    // names `WireMVC` types unqualified but calls `WireMVC.serve`. `runTests` is the trait's type-erasing
-    // hook: the closure builds the app afresh each suite entry, so the opaque handler is a local that never
-    // escapes, and threads the suite's tests through as `runTests`.
     let raw = """
         extension SuiteTrait where Self == WireMVCSuiteTrait {
-            static func wiremvc() -> WireMVCSuiteTrait {
+            static func wiremvc(_ mode: WireMVCTestMode = .appServer) -> WireMVCSuiteTrait {
                 WireMVCSuiteTrait { runTests in
-                    \(buildLines)
-                    try await WireMVCTesting.serveForSuite(on: server, handler: wireMVCServed, services: services, runTests: runTests)
+        \(modeSwitch(
+            bootstrap: bootstrap,
+            notFoundRegistration: notFoundRegistration,
+            factoryKeys: factoryKeys
+        ))
                 }
             }
         }
         """
     return Parser.parse(source: raw).formatted().description
+}
+
+/// The suite closure's body: one `case` per ``WireMVCTestMode``, each inlining its own build. The two builds
+/// cannot be factored into a shared local — they produce *different* opaque `~Copyable` handler types, so
+/// each branch must build and consume its handler in place. The driver call is the last line of each branch:
+/// `driveInProcess` calls `handle` per request, `serveForSuite` serves on an ephemeral loopback port.
+///
+/// Both branches are always emitted, so a test consumer needs the app server's ``WireMVCTestServer``
+/// conformance in scope (it imports the module supplying it) whichever mode its suites actually select —
+/// `serveForSuite`'s bound is checked when the factory is type-checked, not when the case is reached.
+func modeSwitch(
+    bootstrap: ControllerDeclaration,
+    notFoundRegistration: String,
+    factoryKeys: Set<String>,
+    bootstrapCall: String = "Wire.bootstrap()",
+    extraRegistrations: String = ""
+) -> String {
+    func build(_ transport: BootstrapTransport) -> String {
+        bootstrapBuildLines(
+            bootstrap: bootstrap,
+            notFoundRegistration: notFoundRegistration,
+            factoryKeys: factoryKeys,
+            bootstrapCall: bootstrapCall,
+            extraRegistrations: extraRegistrations,
+            transport: transport
+        )
+    }
+    // The drivers stay qualified on the `WireMVCTesting` enum — mirroring how the `@main` names `WireMVC`
+    // types unqualified but calls `WireMVC.serve`. `runTests` is the trait's type-erasing hook: the closure
+    // builds the app afresh each suite entry, so the opaque handler is a local that never escapes.
+    return """
+        switch mode {
+        case .inProcess:
+        \(build(.inProcess))
+        try await WireMVCTesting.driveInProcess(handler: wireMVCServed, services: services, runTests: runTests)
+        case .appServer:
+        \(build(.appServer))
+        try await WireMVCTesting.serveForSuite(on: server, handler: wireMVCServed, services: services, runTests: runTests)
+        }
+        """
 }
 
 /// The keyless global-middleware proxy type synthesised for a `@WireMVCBootstrap` root —

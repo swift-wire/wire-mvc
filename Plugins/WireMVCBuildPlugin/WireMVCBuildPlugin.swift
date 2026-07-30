@@ -83,6 +83,13 @@ struct WireMVCBuildPlugin: BuildToolPlugin {
         // passed as `--import`, so the emitted extensions (running in this consumer) can name that module's
         // `package`/`public` controllers, response types, and factories — needed when a test target
         // re-composes the app's graph.
+        //
+        // The generated live suite mode calls `serveForSuite`, which needs the app server's
+        // `WireMVCTestServer` conformance in scope. That conformance is retroactive, so — as for any
+        // retroactive conformance in Swift — the test target imports the module supplying it
+        // (`WireMVCTestingNIOHTTPServer` for `NIOHTTPServer`) in one of its own sources. Conformance lookup
+        // is module-wide, not file-scoped, so the import need not be in the generated file and the plugin
+        // has nothing to discover.
         let testEntry = dependsOnWireMVCTesting(target)
         let routeGenArguments =
             [routesURL.path]
