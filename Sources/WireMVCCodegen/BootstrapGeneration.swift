@@ -132,7 +132,7 @@ func renderBootstrapTestEntry(
 ) -> String {
     let raw = """
         extension SuiteTrait where Self == WireMVCSuiteTrait {
-            static func wiremvc(_ mode: WireMVCTestMode = .swiftHttpServer) -> WireMVCSuiteTrait {
+            static func wiremvc(_ mode: WireMVCTestMode = .appServer) -> WireMVCSuiteTrait {
                 WireMVCSuiteTrait { runTests in
         \(modeSwitch(
             bootstrap: bootstrap,
@@ -179,7 +179,7 @@ func modeSwitch(
         case .inProcess:
         \(build(.inProcess))
         try await WireMVCTesting.driveInProcess(handler: wireMVCServed, services: services, runTests: runTests)
-        case .swiftHttpServer:
+        case .appServer:
         \(build(.appServer))
         try await WireMVCTesting.serveForSuite(on: server, handler: wireMVCServed, services: services, runTests: runTests)
         }

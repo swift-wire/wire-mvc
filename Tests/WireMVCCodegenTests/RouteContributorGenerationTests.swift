@@ -151,7 +151,7 @@ struct RouteContributorGenerationTests {
         #expect(
             renderBootstrapTestEntry(bootstrap: decl, notFoundRegistration: fallback, factoryKeys: []) == """
                 extension SuiteTrait where Self == WireMVCSuiteTrait {
-                    static func wiremvc(_ mode: WireMVCTestMode = .swiftHttpServer) -> WireMVCSuiteTrait {
+                    static func wiremvc(_ mode: WireMVCTestMode = .appServer) -> WireMVCSuiteTrait {
                         WireMVCSuiteTrait { runTests in
                             switch mode {
                             case .inProcess:
@@ -166,7 +166,7 @@ struct RouteContributorGenerationTests {
                                 let handler = builder.finalize()
                                 let wireMVCServed = graph._WireGlobalMiddleware_AppBootstrap.wrapGlobalMiddleware(handler)
                                 try await WireMVCTesting.driveInProcess(handler: wireMVCServed, services: services, runTests: runTests)
-                            case .swiftHttpServer:
+                            case .appServer:
                                 let graph = try await Wire.bootstrap()
                                 let bootstrap = graph.appBootstrap
                                 let server = try bootstrap.createServer()
@@ -410,7 +410,7 @@ struct RouteContributorGenerationTests {
         #expect(!rendered.source.contains("@main"))
         #expect(!rendered.source.contains("struct _WireMVCBootstrapEntry {"))
         #expect(rendered.source.contains("extension SuiteTrait where Self == WireMVCSuiteTrait {"))
-        #expect(rendered.source.contains("static func wiremvc(_ mode: WireMVCTestMode = .swiftHttpServer)"))
+        #expect(rendered.source.contains("static func wiremvc(_ mode: WireMVCTestMode = .appServer)"))
         #expect(rendered.source.contains("WireMVCSuiteTrait { runTests in"))
         #expect(
             rendered.source.contains(
@@ -1332,7 +1332,7 @@ struct RouteContributorGenerationTests {
         #expect(rendered.source.contains("func withBindValues<R>(noteBackend: MockNoteBackend,"))
         #expect(
             rendered.source.contains(
-                "static func wiremvc(_ key: TestingKey, _ mode: WireMVCTestMode = .swiftHttpServer)"
+                "static func wiremvc(_ key: TestingKey, _ mode: WireMVCTestMode = .appServer)"
             )
         )
         // The keyed factory bootstraps the variant graph and hand-registers each variant proxy's routes.

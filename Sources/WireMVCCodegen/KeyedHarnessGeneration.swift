@@ -100,7 +100,7 @@ func renderBootstrapKeyedTestEntry(
     // the transport it is reached over. Both branches bootstrap the same variant.
     let raw = """
         extension SuiteTrait where Self == WireMVCSuiteTrait {
-            static func wiremvc(_ key: TestingKey, _ mode: WireMVCTestMode = .swiftHttpServer) -> WireMVCSuiteTrait {
+            static func wiremvc(_ key: TestingKey, _ mode: WireMVCTestMode = .appServer) -> WireMVCSuiteTrait {
                 WireMVCSuiteTrait { runTests in
         \(modeSwitch(
             bootstrap: bootstrap,

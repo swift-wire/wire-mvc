@@ -15,8 +15,15 @@ import WireMVC
 // paths — both build the app's real router, middleware fold, error tiers and `@NotFound` fallback:
 //   • `.inProcess` builds over ``InProcessServer`` and calls the finalized handler directly
 //     (``driveInProcess(handler:services:runTests:)``) — no socket, no port, no `createServer()`;
-//   • `.swiftHttpServer` builds over the app's own `createServer()` and serves it on an ephemeral
-//     loopback port (``serveForSuite(on:handler:services:runTests:)``), driving real HTTP per call.
+//   • `.appServer` builds over the app's own `createServer()` and serves it
+//     (``serveForSuite(on:handler:services:runTests:)``), driving real HTTP per call.
+//
+// The target design has a third, and *standard*, live mode the harness has not grown yet: a
+// **test-framework-owned** server on an ephemeral or fixed port (`.swiftHttpServer` / `.server(_:)`),
+// which never calls `createServer()`. The app is meant to own routes and config while the test framework
+// owns the transport — reusing the production server factory means un-configuring it for tests (TLS, bind
+// interface, timeouts, HTTP/2, graceful shutdown). `.appServer` is deliberately named for what it is, so
+// that mode can arrive without redefining a name.
 
 /// A server that reports the port it bound. `serveForSuite` reads it to point `TestClient.current` at the
 /// ephemeral loopback port the OS assigned (the app binds port `0` under test). This is the one capability
@@ -37,12 +44,17 @@ public enum WireMVCTestMode: Sendable {
     /// that doesn't depend on the transport. The default.
     case inProcess
 
-    /// Serve the app's own `createServer()` on an ephemeral loopback port and drive real HTTP over it.
-    /// The end-to-end mode: it is the only one that exercises the app's real server construction, real
-    /// connection capabilities, and genuine streaming/backpressure. Needs the server's
-    /// ``WireMVCTestServer`` conformance in scope — for `NIOHTTPServer` that is the
+    /// Serve the app's own `createServer()` and drive real HTTP over it. The only mode that exercises the
+    /// app's real server construction, real connection capabilities, and genuine streaming/backpressure —
+    /// but it serves on whatever port the app's `ServerConfig` carries, so a suite currently `@Replaces`
+    /// that with `0` to get an ephemeral one. Reading the bound port back needs the server's
+    /// ``WireMVCTestServer`` conformance in scope; for `NIOHTTPServer` that is the
     /// `WireMVCTestingNIOHTTPServer` product.
-    case swiftHttpServer
+    ///
+    /// This is *not* the standard live mode — a test-framework-owned server on a mode-chosen port is, and
+    /// it does not exist yet. Reuse the app's factory only for a genuine end-to-end test whose point is
+    /// verifying the real server wiring.
+    case appServer
 }
 
 /// A failure reaching the running test server.

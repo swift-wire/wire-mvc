@@ -265,8 +265,10 @@ generic factory method.
   is type-checked, not when the case is reached. An in-process-only suite therefore still carries the
   transport dependency today; the Phase-5 trait is what removes that, by making the conformance part of core
   `WireMVCTesting` whenever NIO is in the picture at all.
-- **The default mode is `.swiftHttpServer`**, so suites written before the mode argument keep the transport
-  they already ran on. Phase 5 migrates the call sites and flips it.
+- **The live mode built in Phase 2 is `.appServer`, not `.swiftHttpServer`.** It serves the app's own
+  `createServer()` — behaviour-preserving for the existing suites, and the default so they keep the transport
+  they already ran on, but *not* the standard live mode this design targets. It is named for what it does so
+  that Phase 3 can add the framework-owned `.swiftHttpServer` / `.server(_:)` without redefining a name.
 
 ## What a genuine live server still buys (why we keep it)
 
@@ -286,9 +288,9 @@ real wiring is the point — and why the ephemeral read-back seam rightfully liv
 
 ## Migration
 
-- Existing `@Suite(.wiremvc())` suites map to `.wiremvc(.swiftHttpServer)` (behaviour-preserving) initially, or
-  to `.wiremvc(.inProcess)` where they only exercise route/controller logic (most of them, including the
-  mocked routing suite).
+- Existing `@Suite(.wiremvc())` suites map to `.wiremvc(.appServer)` (behaviour-preserving) initially, then to
+  `.wiremvc(.inProcess)` where they only exercise route/controller logic (most of them, including the mocked
+  routing suite) or `.wiremvc(.swiftHttpServer)` where they want a real socket.
 - The `@Provides @Replaces func testServerConfig() -> ServerConfig { … port: 0 }` in test targets is retired in
   favour of the mode/port on the suite trait.
 - `WireMVCTesting`'s `public import NIOHTTPServer` + the `NIOHTTPServer` conformance move to
@@ -323,7 +325,8 @@ The one genuinely new, intricate piece.
 - Core `WireMVCTesting`: `ResponseSink`, `InProcessResponseSender`/`InProcessWriter`, `InProcessReader`,
   `InProcessRequestContext`, `InProcessServer`, `TestClient`'s in-process transport, and
   `driveInProcess` (the services-half of `serveForSuite` + per-request `handle`).
-- Introduce the mode enum: `.wiremvc(.inProcess)` / `.wiremvc(.swiftHttpServer)` (the existing live path).
+- Introduce the mode enum: `.wiremvc(.inProcess)` / `.wiremvc(.appServer)` (the existing live path, under an
+  honest name — see the codegen note above; the framework-owned `.swiftHttpServer` lands in Phase 3).
 - Codegen (`WireMVCRouteGen`): a `switch` over the mode inlining one build per branch, the in-process one
   building over `InProcessServer()` (the generic `registerWireRoutes(on:)` and the whole downstream build are
   reused verbatim) and handing the handler to `driveInProcess`.
@@ -335,11 +338,34 @@ The one genuinely new, intricate piece.
 
 ### Phase 3 — `.server(_:)`, ephemeral/fixed, services knob. wire-mvc + examples. Risk: medium.
 Complete the mode surface + retire the config hack.
+**This is where the live mode becomes framework-owned.** Phase 2's `.appServer` reuses the app's
+`createServer()`; the standard live mode must not. `.swiftHttpServer` is a `NIOHTTPServer` the *test
+framework* constructs on a mode-chosen port, and `createServer()` is never called — the app owns routes and
+config, the test framework owns the transport.
+
 - Core: `.server(s)` (ephemeral, `s: HTTPServer & WireMVCTestServer`) and `.server(s, on: port)` (fixed,
-  `s: HTTPServer` — no read-back in the signature); `.swiftHttpServer(on:)` in the NIO product.
+  `s: HTTPServer` — no read-back in the signature); `.swiftHttpServer[(on:)]` in the NIO product.
+- The mode must therefore **carry the server**, which changes the generated factory's shape: today it
+  switches over a non-generic enum and inlines a build per branch; it becomes generic over the server
+  (`wiremvc<Server>(_ mode: WireMVCTestMode<Server>)`) with a **single** build path over `mode.server`'s
+  associated types. That is strictly simpler, and it also means the generated code stops naming any concrete
+  server or `WireMVCTestServer` — the constraint is discharged at the test's call site, where the user has
+  already imported the transport. The Phase-2 gating problem disappears with it.
+- Whether `.appServer` survives as an explicit escape hatch for the genuine "verify the real server wiring"
+  E2E test is open.
 - The `services: .run | .skip` axis on every mode, with per-mode defaults.
 - Retire `@Provides @Replaces func testServerConfig() { port: 0 }`; the port/ephemeral choice moves onto the mode.
-- **Gate:** a fixed-port suite compiles with no `WireMVCTestServer` in scope; the ephemeral one still reads back.
+- **Spiked 2026-07-30, and it is not free.** Hiding both transports behind a `WireMVCTestDriver: HTTPServer`
+  refinement (so one build path can dispatch to either driver) type-checks *only* if the refinement restates
+  every `~Copyable` suppression (`where RequestContext: ~Copyable, Reader: ~Copyable, ResponseSender:
+  ~Copyable, ResponseSender.Writer: ~Copyable`) — without that, the suppressions are re-imposed as `Copyable`
+  at every use site. With them restated, the 6.4.x-snapshot-2026-07-06 toolchain **crashes**:
+  `Assertion failed: (concrete->getProtocol() == assocType->getProtocol()), getTypeWitness,
+  ProtocolConformanceRef.cpp:195`. So Phase 3 needs either a reduced test case + upstream bug report, or a
+  shape that avoids the refinement — e.g. the mode carries a driver *closure* rather than conforming the
+  server to a protocol.
+- **Gate:** a fixed-port suite compiles with no `WireMVCTestServer` in scope; the ephemeral one still reads
+  back; no live suite calls `createServer()` unless it explicitly asks for `.appServer`.
 
 ### Phase 4 — Multi-key via source-location identity. swift-wire → wire-mvc. Risk: medium.
 - swift-wire: `TestingKey` gains `package let fileID`/`line` captured via `#fileID`/`#line` init defaults
@@ -351,7 +377,8 @@ Complete the mode surface + retire the config hack.
 
 ### Phase 5 — Migration + package-graph cleanup. wire-mvc + examples. Risk: low–medium.
 - Migrate wire-mvc's in-package `WireMVCBootstrapExample*` suites and the examples-repo suites to the mode API
-  (`.inProcess` where they only exercise route logic — most; `.swiftHttpServer` for the streaming/E2E ones).
+  (`.inProcess` where they only exercise route logic — most; `.swiftHttpServer` for the streaming/E2E ones,
+  which by then is a framework-owned server rather than the app's `createServer()`).
 - Concrete worked example — `SwiftHttpServerExample` becomes a two-mode reference:
   - the **mocked routing suite** (`SwiftHttpServerExampleMockedTests`, smockable, no backend) →
     `.wiremvc(MockedRoutingBinds.mocks, .inProcess)` — socket-free, and it drops the `NIOHTTPServer` /
