@@ -12,7 +12,11 @@ import SwiftSyntax
 // carry — only the key reference. It is recovered from the `BindingKey<Slot>` declaration in the composed
 // sources (``bindingKeySlotTypes(in:)``); a key whose declaration isn't found is skipped.
 //
-// Scope is the single-`TestingKey` common case: the first key found drives the harness.
+// Scope is one `TestingKey` per target — the key drives the harness. A second key is an **error**, not a
+// silent preference for the first: both would generate a variant graph, but only one factory is emitted, so
+// a suite passing the second would quietly be served the first's graph. Serving several variants from one
+// target is deferred (swift-wire's PendingIssues/11); rejecting the second keeps the deferral visible
+// instead of letting it surface as a mysteriously wrong mock.
 
 /// One `@BindType` substitution on a `TestingKey` — the doubles field it contributes.
 public struct TestingBindSubstitution: Sendable, Equatable {
@@ -105,26 +109,55 @@ func lowerCamelFirst(_ name: String) -> String {
     return first.lowercased() + name.dropFirst()
 }
 
-/// Find the harness's `TestingKey` across the parsed sources — the first `static let`/module-scope `let`
-/// initialised with `TestingKey()` (or annotated `: TestingKey`), with its `@BindType`/`@Scopable` markers.
-/// `nil` when there is none (the keyless path). Single-key scope: a second key is ignored (a follow-up).
-public func discoverTestingKey(in sourceFiles: [SourceFileSyntax]) -> DiscoveredTestingKey? {
+/// Find the harness's `TestingKey` across the parsed sources — a `static let`/module-scope `let` initialised
+/// with `TestingKey()` (or annotated `: TestingKey`), with its `@BindType`/`@Scopable` markers. `nil` when
+/// there is none (the keyless path).
+///
+/// Every key found beyond the first is reported as an error against its own declaration, naming the one that
+/// won. The harness emits a single `.wiremvc(_ key:, _ mode:)` factory bound to that key's variant graph, so
+/// a second key has no way to be served and would otherwise be a silent wrong-graph bug.
+public func discoverTestingKeys(
+    in sourceFiles: [(path: String, tree: SourceFileSyntax)]
+) -> (key: DiscoveredTestingKey?, diagnostics: [LocatedRouteDiagnostic]) {
     // The keyed `@BindType(K.member, …)` form names the slot by its `BindingKey` reference, not its type, so
     // its doubles field needs the `BindingKey<Slot>` declaration's `Slot`. Collect those across every source
     // first (the key may be declared in the app, re-parsed into a test target).
-    let bindingKeySlots = bindingKeySlotTypes(in: sourceFiles)
-    for tree in sourceFiles {
+    let bindingKeySlots = bindingKeySlotTypes(in: sourceFiles.map(\.tree))
+
+    var served: DiscoveredTestingKey?
+    var diagnostics: [LocatedRouteDiagnostic] = []
+    for file in sourceFiles {
         let finder = TestingKeyFinder(bindingKeySlots: bindingKeySlots)
-        finder.walk(tree)
-        if let key = finder.key { return key }
+        finder.walk(file.tree)
+        guard !finder.keys.isEmpty else { continue }
+        let converter = SourceLocationConverter(fileName: file.path, tree: file.tree)
+        for found in finder.keys {
+            guard let first = served else {
+                served = found.key
+                continue
+            }
+            diagnostics.append(
+                LocatedRouteDiagnostic(
+                    message: .multipleTestingKeys(found.key.keyReference, first: first.keyReference),
+                    location: converter.location(for: found.declarationPosition)
+                )
+            )
+        }
     }
-    return nil
+    return (served, diagnostics)
 }
 
-/// Walks a parsed file for a `TestingKey` static and reads its `@BindType` markers, tracking the enclosing
-/// type names so the key reference reconstructs as `Enclosing.member`.
+/// A `TestingKey` declaration with the position its diagnostic anchors to.
+struct FoundTestingKey {
+    let key: DiscoveredTestingKey
+    let declarationPosition: AbsolutePosition
+}
+
+/// Walks a parsed file for every `TestingKey` static, reading its `@BindType` markers and tracking the
+/// enclosing type names so each key reference reconstructs as `Enclosing.member`. All of them are collected,
+/// not just the first — the extras are what the single-key rule reports.
 private final class TestingKeyFinder: SyntaxVisitor {
-    private(set) var key: DiscoveredTestingKey?
+    private(set) var keys: [FoundTestingKey] = []
     private var enclosing: [String] = []
     /// Key reference → slot type, for resolving the keyed `@BindType(K.member, …)` form's field name.
     private let bindingKeySlots: [String: String]
@@ -154,8 +187,7 @@ private final class TestingKeyFinder: SyntaxVisitor {
     private func pop() { if !enclosing.isEmpty { enclosing.removeLast() } }
 
     override func visit(_ node: VariableDeclSyntax) -> SyntaxVisitorContinueKind {
-        guard key == nil,
-            node.bindings.count == 1,
+        guard node.bindings.count == 1,
             let binding = node.bindings.first,
             let pattern = binding.pattern.as(IdentifierPatternSyntax.self),
             namesTestingKey(annotation: binding.typeAnnotation?.type, initializer: binding.initializer?.value)
@@ -168,7 +200,12 @@ private final class TestingKeyFinder: SyntaxVisitor {
             else { return nil }
             return bindSubstitution(from: attribute)
         }
-        key = DiscoveredTestingKey(keyReference: reference, substitutions: substitutions)
+        keys.append(
+            FoundTestingKey(
+                key: DiscoveredTestingKey(keyReference: reference, substitutions: substitutions),
+                declarationPosition: pattern.identifier.positionAfterSkippingLeadingTrivia
+            )
+        )
         return .visitChildren
     }
 
