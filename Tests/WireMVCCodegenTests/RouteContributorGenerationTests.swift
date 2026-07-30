@@ -196,7 +196,9 @@ struct RouteContributorGenerationTests {
         #expect(!entry.contains("createServer()"))
         #expect(entry.contains("let server = mode.makeTestServer()"))
         // The @main is the one place it is still called.
-        #expect(renderBootstrapEntry(bootstrap: decl, notFoundRegistration: "", factoryKeys: []).contains("createServer()"))
+        #expect(
+            renderBootstrapEntry(bootstrap: decl, notFoundRegistration: "", factoryKeys: []).contains("createServer()")
+        )
     }
 
     /// A `mountIntrospectionAt() -> String?` method makes the generated `@main` register the graph's wiring

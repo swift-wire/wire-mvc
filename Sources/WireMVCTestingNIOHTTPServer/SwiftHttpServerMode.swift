@@ -1,7 +1,6 @@
+import Logging
 public import NIOHTTPServer
 public import WireMVCTesting
-
-import Logging
 
 // The batteries-included live mode for the proposal-native stack: a `NIOHTTPServer` the **test framework**
 // owns and configures, not the app's. `.swiftHttpServer` is `.server(NIOHTTPServer(…))` with the server

@@ -91,7 +91,9 @@ extension WireMVCTestMode where Server == InProcessServer {
     /// since a route-logic suite wants isolation; pass `services: .run` for a route that needs a started
     /// service.
     public static var inProcess: WireMVCTestMode<InProcessServer> {
-        WireMVCTestMode(defaultServices: .skip) { InProcessServer() } client: { server in
+        WireMVCTestMode(defaultServices: .skip) {
+            InProcessServer()
+        } client: { server in
             TestClient(dispatch: await server.dispatch.current)
         }
     }

@@ -1,5 +1,6 @@
 import Testing
 import WireMVCTesting
+
 @testable import WireMVCBootstrapExample
 
 // Proof that `@Replaces` swaps a re-composed app binding for a test double. This target re-composes the
