@@ -84,6 +84,29 @@ extension TestClient {
         )
     }
 
+    /// Drive a `@RawRoute` and return its response **as-is**, including a non-2xx.
+    ///
+    /// A raw route writes its own response — status, framing and all — so there is no declared type to
+    /// decode and no status that counts as the failure case: a route may answer `404` or stream a
+    /// `206` by design. The generated shim therefore returns ``TestResponse`` rather than a value, and
+    /// this does not throw for status the way ``routeResponse(method:path:pathParameters:query:headers:)``
+    /// does. What it still gives is the *path*: the template comes from the route's own verb annotation, so
+    /// renaming the route breaks the test.
+    public func rawRouteResponse(
+        method: String,
+        path: String,
+        pathParameters: [String: String] = [:],
+        query: [(name: String, value: String)] = [],
+        headers: [String: String] = [:]
+    ) async throws -> TestResponse {
+        try await send(
+            method,
+            Self.resolve(template: path, pathParameters: pathParameters, query: query),
+            body: nil,
+            headers: headers
+        )
+    }
+
     /// Send an already-resolved request and apply the non-2xx rule. Both public forms resolve the template
     /// themselves, so this takes the finished path.
     private func sendRoute(

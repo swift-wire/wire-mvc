@@ -40,6 +40,16 @@ struct ReplaceTests {
         #expect(error.status == .badRequest)
     }
 
+    /// The raw-route shim. `@RawRoute` writes its own response, so nothing about the payload is typed — but
+    /// the request line is: `rawGreeting(name:)` is `GET /hello/raw/{name}`, derived from the route's own
+    /// annotation, so renaming it breaks this at compile time. The response comes back untyped, and a
+    /// non-2xx would not be a failure here the way it is for a typed method.
+    @Test func rawRouteShimDerivesThePath() async throws {
+        let response = try await helloController.rawGreeting(name: "Alice")
+        #expect(response.status == 200)
+        #expect(response.bodyText == "raw:FAKE:Alice")
+    }
+
     /// Mode parity, 2/3 — the `@NotFound` `@RawRoute` fallback. No typed method exists for it: an unmatched
     /// path is not addressable by route, so this stays on the untyped client, which is exactly what that
     /// surface is for. An unmatched path reaches the Bootstrap's own
