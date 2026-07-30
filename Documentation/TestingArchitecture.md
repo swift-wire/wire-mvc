@@ -83,10 +83,12 @@ Batteries-included live mode for the proposal-native / `NIOHTTPServer` stack. It
 loopback configuration the harness owns — not a separate mechanism.
 
 - Ephemeral by default (`.swiftHttpServer`); fixed with `.swiftHttpServer(on: port)`.
-- Lives in: an opt-in **`WireMVCTestingNIOHTTPServer`** product that ships `import NIOHTTPServer`, the
-  `extension NIOHTTPServer: WireMVCTestServer` conformance, and the `.swiftHttpServer` factory.
-- "Availability-gated" = you get `.swiftHttpServer` only by depending on that product, which is the only place
-  `swift-http-server` enters the graph.
+- Lives in: `WireMVCTesting`, behind the off-by-default **`NIOHTTPServer` trait** — `#if NIOHTTPServer`
+  guards `import NIOHTTPServer`, the `extension NIOHTTPServer: WireMVCTestServer` conformance, and the
+  `.swiftHttpServer` factory. (Phase 1 shipped these as a separate `WireMVCTestingNIOHTTPServer` product;
+  Phase 5 folded it away — see "Module structure" below.)
+- "Availability-gated" = you get `.swiftHttpServer` only by enabling that trait, which is the only thing that
+  puts `swift-http-server` into the graph.
 
 ### The two orthogonal axes
 

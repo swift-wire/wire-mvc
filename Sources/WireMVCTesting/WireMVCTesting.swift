@@ -23,12 +23,15 @@ import WireMVC
 // generated code free of any concrete server type: the constraint on which servers are usable is
 // discharged where the test writes `.inProcess` / `.swiftHttpServer` / `.server(_:)`.
 
-/// A server that reports the port it bound. `serveForSuite` reads it to point `TestClient.current` at the
-/// ephemeral loopback port the OS assigned (the app binds port `0` under test). This is the one capability
-/// the seam needs beyond ``HTTPServer``, which surfaces no bound-address API. The `NIOHTTPServer`
-/// conformance ships in the opt-in `WireMVCTestingNIOHTTPServer` product — the only place
-/// `swift-http-server` enters the graph — so this module stays server-agnostic; a bootstrap returning
-/// another server type conforms it to opt that server into the suite trait.
+/// A server that reports the port it bound. An **ephemeral** live mode reads it to point
+/// `TestClient.current` at the loopback port the OS assigned — the harness binds `0`, so the app's
+/// `ServerConfig` is not involved. This is the one capability the seam needs beyond ``HTTPServer``, which
+/// surfaces no bound-address API, and only an ephemeral mode needs it: ``WireMVCTestMode/server(_:on:)``
+/// already knows its port, so this bound does not appear in that signature.
+///
+/// The `NIOHTTPServer` conformance is `#if NIOHTTPServer` in this module, so with the trait off nothing
+/// here names a concrete server. A bootstrap serving on another server type conforms it to opt that server
+/// into ``WireMVCTestMode/server(_:)``.
 public protocol WireMVCTestServer {
     /// The port the server is listening on, once bound. Suspends until the first address binds.
     var wireMVCBoundPort: Int { get async throws }

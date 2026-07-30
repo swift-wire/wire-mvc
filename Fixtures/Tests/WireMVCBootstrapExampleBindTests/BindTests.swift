@@ -4,7 +4,8 @@ import WireMVCTesting
 @testable import WireMVCBootstrapExample
 
 // H2.2b gate — the keyed test harness end to end over real HTTP. `@Suite(.wiremvc(NoteTestBinds.mockBackend, .swiftHttpServer))`
-// stands up the app on an ephemeral loopback port and parks the variant contributor proxies for the key; each
+// stands the app up on a harness-owned server bound to an ephemeral loopback port — the app's own
+// `createServer()` is not involved — and parks the variant contributor proxies for the key; each
 // test supplies its per-request mocks with the generated `withBindValues(noteBackend:prefsBackendKeyed…:)` —
 // the key carries a by-type `@BindType(NoteBackend.self, …)` slot AND a keyed `@BindType(PrefsKeys.primary, …)`
 // slot, so its doubles struct (and `withBindValues`) has a field for each. `GET /notes/{id}` (by-type) and

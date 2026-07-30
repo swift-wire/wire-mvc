@@ -21,8 +21,8 @@ package struct RealGreeter: Greeter {
     package func greet(_ name: String) -> String { "Hello, \(name)!" }
 }
 
-/// The server bind config the composition root injects. `package` so a test target re-composing the app can
-/// supersede the production port with an OS-ephemeral `0` — see `serverConfig()`.
+/// The server bind config the composition root injects — read only by its `createServer()`, and so only on
+/// the production path. `package` so a test target re-composing the app can still name it.
 package struct ServerConfig: Sendable {
     package let host: String
     package let port: Int
@@ -33,8 +33,9 @@ package struct ServerConfig: Sendable {
 }
 
 /// The production binding for `ServerConfig` — a `@Provides` factory binding the fixed production port
-/// `8080`. Its provider form lets a test target's `@Provides @Replaces` supersede it
-/// provider-for-provider, swapping in an ephemeral port so parallel test servers don't collide on `8080`.
+/// `8080`. Only the app's own `createServer()` reads it, which is why `swift run WireMVCBootstrapExample`
+/// serves on `8080`: a suite serves on the server its `WireMVCTestMode` carries, so no test target has to
+/// `@Replaces` this down to an ephemeral port any more.
 @Provides package func serverConfig() -> ServerConfig {
     ServerConfig(host: "127.0.0.1", port: 8080)
 }
