@@ -1,9 +1,15 @@
 # Controller-scoped testing — a design note
 
 > **Status:** the **typed client half is built** (2026-07-30) — see "What was built" below. The
-> per-controller *bind values* half is not, and still depends on swift-wire keeping its per-subject doubles
-> sets. Originally an idea note, written for revisiting after Phase 5 of `../TestingArchitecture.md`.
-> Related: swift-wire's `PendingIssues/11` (one `TestingKey` per target), which this would partly obviate.
+> per-controller *bind values* half is not. Originally an idea note, written for revisiting after Phase 5 of
+> `../TestingArchitecture.md`. Related: swift-wire's `PendingIssues/11` (one `TestingKey` per target), which
+> this would partly obviate.
+>
+> **Corrected 2026-07-31.** The first draft misread how swift-wire carries its doubles sets, and the three
+> claims that followed from it are fixed below: the accumulation it asked to keep un-merged was already
+> un-merged, per-*scope* is not per-*controller* (a seed scope is shared by every controller on that seed),
+> and the middleware question is now answered rather than open — swift-wire folds a mock-consuming middleware
+> factory's fields into the subject's set on both paths (swift-wire #239 did the seed-scoped half).
 
 Most WireMVC testing happens at the **controller** level: a suite exercises one controller's routes with its
 dependencies mocked. But neither half of the harness is scoped to a controller — the doubles you supply are
@@ -95,11 +101,25 @@ to give a typed method a generated error type rather than a bare status code. No
 need to be. It is transitive: `CartController` reaches
 `NoteBackend` only through `CartService → AccountRegistry`, whose `init` reads it
 (`level2TransitiveRouteThreadsMockWithNoMark` covers exactly this). wire-mvc parses controllers, not the
-graph, so it cannot compute that closure. swift-wire can, and already does — it computes doubles fields
-per scope and then *merges* them into one variant-wide set (`mergedDoublesFields` in
-`WireGen/TestingVariants.swift`). The seedless reconstructions already carry theirs individually
-(`reconstruction.doublesFields`); the seed-scoped path would need its accumulation kept un-merged. Bounded,
-but it starts in swift-wire.
+graph, so it cannot compute that closure. swift-wire can, and already does.
+
+**What swift-wire already carries, precisely.** The first draft said the seed-scoped accumulation would need
+to be "kept un-merged". It already is: `accumulateVariantScopes` computes `scopeDoublesFields` per seed
+partition and stores it on the scope (`WireGen/TestingVariants.swift`, the `scopeDoublesFields` local and the
+`doublesFields:` it passes to `orchestrateVariantScope`). `mergedDoublesFields` is built *alongside* it, purely
+to render the one variant-wide `_<Key>Doubles`. Nothing needs un-merging.
+
+**But per-scope is the wrong granularity**, which is the real gap. A seed scope is partitioned by *seed type*,
+not by subject: every `@Scoped(seed: HTTPRequest.self)` controller in a module shares one scope, and so shares
+one `doublesFields`. Handing `NotesControllerDoubles` that set would still over-specify — just one level down
+from the key-wide set this note exists to replace.
+
+**The primitive that closes the gap already ships too.** `reachableBindings(from:in:)` in
+`WireGenCore/ScopeEntryEmission.swift` is a BFS from the routed subject over the scope's resolved edges, added
+in M5.4.6 to prune construction and teardown to the controller actually being served. Per-controller doubles is
+that reachable set intersected with the scope's doubles-sourced bindings. The mapping holds up: a substituted
+binding keeps its identity (`applyBindTypeSubstitutions` rewrites the source, not the identity) and
+`doublesFieldName(for:)` recovers its field, so identity → field needs no change to `DoublesField`.
 
 ## Could the consumed set be a naming convention instead?
 
@@ -124,7 +144,7 @@ over the resolved graph is replicating the DI engine.
 
 **But wire-mvc only needs the list if wire-mvc emits the typed entry point.** If swift-wire emits a
 per-subject doubles struct — `NotesControllerDoubles` with a memberwise init over exactly the fields that
-subject's scope consumes — then the memberwise init *is* the typed, complete, compile-checked parameter
+subject reaches (not its whole scope's) — then the memberwise init *is* the typed, complete, compile-checked parameter
 list, and wire-mvc needs to know only the type's **name**. Which is precisely the kind of blind agreement
 that already works. The call site becomes:
 
@@ -148,9 +168,13 @@ wire-mvc owns anything route-derived. It is also the one that composes with the 
 client is route-derived and wire-mvc can emit it either way. Worth trying first, and only reaching for the
 nicer spelling if the generated type name proves annoying in practice.
 
-Either way swift-wire has to keep its per-subject sets rather than merging them (`mergedDoublesFields` in
-`WireGen/TestingVariants.swift`); the seedless reconstructions already carry theirs individually
-(`reconstruction.doublesFields`), the seed-scoped path does not.
+Either way swift-wire has to expose a per-subject set. What that costs differs by path, and neither is the
+"stop merging" the first draft assumed:
+
+| Subject | Per-subject set | Work |
+|---|---|---|
+| Seedless (`@Singleton` + `@TestScopable`) | `reconstruction.doublesFields` | none — already per-subject, middleware included |
+| Seed-scoped (`@Scoped(seed:)`) | `scope.doublesFields` ∩ `reachableBindings(from: subject)`, plus that proxy's factory-transform fields | the intersection, over machinery that already ships |
 
 **The third option stands apart:** don't scope the doubles at all — one union struct with optional fields,
 validated per route at runtime. Simplest to build, but it trades away the compile-time guarantee this idea
@@ -168,10 +192,17 @@ exists to keep. Recorded as option 1 in swift-wire's `PendingIssues/11`.
 - **Cross-controller flows.** The Docker CRUD suite creates through one controller and reads through
   another. A per-controller client can't express that alone, so `TestClient.current` must remain
   first-class rather than becoming a fallback nobody maintains.
-- **Middleware-consumed doubles.** A route-scoped `@Middleware` factory can itself inject a mocked slot
-  (Phase B threads `create(doubles:)`). The per-controller set must include those, not just what the handler
-  reaches — worth confirming against `appScopedTestScopableRouteServesMockSeedlessly`, where the middleware
-  and the handler touch the same supplied instance.
+- ~~**Middleware-consumed doubles.**~~ **Answered.** A route-scoped `@Middleware` factory that injects a
+  mocked slot is folded into the *subject's* set by swift-wire on both paths, so a BFS from the controller
+  root is not the whole story — but the missing piece is already attributed per subject, not something
+  wire-mvc has to reconstruct. Seedless: `SeedlessReconstruction.doublesFields` is
+  `built.doublesFields + factoryTransforms.flatMap { $0.doublesFields }`, so the factory's fields ride along
+  (`appScopedTestScopableRouteServesMockSeedlessly` is that case). Seed-scoped: the same transform now runs
+  for contributor proxies, keyed by proxy type name (swift-wire #239 — its
+  `seedScopedFactoryTransforms`), covered by `seedScopedRouteWithMockConsumingMiddlewareServesMock`. So a
+  per-controller set is the reachable-from-subject intersection **union** that proxy's factory-transform
+  fields. Note those fields currently land only in the variant-wide struct; per-controller doubles is what
+  would consume them per subject.
 - **Keyless suites.** Bind values only exist under a keyed suite; a typed client arguably shouldn't. Or it
   could be offered keylessly too, as pure route-shape sugar over the real graph.
 
@@ -180,12 +211,19 @@ exists to keep. Recorded as option 1 in swift-wire's `PendingIssues/11`.
 The pieces this would touch, so a fresh reading doesn't have to rediscover them.
 
 **swift-wire — the consumed-doubles set (the part wire-mvc can't derive):**
-- `WireGen/TestingVariants.swift` — `buildVariant` merges per-scope doubles fields into one variant-wide set
-  at `mergedDoublesFields`. Keeping them un-merged per subject is the change.
-- `WireGen/TestingVariantSeedlessRoots.swift` — the seedless reconstructions already carry
-  `reconstruction.doublesFields` individually; the seed-scoped path accumulates across partitions.
+- `WireGenCore/ScopeEntryEmission.swift` — `reachableBindings(from:in:)`, the per-root BFS over the scope's
+  edges. This is the primitive; a seed-scoped subject's set is its result intersected with the scope's
+  doubles-sourced bindings. It is `private` today, so exposing it is part of the change.
+- `WireGen/TestingVariants.swift` — the per-scope `scopeDoublesFields` is already stored on each scope;
+  `mergedDoublesFields` is the separate variant-wide render. Neither needs un-merging.
+- `WireGen/TestingVariantSeedlessRoots.swift` — `SeedlessReconstruction.doublesFields` is already the
+  per-subject set for a seedless root, factory fields included.
+- `WireGen/TestingVariantContributorProxies.swift` — `seedScopedFactoryTransforms` returns the mock-consuming
+  factory transforms keyed by proxy type name; their `doublesFields` are the middleware half of a seed-scoped
+  subject's set.
 - `WireGenCore/TestingGraph.swift` — `renderDoublesStruct(typeName:fields:)` emits the struct (fields sorted
-  by name, memberwise init); `DoublesField` is `(name, mockType)`.
+  by name, memberwise init); `DoublesField` is `(name, mockType)`. A per-subject struct is the same renderer
+  over a narrower field list.
 
 **wire-mvc — the typed client (fully derivable here):**
 - `WireMVCCodegen/ControllerDeclaration.swift` + `RouteContributorGeneration.swift`'s `ControllerFinder` —
@@ -202,8 +240,10 @@ The pieces this would touch, so a fresh reading doesn't have to rediscover them.
 - `WireMVCTesting/TestBindStore.swift` — `WireMVCTesting.withBindValues(_:in:_:)` is already generic over the
   doubles type, so it needs no change if swift-wire emits the struct.
 
-**Sequencing note.** The typed client needs nothing from swift-wire, so it can land first and independently
-of the doubles question — which is also the half that pays off in every suite, keyed or not.
+**Sequencing note.** The typed client needed nothing from swift-wire, so it landed first and independently of
+the doubles question (#55–#57) — it was also the half that pays off in every suite, keyed or not. What remains
+is the doubles half, and it starts in swift-wire: exposing a per-subject set (the table above), then a
+per-subject `renderDoublesStruct` over it. wire-mvc's side is then only the type name, by convention.
 
 ## Why this weakens the case for multi-key
 
