@@ -22,9 +22,9 @@ public struct TestClient: Sendable {
     enum Transport: Sendable {
         /// A real HTTP round-trip to the suite server's loopback host + port.
         case loopback(host: String, port: Int)
-        /// A direct call into the finalized handler, returning its response head + body (`nil` when the
-        /// handler returned without responding).
-        case inProcess(@Sendable (HTTPRequest, [UInt8]) async throws -> (head: HTTPResponse, body: [UInt8])?)
+        /// The in-memory exchange channel. A request is submitted and answered incrementally: the head
+        /// arrives before the body exists, and body chunks cross a rendezvous, so this transport streams.
+        case inProcess(InProcessDispatch)
     }
 
     let transport: Transport
@@ -33,9 +33,7 @@ public struct TestClient: Sendable {
         self.transport = .loopback(host: host, port: port)
     }
 
-    init(
-        dispatch: @escaping @Sendable (HTTPRequest, [UInt8]) async throws -> (head: HTTPResponse, body: [UInt8])?
-    ) {
+    init(dispatch: InProcessDispatch) {
         self.transport = .inProcess(dispatch)
     }
 
@@ -102,14 +100,15 @@ public struct TestClient: Sendable {
             let (data, response) = try await URLSession.shared.data(for: request)
             return TestResponse(head: Self.head(of: response), body: data)
         case .inProcess(let dispatch):
-            let request = makeHTTPRequest(method, path, headers: headers)
-            guard let response = try await dispatch(request, body.map(Array.init) ?? []) else {
+            // The buffered surface over a streaming transport: start the exchange, then drain it whole.
+            let exchange = try await dispatch.start(makeHTTPRequest(method, path, headers: headers), body: body)
+            guard let head = try await exchange.startedHead() else {
                 // The handler returned without sending a response. Live, the server would abort the
                 // connection; in-process there is nothing to abort, so surface it as a distinguishable
                 // status rather than a plausible-looking 500.
                 return TestResponse(head: nil, body: Data())
             }
-            return TestResponse(head: response.head, body: Data(response.body))
+            return TestResponse(head: head, body: try await exchange.drainBody())
         }
     }
 

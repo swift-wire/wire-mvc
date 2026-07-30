@@ -252,9 +252,11 @@ generic factory method.
 ## What a genuine live server still buys (why we keep it)
 
 In-process cannot observe, and a live E2E test can:
-- **Streaming / backpressure** — that `@RawRoute` streaming (multipart export, SSE) actually streams
-  incrementally with real framing/backpressure, not buffered whole. In-process proves the route *logic*, not
-  the streaming *behavior*.
+- ~~**Streaming / backpressure**~~ — **no longer true.** The in-process transport was reworked to hand each
+  `write` to the consumer over a rendezvous channel (`InProcessExchange`), with `serve` running an accept
+  loop so the handler runs concurrently with the test reading it. A `@RawRoute` streaming incrementally is
+  observable in process, backpressure included, with no socket — see `inProcessAppliesBackpressurePerChunk`.
+  This narrows the live mode's remaining value further.
 - **The app's real server-wiring** — in-process never calls `createServer()`, so a bug in the real server
   construction / server-boundary behavior only shows up live.
 - **Real connection capabilities** — TLS/ALPN, client cert, peer address a real `RequestContext` exposes.

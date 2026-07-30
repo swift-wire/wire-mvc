@@ -155,6 +155,9 @@ let package = Package(
                 .product(name: "HTTPTypes", package: "swift-http-types"),
                 // `AsyncReader`/`CallerAsyncWriter` — the in-process reader and body writer conform to them.
                 .product(name: "AsyncStreaming", package: "swift-async-algorithms"),
+                // `AsyncChannel` — the rendezvous the in-process response body streams over, so a writer
+                // suspends until the test reads. That is what makes backpressure observable in process.
+                .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
                 // `UniqueArray` — the in-process reader's buffer type.
                 .product(name: "BasicContainers", package: "swift-collections"),
                 .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
