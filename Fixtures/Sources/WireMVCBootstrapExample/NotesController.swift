@@ -134,6 +134,24 @@ package struct LoggedController: Sendable {
     package func logged() -> Note { Note(value: "logged") }
 }
 
+/// The seed-scoped counterpart to `SummaryController`. Where `LoggedController` carries a factory that injects
+/// nothing, this one's `@Middleware(ScopedAuditKeys.factory)` injects the `@BindType`'d `NoteBackend` — so the
+/// factory is re-emitted as a variant factory sourcing the mock per request, exactly as the seedless path does.
+/// Both the middleware and the handler touch the slot, so one supplied instance records `scoped-audit` then
+/// `audited:x`.
+@Scoped(seed: HTTPRequest.self)
+@Controller("/audited")
+@Middleware(ScopedAuditKeys.factory)
+package struct AuditedController: Sendable {
+    @Inject var backend: any NoteBackend
+
+    @Get("/{id}")
+    @JSONResponse
+    package func audited(@Path id: String) async -> Note {
+        Note(value: await backend.note("audited:\(id)"))
+    }
+}
+
 // A KEYED binding slot — `@Provides(PrefsKeys.primary)` / `@Inject(PrefsKeys.primary)` (a `BindingKey`),
 // mirroring `@Provides(key)` / `@Replaces(key)`. Mocked via the keyed `@BindType(PrefsKeys.primary, …)` form.
 package protocol PrefsBackend: Sendable {

@@ -54,6 +54,21 @@ struct BindTests {
         #expect(mock.recordedNotes == ["audit", "summary:x"])
     }
 
+    /// The **seed-scoped** counterpart to the test above. `AuditedController` is `@Scoped(seed: HTTPRequest.self)`
+    /// and its `@Middleware(ScopedAuditKeys.factory)` injects the mocked `NoteBackend`, so the factory can't hold
+    /// it any more than `SummaryAudit` could — the seed-scoped path threads doubles into the lifted factory the
+    /// same way the seedless one does. The one supplied instance records the middleware's `scoped-audit` call and
+    /// then the handler's `audited:x`.
+    @Test func seedScopedRouteWithMockConsumingMiddlewareServesMock() async throws {
+        let mock = MockNoteBackend()
+        try await withBindValues(noteBackend: mock, prefsBackendKeyedPrefsKeysPrimary: MockPrefsBackend()) {
+            let response = try await TestClient.current.get("/audited/x")
+            #expect(response.status == 200)
+            #expect(try response.json(Note.self).value == "mock:audited:x")
+        }
+        #expect(mock.recordedNotes == ["scoped-audit", "audited:x"])
+    }
+
     /// The KEYED `@BindType(PrefsKeys.primary, …)` slot form: `PrefsController` injects the keyed binding
     /// (`@Inject(PrefsKeys.primary) var prefs`). `withBindValues` supplies the keyed doubles field WireGen
     /// names — `prefsBackendKeyedPrefsKeysPrimary` — and `GET /prefs/x` returns the mock's `mock-pref:x`, the
