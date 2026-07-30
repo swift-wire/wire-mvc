@@ -1,6 +1,8 @@
 # WireMVC testing architecture — target design
 
-> **Status:** design record, for review before building. Supersedes the current single-mode `.wiremvc()`
+> **Status:** built. Phases 1–5 are complete; each section records what the build corrected, and the
+> implementation plan at the end marks each phase's outcome. Originally a design record, for review before
+> building. Supersedes the current single-mode `.wiremvc()`
 > harness (`WireMVCTesting.serveForSuite` over a hard-wired `NIOHTTPServer`). Motivated by a concrete coupling
 > bug: a framework-agnostic package (`Controllers` in wire-mvc-examples) transitively resolves
 > `swift-http-server` purely because it depends on the `WireMVC` product, since the `wire-mvc` package declares
@@ -124,35 +126,39 @@ revisit after Phase 5.
 
 ## Module structure (the coupling fix)
 
-| Product | Provides | Concrete-server dependency |
+| Configuration | `WireMVCTesting` provides | Concrete-server dependency |
 |---|---|---|
-| `WireMVCTesting` (core) | `.inProcess`, `.server(_:)`, `WireMVCTestServer`, the in-process transport, `WireMVCSuiteTrait`, `TestClient`/`InProcessClient` | **none** — abstract `HTTPServer` only |
-| `WireMVCTestingNIOHTTPServer` (opt-in) | `.swiftHttpServer[(on:)]`, `extension NIOHTTPServer: WireMVCTestServer` | `swift-http-server` |
+| default | `.inProcess`, `.server(_:)`, `.server(_:on:)`, `WireMVCTestServer`, the in-process transport, `WireMVCSuiteTrait`, `TestClient` | **none** — abstract `HTTPServer` only |
+| `NIOHTTPServer` trait on | the above **plus** `.swiftHttpServer[(on:)]` and `extension NIOHTTPServer: WireMVCTestServer` | `swift-http-server` |
 
-Result: a consumer of the `WireMVC` (or core `WireMVCTesting`) product no longer *links* `swift-http-server`.
-`Controllers` — and any framework-agnostic package — compiles against a NIO-free target graph. Only a test
-target that opts into the NIO convenience links it.
+The coupling is closed in two independent steps, and both were needed.
 
-**Package *resolution* needs one more step.** SwiftPM pins every manifest-transitive package dependency
-regardless of target reachability; the only thing it prunes is a product dependency gated behind an
-off-by-default **trait** (that is why `Controllers` resolves no `swift-openapi-runtime` — `WireMVCServerTransport`'s
-`OpenAPIRuntime` is `.when(traits: ["ServerTransport"])` — while it still resolves `swift-http-server`). So the
-target split above is necessary but not sufficient to close the reported bug: `swift-http-server` stays in
-`Controllers`' `Package.resolved` as long as *any* wire-mvc target names it unconditionally
-(`WireMVCTestingNIOHTTPServer` plus the in-package `WireMVCExample` / `WireMVCBootstrapExample*` fixtures).
-**Decided: a `NIOHTTPServer` trait, in Phase 5.** Off by default and gating every `swift-http-server` product
-dependency, mirroring the existing `ServerTransport` trait — the conformance returns to core `WireMVCTesting`
-under `#if NIOHTTPServer` and `WireMVCTestingNIOHTTPServer` is folded away. That collapses three problems into
-one mechanism: `Controllers` stops *resolving* swift-http-server, a test consumer no longer imports a separate
-transport product for a retroactive conformance, and an in-process-only suite stops carrying a NIO dependency
-it never uses.
+**Linking** was fixed by making `WireMVCTesting` name only the abstract `HTTPServer`, so a consumer of
+`WireMVC` compiles against a NIO-free target graph.
 
-It could not be pulled forward into Phase 1, because it is inseparable from relocating the fixtures. `#if` can
-empty a library target (that is how `WireMVCServerTransport` handles `ServerTransport`), but `WireMVCExample`
-and `WireMVCBootstrapExample` are executables whose generated `@main` cannot compile away, and three test
-targets depend on them — so an off-by-default trait would gut the package's own suite until those fixtures
-move out. The separate-product split shipped in Phase 1 is the working intermediate: it already gives a
-`WireMVC`/`WireMVCTesting` consumer a NIO-free *target* graph.
+**Resolution** needed a trait. SwiftPM pins every manifest-transitive package dependency regardless of target
+reachability; the only thing it prunes is a product dependency gated behind an off-by-default trait — which is
+why `Controllers` never resolved `swift-openapi-runtime` (`WireMVCServerTransport`'s `OpenAPIRuntime` is
+`.when(traits: ["ServerTransport"])`) while it *did* keep resolving `swift-http-server`. So `swift-http-server`
+stayed in a consumer's `Package.resolved` as long as **any** wire-mvc target named it unconditionally. The
+`NIOHTTPServer` trait now gates the one remaining reference, and everything that needed an ungated one — the
+two runnable examples and their integration suites — moved to a sibling `Fixtures/` package that enables the
+trait on its path dependency.
+
+Two consequences worth noting. The separate `WireMVCTestingNIOHTTPServer` product introduced in Phase 1 is
+**gone**: with the conformance back in `WireMVCTesting` under `#if NIOHTTPServer`, a consumer that enables the
+trait gets it in a module it already imports, so the retroactive-conformance visibility problem disappears
+along with the extra product dependency and the extra `import`. And the fixtures had to move rather than be
+`#if`-gated in place: `#if` can empty a *library* target (that is how `WireMVCServerTransport` handles
+`ServerTransport`), but an executable whose generated `@main` compiles away has no `main` symbol, so gating
+in place would have meant conditionalising a dozen files to leave the default build with everything switched
+off.
+
+**Verified:** `Controllers`, pointed at this package, resolves no `swift-http-server`. The NIO *stack* it
+still resolves (`swift-nio`, `-ssl`, `-http2`, `-extras`) comes from `swift-http-api-proposal`, which declares
+those packages itself and which `Controllers` depends on directly — outside wire-mvc's control, and not what
+the reported bug was about. CI guards the result: a step fails the build if `swift-http-server` reappears in
+the core `Package.resolved`.
 
 ## The in-process transport
 
@@ -259,7 +265,8 @@ real wiring is the point — and why the ephemeral read-back seam rightfully liv
 
 ## Migration
 
-- Existing `@Suite(.wiremvc())` suites map to `.wiremvc(.appServer)` (behaviour-preserving) initially, then to
+- *(Done, across Phases 3 and 5.)* Existing `@Suite(.wiremvc())` suites map to `.wiremvc(.appServer)`
+  (behaviour-preserving) initially, then to
   `.wiremvc(.inProcess)` where they only exercise route/controller logic (most of them, including the mocked
   routing suite) or `.wiremvc(.swiftHttpServer)` where they want a real socket.
 - The `@Provides @Replaces func testServerConfig() -> ServerConfig { … port: 0 }` in test targets is retired in
@@ -286,7 +293,9 @@ Behaviour-preserving conformance relocation.
   alone is not enough — the module has to be imported for its retroactive conformance to be found — but
   conformance lookup is module-wide rather than file-scoped, so one import anywhere in the test module covers
   the generated file too. This is ordinary Swift for a retroactive conformance and needs nothing from the
-  plugin: no discovery, no marker file.
+  plugin: no discovery, no marker file. *(Superseded in Phase 5: the product is gone and the conformance is
+  back in `WireMVCTesting` behind the `NIOHTTPServer` trait, so neither the dependency nor the import is
+  needed — enabling the trait is.)*
 - **Gate:** `Controllers` (and any `WireMVC`-only consumer) no longer *links* `swift-http-server` — its target
   graph is NIO-free; existing `.wiremvc()` suites still pass unchanged. Dropping it from `Package.resolved`
   needs the trait work — see "Module structure" above and Phase 5.
@@ -366,28 +375,23 @@ Complete the mode surface + retire the config hack.
 - **Gate:** a second `TestingKey` in one target fails the build with a message naming both keys; a single key
   and the keyless path are unchanged.
 
-### Phase 5 — Migration + package-graph cleanup. wire-mvc + examples. Risk: low–medium.
-- Migrate wire-mvc's in-package `WireMVCBootstrapExample*` suites and the examples-repo suites to the mode API
-  (`.inProcess` where they only exercise route logic — most; `.swiftHttpServer` for the streaming/E2E ones,
-  which by then is a framework-owned server rather than the app's `createServer()`).
-- Concrete worked example — `SwiftHttpServerExample` becomes a two-mode reference:
-  - the **mocked routing suite** (`SwiftHttpServerExampleMockedTests`, smockable, no backend) →
-    `.wiremvc(MockedRoutingBinds.mocks, .inProcess)` — socket-free, and it drops the `NIOHTTPServer` /
-    `WireMVCTestingNIOHTTPServer` dependency entirely (it tests route/controller logic, not transport).
-  - the **real-backend suite** (`SwiftHttpServerExampleTests`, Docker CouchDB) → `.wiremvc(.swiftHttpServer)` —
-    genuine E2E over real HTTP, the one place streaming behaviour and the real server-wiring are exercised.
-  This division is deliberate: the in-process suite loses nothing it tests, and streaming/real-stack coverage
-  lives in the E2E suite that already stands up real infrastructure.
-- **The `NIOHTTPServer` trait.** Relocate the in-package NIO fixture executables (`WireMVCExample`,
-  `WireMVCBootstrapExample` + its three test targets) out of the package, then add an off-by-default
-  `NIOHTTPServer` trait gating every `swift-http-server` product dependency. The
-  `NIOHTTPServer: WireMVCTestServer` conformance moves back into core `WireMVCTesting` under
-  `#if NIOHTTPServer`, and `WireMVCTestingNIOHTTPServer` is deleted — consumers drop that product dependency
-  and its `import`, and enable the trait on their wire-mvc dependency instead. This is the step that actually
-  drops `swift-http-server` from a `WireMVC`-only consumer's `Package.resolved`; Phase 1 only removed it from
-  the *target* graph.
-- **Gate:** `Controllers` resolves no `swift-http-server`; an in-process-only suite declares no NIO
-  dependency; all suites green.
+### Phase 5 — The `NIOHTTPServer` trait + fixture relocation. wire-mvc + examples. Risk: medium. **Done.**
+- **The trait.** Off-by-default `NIOHTTPServer`, gating wire-mvc's one `swift-http-server` product
+  dependency. `WireMVCTestingNIOHTTPServer` is deleted — the `NIOHTTPServer: WireMVCTestServer` conformance
+  and the `.swiftHttpServer` mode move back into `WireMVCTesting` under `#if NIOHTTPServer`, so a consumer
+  enabling the trait gets them in a module it already imports (no extra product, no extra `import`).
+- **Fixture relocation.** `WireMVCExample`, `WireMVCBootstrapExample` and the three integration test targets
+  move to a sibling `Fixtures/` package with `.package(path: "..", traits: ["NIOHTTPServer"])`. They serve on
+  NIO, so leaving them in wire-mvc's manifest would have defeated the trait; `#if`-gating them in place would
+  have left the default build with everything off (and an executable with no `main`).
+- **Examples.** `SwiftHttpServerExample` drops the `WireMVCTestingNIOHTTPServer` product and its `import`,
+  and enables the trait on its wire-mvc dependency instead. Suite migration itself landed in Phase 3.
+- **CI.** The root job builds and tests the framework with default traits, runs
+  `swift test --traits ServerTransport`, then builds/tests/runs the fixtures package. A new step fails the
+  build if `swift-http-server` reappears in the core `Package.resolved` — a regression guard on the whole
+  point of this phase.
+- **Gate:** met. `Controllers` resolves no `swift-http-server`; the in-process-only suite declares no
+  concrete server; both packages green, and the two examples still run end to end.
 
 **Cross-repo ordering:** Phase 4's swift-wire `TestingKey` change merges before its wire-mvc half (the usual
 `swift package update swift-wire` dance). Phases 1–3 are wire-mvc-local; Phase 5 spans both repos + examples.

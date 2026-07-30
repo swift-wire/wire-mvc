@@ -1,6 +1,6 @@
+#if NIOHTTPServer
 import Logging
 public import NIOHTTPServer
-public import WireMVCTesting
 
 // The batteries-included live mode for the proposal-native stack: a `NIOHTTPServer` the **test framework**
 // owns and configures, not the app's. `.swiftHttpServer` is `.server(NIOHTTPServer(…))` with the server
@@ -40,3 +40,4 @@ extension WireMVCTestMode where Server == NIOHTTPServer {
         return NIOHTTPServer(logger: Logger(label: "WireMVCTesting"), configuration: configuration)
     }
 }
+#endif

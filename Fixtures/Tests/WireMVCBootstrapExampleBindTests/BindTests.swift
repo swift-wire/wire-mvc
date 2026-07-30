@@ -1,6 +1,5 @@
 import Testing
 import WireMVCTesting
-import WireMVCTestingNIOHTTPServer
 
 @testable import WireMVCBootstrapExample
 
