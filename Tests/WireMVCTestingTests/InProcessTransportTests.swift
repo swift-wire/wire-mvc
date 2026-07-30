@@ -130,7 +130,8 @@ private struct SilentHandler: HTTPServerRequestHandler {
         }
     }
 
-    /// The correlation header the keyed harness rides on is stamped by both transports. In-process it lands
+    /// The correlation header the keyed harness rides on. One request builder serves both transports, so
+    /// this is the whole of that behaviour. In-process it lands
     /// on the `HTTPRequest`'s header fields, where `wireMVCTestCorrelationID` reads it back — the same
     /// function the generated dispatch calls.
     @Test func correlationHeaderIsStampedOnTheInProcessRequest() async throws {
@@ -144,5 +145,10 @@ private struct SilentHandler: HTTPServerRequestHandler {
             let inside = client.makeHTTPRequest("GET", "/notes", headers: [:])
             #expect(wireMVCTestCorrelationID(in: inside) == WireMVCTesting.currentCorrelationID)
         }
+
+        // And gone again once the closure exits — the id is task-local, so a request driven afterwards
+        // must not carry a stale correlation.
+        let after = client.makeHTTPRequest("GET", "/notes", headers: [:])
+        #expect(wireMVCTestCorrelationID(in: after) == nil)
     }
 }

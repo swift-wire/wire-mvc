@@ -219,13 +219,11 @@ extension TestClient {
     /// What the shim still derives is the request line: the verb and the path template come from the route's
     /// own annotation, so renaming the route breaks the test.
     ///
-    /// - Note: On `.inProcess` this **streams**: the head arrives as soon as the handler sends it, and each
-    ///   read takes one chunk off a rendezvous channel, so the handler's next `write` cannot proceed until
-    ///   the test consumes this one. Incremental framing and backpressure are both observable with no socket.
-    ///   The loopback transport still buffers — `URLSession.data` hands back a whole body — so there the
-    ///   first read delivers everything. Making that incremental means either `URLSession.bytes` (with a
-    ///   Linux `FoundationNetworking` caveat) or a proposal client, which reintroduces the NIO stack unless
-    ///   it sits behind the `NIOHTTPServer` trait. This signature does not change when that lands.
+    /// - Note: This **streams**. The head arrives as soon as the responder sends it, and each read takes one
+    ///   chunk off a rendezvous channel, so the next `write` cannot proceed until the test consumes this one
+    ///   — incremental framing and backpressure are observable, in process with no socket at all.
+    ///   The live transport streams too: it drives a proposal `HTTPClient.perform` and pipes it into the
+    ///   same exchange, so a suite reads incrementally whichever mode it runs on.
     ///
     /// The request body is the proposal's own `HTTPClientRequestBody`, so both directions carry `perform`'s
     /// shape rather than only the response. A caller sending a fixed buffer writes `body: .data(…)`; one
@@ -249,25 +247,16 @@ extension TestClient {
             try await body.produce(into: TestRequestWriter(sink: sink))
             requestBody = Data(sink.bytes)
         }
-        switch transport {
-        case .inProcess(let dispatch):
-            // Stream: hand over the head as soon as it is published, and read the body off the rendezvous as
-            // the handler writes it.
-            let exchange = try await dispatch.start(
-                makeHTTPRequest(method, resolved, headers: headers),
-                body: requestBody
-            )
-            guard let head = try await exchange.startedHead() else {
-                throw WireMVCTestingError.routeDidNotRespond("\(method) \(resolved)")
-            }
-            return try await responseHandler(head, TestResponseReader(streaming: exchange.body))
-        case .loopback:
-            let received = try await send(method, resolved, body: requestBody, headers: headers)
-            guard let head = received.head else {
-                throw WireMVCTestingError.routeDidNotRespond("\(method) \(resolved)")
-            }
-            return try await responseHandler(head, TestResponseReader(received.body))
+        // One path for every transport: start the exchange, take the head as soon as it is published, and
+        // read the body off the rendezvous as it is produced.
+        let exchange = try await startExchange(method, resolved, body: requestBody, headers: headers)
+        guard let head = try await exchange.startedHead() else {
+            throw WireMVCTestingError.routeDidNotRespond("\(method) \(resolved)")
         }
+        // Whatever the handler leaves unread is drained on the way out, so the producer is never abandoned
+        // mid-body — which for a live transport would poison the connection it was using.
+        defer { await exchange.drainRemainder() }
+        return try await responseHandler(head, TestResponseReader(streaming: exchange.body))
     }
 
     /// Send an already-resolved request and apply the non-2xx rule. Both public forms resolve the template

@@ -170,6 +170,14 @@ let package = Package(
                     condition: .when(traits: ["NIOHTTPServer"])
                 ),
                 .product(name: "Logging", package: "swift-log", condition: .when(traits: ["NIOHTTPServer"])),
+                // The proposal's cross-platform client, for the live transport. Same trait: a live suite
+                // needs both halves, and `swift-http-api-proposal` already declares async-http-client, so
+                // this adds a link dependency rather than a package.
+                .product(
+                    name: "AHCHTTPClient",
+                    package: "swift-http-api-proposal",
+                    condition: .when(traits: ["NIOHTTPServer"])
+                ),
             ],
             swiftSettings: proposalSettings
         ),

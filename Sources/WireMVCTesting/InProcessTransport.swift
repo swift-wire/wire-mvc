@@ -123,7 +123,7 @@ public struct InProcessReader: AsyncReader {
 public struct InProcessResponseSender: HTTPResponseSender {
     public typealias Writer = InProcessWriter
 
-    let exchange: InProcessExchange
+    let exchange: TestExchange
 
     public mutating func sendInformational(_ response: HTTPResponse) async throws {}
 
@@ -152,7 +152,7 @@ public struct InProcessWriter: CallerAsyncWriter {
     public typealias WriteFailure = Never
     public typealias FinalElement = HTTPFields?
 
-    let exchange: InProcessExchange
+    let exchange: TestExchange
 
     public mutating func write<Buffer: RangeReplaceableContainer<UInt8> & ~Copyable>(
         buffer: inout Buffer

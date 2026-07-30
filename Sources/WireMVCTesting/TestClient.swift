@@ -10,28 +10,33 @@ import FoundationNetworking
 // each returning a `TestResponse` that exposes the status, the raw body text, and typed JSON decoding. A
 // test reaches the running suite's client through the static `TestClient.current`.
 //
-// The verbs are transport-agnostic: they build a method/path/body/headers triple and hand it to the
-// ``Transport``. `.loopback` renders it as a `URLRequest` and drives one real round-trip over
-// `URLSession`; `.inProcess` renders it as an `HTTPRequest` and calls the finalized handler directly. A
-// test therefore reads identically in either mode — switching a suite between them is a one-word change.
+// The verbs are transport-agnostic, and now so is everything beneath them: each builds an `HTTPRequest` and
+// starts a ``TestExchange``. In process the app's handler fills that exchange; live, a proposal
+// `HTTPClient.perform` is piped into one. A test therefore reads identically in either mode — switching a
+// suite between them is a one-word change — and both stream.
 
 /// A typed HTTP client bound to a running suite's transport. Each call drives one request and returns a
 /// ``TestResponse``.
 public struct TestClient: Sendable {
     /// How a built request reaches the app.
     enum Transport: Sendable {
-        /// A real HTTP round-trip to the suite server's loopback host + port.
-        case loopback(host: String, port: Int)
         /// The in-memory exchange channel. A request is submitted and answered incrementally: the head
         /// arrives before the body exists, and body chunks cross a rendezvous, so this transport streams.
         case inProcess(InProcessDispatch)
+        #if NIOHTTPServer
+        /// A real HTTP round-trip, driven by a proposal `HTTPClient` and piped into an exchange — so a live
+        /// suite reads incrementally exactly as an in-process one does.
+        case live(LiveDispatch)
+        #endif
     }
 
     let transport: Transport
 
-    init(host: String, port: Int) {
-        self.transport = .loopback(host: host, port: port)
+#if NIOHTTPServer
+    init(dispatch: LiveDispatch) {
+        self.transport = .live(dispatch)
     }
+#endif
 
     init(dispatch: InProcessDispatch) {
         self.transport = .inProcess(dispatch)
@@ -94,35 +99,41 @@ public struct TestClient: Sendable {
         body: Data?,
         headers: [String: String]
     ) async throws -> TestResponse {
+        // The buffered surface over what is now a streaming transport either way: start the exchange, then
+        // drain it whole.
+        try await Self.buffered(startExchange(method, path, body: body, headers: headers))
+    }
+
+    /// Start one exchange on whichever transport this client carries. The two differ only in who fills it —
+    /// the app's handler in process, a proposal `HTTPClient` live — so everything above this is
+    /// transport-agnostic.
+    func startExchange(
+        _ method: String,
+        _ path: String,
+        body: Data?,
+        headers: [String: String]
+    ) async throws -> TestExchange {
+        let request = makeHTTPRequest(method, path, headers: headers)
         switch transport {
-        case .loopback:
-            let request = makeRequest(method, path, body: body, headers: headers)
-            let (data, response) = try await URLSession.shared.data(for: request)
-            return TestResponse(head: Self.head(of: response), body: data)
         case .inProcess(let dispatch):
-            // The buffered surface over a streaming transport: start the exchange, then drain it whole.
-            let exchange = try await dispatch.start(makeHTTPRequest(method, path, headers: headers), body: body)
-            guard let head = try await exchange.startedHead() else {
-                // The handler returned without sending a response. Live, the server would abort the
-                // connection; in-process there is nothing to abort, so surface it as a distinguishable
-                // status rather than a plausible-looking 500.
-                return TestResponse(head: nil, body: Data())
-            }
-            return TestResponse(head: head, body: try await exchange.drainBody())
+            return try await dispatch.start(request, body: body)
+        #if NIOHTTPServer
+        case .live(let dispatch):
+            return try await dispatch.start(request, body: body)
+        #endif
         }
     }
 
-    /// Rebuild the proposal's response head from Foundation's. `URLSession` reports the status and header
-    /// fields separately from the body, so this is the loopback transport's one lossy seam — header *order*
-    /// and repeated fields are not recoverable from `allHeaderFields`.
-    private static func head(of response: URLResponse) -> HTTPResponse? {
-        guard let http = response as? HTTPURLResponse else { return nil }
-        var head = HTTPResponse(status: .init(code: http.statusCode))
-        for (rawName, rawValue) in http.allHeaderFields {
-            guard let rawName = rawName as? String, let name = HTTPField.Name(rawName) else { continue }
-            head.headerFields[name] = String(describing: rawValue)
+    /// Drain an exchange whole — what the untyped verbs and the generated typed methods do over what is
+    /// otherwise a streaming transport.
+    private static func buffered(_ exchange: TestExchange) async throws -> TestResponse {
+        guard let head = try await exchange.startedHead() else {
+            // The producer finished without a response. Live, a server aborts the connection; in-process
+            // there is nothing to abort — either way there is no head, which `status` reports as
+            // `TestResponse.unanswered` rather than a plausible-looking 500.
+            return TestResponse(head: nil, body: Data())
         }
-        return head
+        return TestResponse(head: head, body: try await exchange.drainBody())
     }
 
     /// The correlation header value for the current request, or `nil` outside a `withBindValues` closure.
@@ -133,32 +144,9 @@ public struct TestClient: Sendable {
         WireMVCTesting.currentCorrelationID?.rawValue.uuidString
     }
 
-    /// Build the `URLRequest` for one loopback call. Split from ``send(_:_:body:headers:)`` so the
-    /// header-stamping is unit-testable without a round-trip.
-    func makeRequest(
-        _ method: String,
-        _ path: String,
-        body: Data?,
-        headers: [String: String]
-    ) -> URLRequest {
-        guard case let .loopback(host, port) = transport else {
-            preconditionFailure("makeRequest is the loopback transport's renderer")
-        }
-        var request = URLRequest(url: URL(string: "http://\(host):\(port)\(path)")!)
-        request.httpMethod = method
-        request.httpBody = body
-        for (name, value) in headers {
-            request.setValue(value, forHTTPHeaderField: name)
-        }
-        if let value = correlationHeaderValue {
-            request.setValue(value, forHTTPHeaderField: wireMVCTestBindsHeader)
-        }
-        return request
-    }
-
-    /// Build the `HTTPRequest` for one in-process call — the loopback renderer's counterpart, stamping the
-    /// same correlation header so the keyed harness's dispatch reads it identically. The authority is a
-    /// placeholder: nothing resolves it, since no connection is made.
+    /// Build the `HTTPRequest` for one call. Both transports take one: in-process hands it to the handler,
+    /// and the live transport addresses it at the bound port before performing it. The correlation header is
+    /// stamped here, so the keyed harness reads it identically either way.
     func makeHTTPRequest(
         _ method: String,
         _ path: String,

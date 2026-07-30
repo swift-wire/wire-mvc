@@ -67,15 +67,17 @@ where
     /// wasted and at worst fatal (`NIOHTTPServer` traps on a leaked unfulfilled promise), so nothing is
     /// built until the trait actually enters the suite.
     let makeServer: @Sendable () -> Server
-    /// Builds the client for the server, once it is serving.
-    let client: @Sendable (Server) async throws -> TestClient
+    /// Builds the client for the server, once it is serving, together with the teardown its transport
+    /// needs. A live transport owns a connection pool that must not outlive the suite's server; in-process
+    /// has nothing to tear down.
+    let client: @Sendable (Server) async throws -> TestTransportSession
     /// What this mode does with the graph's services when the suite does not say.
     let defaultServices: WireMVCTestServices
 
     init(
         defaultServices: WireMVCTestServices,
         makeServer: @escaping @Sendable () -> Server,
-        client: @escaping @Sendable (Server) async throws -> TestClient
+        client: @escaping @Sendable (Server) async throws -> TestTransportSession
     ) {
         self.makeServer = makeServer
         self.client = client
@@ -97,13 +99,20 @@ extension WireMVCTestMode where Server == InProcessServer {
         WireMVCTestMode(defaultServices: .skip) {
             InProcessServer()
         } client: { server in
-            TestClient(dispatch: server.dispatch)
+            // Nothing to tear down: the in-process transport is the suite's own task tree.
+            TestTransportSession(client: TestClient(dispatch: server.dispatch))
         }
     }
 }
 
+// The live modes need a client to reach the server they stand up, and the proposal client ships behind the
+// `NIOHTTPServer` trait with the server half — so these factories exist only when it is enabled. With the
+// trait off, `.inProcess` is the whole surface, which is exactly the configuration a framework-agnostic
+// consumer wants.
+//
 // The suppressions the struct declares have to be restated on a generic extension of it — otherwise
 // `Copyable` is re-imposed on the associated types and no proposal server satisfies these factories.
+#if NIOHTTPServer
 extension WireMVCTestMode
 where
     Server.RequestContext: ~Copyable,
@@ -125,7 +134,8 @@ where
     ) -> WireMVCTestMode<Server>
     where Server: WireMVCTestServer {
         WireMVCTestMode(defaultServices: .run, makeServer: makeServer) { server in
-            TestClient(host: loopbackHost, port: try await server.wireMVCBoundPort)
+            let dispatch = LiveDispatch(host: loopbackHost, port: try await server.wireMVCBoundPort)
+            return TestTransportSession(client: TestClient(dispatch: dispatch)) { await dispatch.shutdown() }
         }
     }
 
@@ -137,8 +147,25 @@ where
         on port: Int
     ) -> WireMVCTestMode<Server> {
         WireMVCTestMode(defaultServices: .run, makeServer: makeServer) { _ in
-            TestClient(host: loopbackHost, port: port)
+            let dispatch = LiveDispatch(host: loopbackHost, port: port)
+            return TestTransportSession(client: TestClient(dispatch: dispatch)) { await dispatch.shutdown() }
         }
+    }
+}
+
+#endif
+
+/// A suite's client plus whatever its transport must release at suite exit.
+public struct TestTransportSession: Sendable {
+    let client: TestClient
+    /// Run once the suite's tests have finished, before the server is cancelled. A live transport shuts its
+    /// connection pool down here — pooled keep-alive connections must not survive the ephemeral server they
+    /// point at, or a later suite picks one up and sees the far end closed.
+    let shutdown: @Sendable () async -> Void
+
+    init(client: TestClient, shutdown: @escaping @Sendable () async -> Void = {}) {
+        self.client = client
+        self.shutdown = shutdown
     }
 }
 
@@ -225,8 +252,12 @@ public enum WireMVCTesting {
                 group.addTask { try await WireMVC.runServices(services) }
             }
             group.addTask { try await server.serve(handler: handler) }
-            let client = try await mode.client(server)
-            try await TestClient.$currentStorage.withValue(client) {
+            let session = try await mode.client(server)
+            // Tear the transport down before cancelling the server, on every exit path — a live client
+            // traps in `deinit` if it is never shut down, so this must not be missed when a test throws or
+            // the suite is cancelled.
+            defer { await session.shutdown() }
+            try await TestClient.$currentStorage.withValue(session.client) {
                 try await runTests()
             }
             group.cancelAll()

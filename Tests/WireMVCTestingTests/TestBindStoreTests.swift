@@ -103,24 +103,3 @@ private struct Doubles: Sendable, Equatable {
         #expect(correlationID(fromHeaderValue: "not-a-uuid") == nil)
     }
 }
-
-@Suite struct TestClientHeaderTests {
-    @Test func stampsHeaderInsideClosureOmitsOutside() async throws {
-        let client = TestClient(host: "127.0.0.1", port: 8080)
-
-        // Outside a `withBindValues` closure — no header.
-        let outside = client.makeRequest("GET", "/todos", body: nil, headers: [:])
-        #expect(outside.value(forHTTPHeaderField: wireMVCTestBindsHeader) == nil)
-
-        let store = TestBindStore<Doubles>()
-        try await WireMVCTesting.withBindValues(Doubles(value: 1), in: store) {
-            let id = try #require(WireMVCTesting.currentCorrelationID)
-            let inside = client.makeRequest("GET", "/todos", body: nil, headers: [:])
-            #expect(inside.value(forHTTPHeaderField: wireMVCTestBindsHeader) == id.rawValue.uuidString)
-        }
-
-        // Back outside — no header again.
-        let after = client.makeRequest("GET", "/todos", body: nil, headers: [:])
-        #expect(after.value(forHTTPHeaderField: wireMVCTestBindsHeader) == nil)
-    }
-}

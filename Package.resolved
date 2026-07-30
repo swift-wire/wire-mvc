@@ -1,5 +1,5 @@
 {
-  "originHash" : "732614331f44c2be8620eecd8f2e8eca99fe02fe141d428e5e8293b7728d4be5",
+  "originHash" : "2f11bd7a6275702953aa921b401617936803273fd3ab105d2c47d050f490d96a",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -98,6 +98,15 @@
       "state" : {
         "revision" : "638af2b908d8109857389689d361e1f45f6617ea",
         "version" : "0.2.0"
+      }
+    },
+    {
+      "identity" : "swift-http-server",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swift-server/swift-http-server.git",
+      "state" : {
+        "branch" : "main",
+        "revision" : "08fcdfc30ff6a7304e04612ff827bda2ea8b2dc7"
       }
     },
     {
