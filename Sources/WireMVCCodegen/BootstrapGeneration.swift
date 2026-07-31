@@ -62,7 +62,8 @@ func bootstrapBuildLines(
     factoryKeys: Set<String>,
     bootstrapCall: String = "Wire.bootstrap()",
     extraRegistrations: String = "",
-    transport: BootstrapTransport = .appServer
+    transport: BootstrapTransport = .appServer,
+    prologue: String = ""
 ) -> String {
     let property = graphBindingPropertyName(bootstrap.name)
     let proxyProperty = graphBindingPropertyName(globalMiddlewareProxyTypeName(bootstrap.name))
@@ -80,8 +81,13 @@ func bootstrapBuildLines(
     // `wrapGlobalMiddleware` folds the Bootstrap's `@Middleware` factories around every request — matched
     // routes and the `@NotFound` fallback alike — or returns the router unchanged (identity) when there are
     // none. Always emitted, so the entries are uniform.
+    // `prologue` (the keyed factory's key-identity `precondition`) leads the block, joined the same way the
+    // registrations are so an absent one adds no line. It rides here rather than being interpolated ahead of
+    // the build at the call site because `BasicFormat` re-indents only the first line of an interpolated
+    // block: a prologue spliced in above would leave the statement after it skewed.
+    let leading = prologue.isEmpty ? "" : prologue + "\n"
     return """
-        let graph = try await \(bootstrapCall)
+        \(leading)let graph = try await \(bootstrapCall)
         let bootstrap = graph.\(property)
         \(transport.serverLine(bootstrap: bootstrap))
         var builder = bootstrap.createRouteBuilder(for: server)
@@ -155,13 +161,19 @@ func renderBootstrapTestEntry(
 /// keyed form can prepend its `TestingKey`. `runTests` is the trait's type-erasing hook: the closure builds
 /// the app afresh each suite entry, so the opaque `~Copyable` handler stays a local that never escapes —
 /// which is exactly why the build is inlined here rather than shared through a `buildApplication`.
+///
+/// `prologue` leads the build — i.e. it runs at suite *entry*, not when the attribute is evaluated. That
+/// matters for the keyed form's key-identity `precondition`: a mode is constructed for every suite in the
+/// bundle, filtered-out ones included, and trapping there would fail a run that doesn't even include the
+/// offending suite. The same reasoning already defers `makeServer`.
 func suiteFactory(
     signatureParameters: String,
     bootstrap: ControllerDeclaration,
     notFoundRegistration: String,
     factoryKeys: Set<String>,
     bootstrapCall: String = "Wire.bootstrap()",
-    extraRegistrations: String = ""
+    extraRegistrations: String = "",
+    prologue: String = ""
 ) -> String {
     let buildLines = bootstrapBuildLines(
         bootstrap: bootstrap,
@@ -169,7 +181,8 @@ func suiteFactory(
         factoryKeys: factoryKeys,
         bootstrapCall: bootstrapCall,
         extraRegistrations: extraRegistrations,
-        transport: .suiteMode
+        transport: .suiteMode,
+        prologue: prologue
     )
     // The `~Copyable` suppressions the proposal's `HTTPServer` declares must be restated here: a generic
     // context that merely names `Server` re-imposes `Copyable` on its associated types, and no proposal

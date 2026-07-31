@@ -1340,6 +1340,10 @@ struct RouteContributorGenerationTests {
             )
         )
         #expect(rendered.source.contains("try await self._wireEnterScope(request, wireMVCDoubles)"))
+        // Doubles resolve only while a `runSuite` is standing an app up — the backstop behind the emission
+        // gating, so a regression that let this witness reach production fails closed to the 500 rather than
+        // substituting a dependency off an attacker-suppliable header.
+        #expect(rendered.source.contains("WireMVCTesting.harnessIsActive"))
         #expect(!rendered.source.contains(".get()"))
         #expect(rendered.source.contains("try await WireMVCOutcome.body("))
         #expect(rendered.source.contains("under key Binds.mock"))
@@ -1395,6 +1399,34 @@ struct RouteContributorGenerationTests {
         #expect(!rendered.source.contains("wireMVCVariantProxy"))
         #expect(!rendered.source.contains("_WireMVCKeyed_"))
         #expect(!rendered.source.contains("wiremvc(_ key:"))
+    }
+
+    /// With module attribution in hand, the keyed factory asserts the `TestingKey` it is handed is the one
+    /// this target serves — reconstructing the declaration's `#fileID`/`#line`, which is exactly what
+    /// `TestingKey()`'s defaulting `init` captured. Without it the `key` argument is inert: a suite passing
+    /// some other module's key would be served this variant silently.
+    @Test func keyedFactoryAssertsTheKeyItWasBuiltFor() {
+        let rendered = generateRouteContributors(
+            files: [("App.swift", keyedHarnessFixture)],
+            testEntry: true,
+            sourceModules: ["App.swift": "MyTests"]
+        )
+        #expect(rendered.diagnostics.isEmpty)
+        // `static let mock = TestingKey()` is line 16 of the fixture; `#fileID` is `Module/BaseName.swift`.
+        #expect(rendered.source.contains("key == TestingKey(fileID: \"MyTests/App.swift\", line: 16)"))
+        #expect(rendered.source.contains("precondition("))
+        #expect(rendered.source.contains("does not serve"))
+    }
+
+    /// No module attribution → no assertion. `#fileID` carries the module name, so without it the generator
+    /// would be guessing — and a wrong guess fails every suite that passes the *right* key. Skipping is the
+    /// safe direction: it restores the prior behaviour rather than breaking a correct call.
+    @Test func noKeyIdentityAssertionWithoutModuleAttribution() {
+        let rendered = generateRouteContributors(files: [("App.swift", keyedHarnessFixture)], testEntry: true)
+        #expect(rendered.diagnostics.isEmpty)
+        // The keyed factory is still emitted — only the assertion is absent.
+        #expect(rendered.source.contains("_ key: TestingKey,"))
+        #expect(!rendered.source.contains("key == TestingKey(fileID:"))
     }
 
     /// Key every controller: under a `TestingKey`, EVERY `@Scoped(seed:)` controller is a keyed subject —

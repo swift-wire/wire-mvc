@@ -220,16 +220,20 @@ public enum WireMVCTesting {
         Handler.Reader == Server.Reader,
         Handler.ResponseSender == Server.ResponseSender
     {
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            if servicePolicy ?? mode.defaultServices == .run {
-                group.addTask { try await WireMVC.runServices(services) }
+        // The whole serving window is marked active, so the generated keyed dispatch will resolve doubles for
+        // requests this suite drives — and only for those. See ``WireMVCTesting/harnessIsActive``.
+        try await withActiveHarness {
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                if servicePolicy ?? mode.defaultServices == .run {
+                    group.addTask { try await WireMVC.runServices(services) }
+                }
+                group.addTask { try await server.serve(handler: handler) }
+                let client = try await mode.client(server)
+                try await TestClient.$currentStorage.withValue(client) {
+                    try await runTests()
+                }
+                group.cancelAll()
             }
-            group.addTask { try await server.serve(handler: handler) }
-            let client = try await mode.client(server)
-            try await TestClient.$currentStorage.withValue(client) {
-                try await runTests()
-            }
-            group.cancelAll()
         }
     }
 }

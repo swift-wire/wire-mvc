@@ -109,8 +109,14 @@ struct RouteBlockGenerator {
             "WireMVC keyed test harness: no bound doubles for a request reaching this route under key "
             + "\(keyed.keyReference) — wrap the request in "
             + "withClient(supplying: \(subjectDoublesAliasName(subject: keyed.subject))(...))\\n"
+        // `harnessIsActive` is the backstop behind the emission gating: this witness is only ever built for a
+        // test consumer and registered by the keyed factory, so it cannot reach production — but if that ever
+        // regressed, doubles must not resolve off an attacker-suppliable header. Requiring a live
+        // `runSuite` makes the regression fail closed (an explicit 500) instead of silently mocking a
+        // production dependency. See `WireMVCTesting/TestVariantHarness.swift`.
         return """
             guard
+            WireMVCTesting.harnessIsActive,
             let wireMVCCorrelationID = wireMVCTestCorrelationID(in: request),
             let wireMVCDoubles = \(keyed.harnessEnumName).\(keyed.doublesStoreName).value(for: wireMVCCorrelationID)
             else {

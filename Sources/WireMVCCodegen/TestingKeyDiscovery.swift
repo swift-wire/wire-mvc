@@ -43,6 +43,17 @@ public struct DiscoveredTestingKey: Sendable, Equatable {
     /// the key are read by swift-wire's cascade to lift app singletons into the scope; wire-mvc's keyed
     /// harness keys every `@Scoped(seed:)` controller regardless, so it does not read them.)
     public let substitutions: [TestingBindSubstitution]
+    /// The declaration's `#fileID` (`ModuleName/File.swift`) and `#line` — what `TestingKey()`'s defaulting
+    /// `init` captured at this declaration, reconstructible here because both come from one source in one
+    /// build. The generated factory compares the key it is handed against these, so a suite passing some
+    /// *other* module's key is caught rather than silently served this variant (see
+    /// ``keyIdentityAssertion(for:)``).
+    ///
+    /// `nil` when the declaring file's module isn't known — the caller passed no module attribution for it,
+    /// so `#fileID` can't be reconstructed and the assertion is skipped rather than guessed wrong.
+    public let declarationFileID: String?
+    /// The declaration's `#line`. Meaningless without ``declarationFileID``.
+    public let declarationLine: Int
 
     /// The variant name — the key reference with `.` → `_` (`"NoteTestBinds_mockBackend"`). Prefixes the
     /// doubles struct, the variant proxy type, and the facade method, matching WireGen.
@@ -143,7 +154,8 @@ func lowerCamelFirst(_ name: String) -> String {
 /// won. The harness emits a single `.wiremvc(_ key:, _ mode:)` factory bound to that key's variant graph, so
 /// a second key has no way to be served and would otherwise be a silent wrong-graph bug.
 public func discoverTestingKeys(
-    in sourceFiles: [(path: String, tree: SourceFileSyntax)]
+    in sourceFiles: [(path: String, tree: SourceFileSyntax)],
+    sourceModules: [String: String] = [:]
 ) -> (key: DiscoveredTestingKey?, diagnostics: [LocatedRouteDiagnostic]) {
     // The keyed `@BindType(K.member, …)` form names the slot by its `BindingKey` reference, not its type, so
     // its doubles field needs the `BindingKey<Slot>` declaration's `Slot`. Collect those across every source
@@ -159,7 +171,13 @@ public func discoverTestingKeys(
         let converter = SourceLocationConverter(fileName: file.path, tree: file.tree)
         for found in finder.keys {
             guard let first = served else {
-                served = found.key
+                let location = converter.location(for: found.declarationPosition)
+                served = found.key.locatedAt(
+                    // `#fileID` is `ModuleName/File.swift` — the *base* name, not the build-machine path the
+                    // codegen walks, so a generated assertion matches what the declaration captured.
+                    fileID: sourceModules[file.path].map { "\($0)/\(baseName(of: file.path))" },
+                    line: location.line
+                )
                 continue
             }
             diagnostics.append(
@@ -177,6 +195,26 @@ public func discoverTestingKeys(
 struct FoundTestingKey {
     let key: DiscoveredTestingKey
     let declarationPosition: AbsolutePosition
+}
+
+/// The last path component of `path` — the file name `#fileID` carries. Hand-rolled rather than reached for
+/// through `NSString`/`URL` so this module stays Foundation-free like the rest of the codegen.
+func baseName(of path: String) -> String {
+    path.split(separator: "/").last.map(String.init) ?? path
+}
+
+extension DiscoveredTestingKey {
+    /// This key with its declaration site attached — the `#fileID`/`#line` a generated identity assertion
+    /// reconstructs. Applied by ``discoverTestingKeys(in:sourceModules:)``, which is where the file path and
+    /// its module attribution are both in hand.
+    func locatedAt(fileID: String?, line: Int) -> DiscoveredTestingKey {
+        DiscoveredTestingKey(
+            keyReference: keyReference,
+            substitutions: substitutions,
+            declarationFileID: fileID,
+            declarationLine: line
+        )
+    }
 }
 
 /// Walks a parsed file for every `TestingKey` static, reading its `@BindType` markers and tracking the
@@ -228,7 +266,14 @@ private final class TestingKeyFinder: SyntaxVisitor {
         }
         keys.append(
             FoundTestingKey(
-                key: DiscoveredTestingKey(keyReference: reference, substitutions: substitutions),
+                // The declaration site is attached by `discoverTestingKeys`, which holds the file path and
+                // its module attribution; the finder sees only the tree.
+                key: DiscoveredTestingKey(
+                    keyReference: reference,
+                    substitutions: substitutions,
+                    declarationFileID: nil,
+                    declarationLine: 0
+                ),
                 declarationPosition: pattern.identifier.positionAfterSkippingLeadingTrivia
             )
         )
