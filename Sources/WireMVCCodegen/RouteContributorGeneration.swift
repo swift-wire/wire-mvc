@@ -251,7 +251,7 @@ private func renderBootstrapSources(
     )
     var sources = artifacts.sources
     if testEntry, let harnessKey, !subjects.isEmpty {
-        sources.append(renderKeyedHarnessStatics(key: harnessKey))
+        sources.append(renderKeyedHarnessStatics(key: harnessKey, subjects: subjects))
         sources.append(
             renderBootstrapKeyedTestEntry(
                 bootstrap: bootstrap,

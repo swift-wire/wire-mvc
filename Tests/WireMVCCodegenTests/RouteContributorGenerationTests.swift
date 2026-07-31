@@ -1331,7 +1331,11 @@ struct RouteContributorGenerationTests {
         #expect(
             rendered.source.contains("extension _Binds_mock_WireRouteContributor_NotesController: RouteContributor")
         )
-        #expect(rendered.source.contains("_WireMVCKeyed_Binds_mock.doubles.value(for: wireMVCCorrelationID)"))
+        #expect(
+            rendered.source.contains(
+                "_WireMVCKeyed_Binds_mock.notesControllerDoubles.value(for: wireMVCCorrelationID)"
+            )
+        )
         #expect(rendered.source.contains("try await self._wireEnterScope(request, wireMVCDoubles)"))
         #expect(!rendered.source.contains(".get()"))
         #expect(rendered.source.contains("try await WireMVCOutcome.body("))
@@ -1342,10 +1346,19 @@ struct RouteContributorGenerationTests {
         #expect(!rendered.source.contains(".withValue("))
         // The production witness stays keyless — the plain scope entry, no doubles.
         #expect(rendered.source.contains("try await self._wireEnterScope(request)"))
-        // Statics: the doubles store (no proxy holder) + typed withBindValues + the keyed factory.
+        // Statics: one store per routed subject (no proxy holder), each typed by that subject's own doubles
+        // struct, plus the call-site alias and the `withBindValues` overload that routes to it.
         #expect(rendered.source.contains("enum _WireMVCKeyed_Binds_mock {"))
-        #expect(rendered.source.contains("static let doubles = TestBindStore<_Binds_mockDoubles>()"))
-        #expect(rendered.source.contains("func withBindValues<R>(noteBackend: MockNoteBackend,"))
+        #expect(
+            rendered.source.contains(
+                "static let notesControllerDoubles = TestBindStore<_Binds_mock_NotesControllerDoubles>()"
+            )
+        )
+        #expect(rendered.source.contains("typealias NotesControllerDoubles = _Binds_mock_NotesControllerDoubles"))
+        #expect(rendered.source.contains("_ doubles: _Binds_mock_NotesControllerDoubles,"))
+        // The 500 names the controller whose doubles are missing, not just the key — that is what a test
+        // supplies now, so it is the actionable half of the message.
+        #expect(rendered.source.contains("withBindValues(NotesControllerDoubles(...))"))
         #expect(
             rendered.source.contains(
                 "_ key: TestingKey, _ mode: WireMVCTestMode<WireMVCTestServerType>,"
@@ -1606,18 +1619,20 @@ struct RouteContributorGenerationTests {
         #expect(rendered.source.contains("try await self._wireSubject.stream(responseSender: responseSender)"))
     }
 
-    /// Issue 08: the doubles **construction** is ordered by field name (`sessionManager` before `todoRepository`)
-    /// to match WireGen's alphabetically-sorted `_<Key>Doubles` struct — even though the `@BindType` source
-    /// order (and the `withBindValues` parameters) is `todoRepository` first.
-    @Test func doublesConstructionMatchesAlphabeticalStructOrder() {
+    /// Issue 08 retired. It was a field-*ordering* hazard: `withBindValues` took the slots in `@BindType`
+    /// source order and had to re-order them alphabetically to construct WireGen's sorted `_<Key>Doubles`,
+    /// because Swift's memberwise init follows declaration order. Per-subject doubles removes the hazard
+    /// structurally rather than fixing it again — wire-mvc no longer constructs a doubles struct anywhere. The
+    /// test writes the memberwise init itself, so there is no generated argument list left to mis-order.
+    ///
+    /// Asserted as an absence so the construction can't quietly return.
+    @Test func noDoublesStructIsConstructedByCodegen() {
         let rendered = generateRouteContributors(files: [("App.swift", phaseCFixture)], testEntry: true)
         #expect(rendered.diagnostics.isEmpty)
-        #expect(
-            rendered.source.contains(
-                "_Binds_mockDoubles(sessionManager: sessionManager, todoRepository: todoRepository)"
-            )
-        )
-        // The user-facing parameter order stays source order (matches the @BindType declaration).
-        #expect(rendered.source.contains("todoRepository: MockTodoRepository, sessionManager: MockSessionManager"))
+        // No key-wide construction, in either ordering.
+        #expect(!rendered.source.contains("_Binds_mockDoubles("))
+        // The overload takes an already-built value; it names the type as a parameter, never calls its init.
+        #expect(rendered.source.contains("_ doubles: _Binds_mock_"))
+        #expect(!rendered.source.contains("todoRepository: MockTodoRepository, sessionManager: MockSessionManager"))
     }
 }

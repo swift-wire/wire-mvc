@@ -107,7 +107,8 @@ struct RouteBlockGenerator {
         guard let keyed = keyedScopeEntry else { return "" }
         let missingMessage =
             "WireMVC keyed test harness: no bound doubles for a request reaching this route under key "
-            + "\(keyed.keyReference) — wrap the request in withBindValues(...)\\n"
+            + "\(keyed.keyReference) — wrap the request in "
+            + "withBindValues(\(subjectDoublesAliasName(subject: keyed.subject))(...))\\n"
         return """
             guard
             let wireMVCCorrelationID = wireMVCTestCorrelationID(in: request),

@@ -27,8 +27,9 @@ func keyedScopeEntry(for controller: ControllerDeclaration, key: DiscoveredTesti
     guard controller.scopedSeedType != nil || controller.isTestScopable else { return nil }
     return KeyedScopeEntry(
         harnessEnumName: key.harnessEnumName,
-        doublesStoreName: harnessDoublesStoreName,
-        keyReference: key.keyReference
+        doublesStoreName: harnessDoublesStoreName(subject: controller.name),
+        keyReference: key.keyReference,
+        subject: controller.name
     )
 }
 
@@ -37,34 +38,43 @@ func keyedScopeEntry(for controller: ControllerDeclaration, key: DiscoveredTesti
 /// `.wiremvc(_:)` factory, referencing the `_<Key>Doubles` type WireGen emits in the same module. The store
 /// correlates each request's doubles (by the `X-WireMVC-Test-Binds` header); the variant witness reads it per
 /// request.
-func renderKeyedHarnessStatics(key: DiscoveredTestingKey) -> String {
+func renderKeyedHarnessStatics(key: DiscoveredTestingKey, subjects: [String]) -> String {
+    // One store per routed subject: each subject's `_wireEnterScope` takes its own doubles type, so a single
+    // key-wide store could not type-check against all of them.
     var lines: [String] = ["enum \(key.harnessEnumName) {"]
-    lines.append("    static let \(harnessDoublesStoreName) = TestBindStore<\(key.doublesTypeName)>()")
+    for subject in subjects {
+        let doublesType = subjectDoublesTypeName(variantName: key.variantName, subject: subject)
+        lines.append("    static let \(harnessDoublesStoreName(subject: subject)) = TestBindStore<\(doublesType)>()")
+    }
     lines.append("}")
 
-    // The typed `withBindValues` — one parameter per `@BindType` slot (in source order, matching the
-    // declaration), building the concrete `_<Key>Doubles` and handing it to the H1 core with this key's store.
-    // The construction arguments are ordered by field name to match WireGen's `renderDoublesStruct`, which
-    // sorts the struct's fields alphabetically — Swift's memberwise init requires the call to follow the
-    // declaration order. `@discardableResult` mirrors the core.
-    let parameters = key.substitutions.map { "\($0.fieldName): \($0.mockType)" }.joined(separator: ", ")
-    let doublesArgs = key.substitutions
-        .map(\.fieldName).sorted()
-        .map { "\($0): \($0)" }
-        .joined(separator: ", ")
-    lines.append(
-        """
+    // The call-site alias and the `withBindValues` overload, per subject. wire-mvc cannot derive *which* slots
+    // a controller reaches — that is the graph fact swift-wire owns and why it emits the struct — so the
+    // parameter list is the generated memberwise init rather than something spelled here. Overloading on the
+    // doubles *type* keeps one verb at every call site: `withBindValues(NotesControllerDoubles(noteBackend:))`
+    // resolves to the notes store, and supplying a slot that controller doesn't reach is a compile error.
+    // `@discardableResult` mirrors the core.
+    for subject in subjects {
+        let doublesType = subjectDoublesTypeName(variantName: key.variantName, subject: subject)
+        lines.append(
+            """
 
-        @discardableResult
-        func withBindValues<R>(\(parameters), _ body: () async throws -> R) async throws -> R {
-            try await WireMVCTesting.withBindValues(
-                \(key.doublesTypeName)(\(doublesArgs)),
-                in: \(key.harnessEnumName).\(harnessDoublesStoreName),
-                body
-            )
-        }
-        """
-    )
+            typealias \(subjectDoublesAliasName(subject: subject)) = \(doublesType)
+
+            @discardableResult
+            func withBindValues<R>(
+                _ doubles: \(doublesType),
+                _ body: () async throws -> R
+            ) async throws -> R {
+                try await WireMVCTesting.withBindValues(
+                    doubles,
+                    in: \(key.harnessEnumName).\(harnessDoublesStoreName(subject: subject)),
+                    body
+                )
+            }
+            """
+        )
+    }
     return Parser.parse(source: lines.joined(separator: "\n")).formatted().description
 }
 
