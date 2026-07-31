@@ -1500,6 +1500,48 @@ struct RouteContributorGenerationTests {
         #expect(messages[0].contains("PendingIssues/11"))
     }
 
+    /// A `TestingKey` in a re-parsed *dependency* is not this target's to serve. It is passed first here, so
+    /// without the module rule it would win on file order and the target's own key would be reported as the
+    /// duplicate — the exact inversion the rule prevents. swift-wire refuses the foreign key outright, so the
+    /// correct behaviour on this side is to serve the target's own key and raise nothing.
+    @Test func aDependencysTestingKeyIsNotServed() {
+        let libSource = """
+            enum LibBinds {
+                @BindType(NoteBackend.self, LibMockNoteBackend.self)
+                static let mock = TestingKey()
+            }
+            """
+        let rendered = generateRouteContributors(
+            files: [("Lib.swift", libSource), ("App.swift", keyedHarnessFixture)],
+            testEntry: true,
+            sourceModules: ["Lib.swift": "SharedLib", "App.swift": "MyTests"],
+            consumerModule: "MyTests"
+        )
+        #expect(rendered.diagnostics.isEmpty)
+        // The target's own key is the one served — its harness enum and variant graph, not the library's.
+        #expect(rendered.source.contains("enum _WireMVCKeyed_Binds_mock {"))
+        #expect(rendered.source.contains("Wire.bootstrapBinds_mock()"))
+        #expect(!rendered.source.contains("LibBinds_mock"))
+    }
+
+    /// Without module attribution the rule cannot apply, so behaviour is unchanged: every key is eligible and
+    /// a second one is still the `multipleTestingKeys` error. Keeps the older flat argument form working.
+    @Test func withoutModuleAttributionEveryKeyIsStillEligible() {
+        let libSource = """
+            enum LibBinds {
+                @BindType(NoteBackend.self, LibMockNoteBackend.self)
+                static let mock = TestingKey()
+            }
+            """
+        let rendered = generateRouteContributors(
+            files: [("Lib.swift", libSource), ("App.swift", keyedHarnessFixture)],
+            testEntry: true
+        )
+        let messages = rendered.diagnostics.map(\.message.message)
+        #expect(messages.count == 1)
+        #expect(messages[0].contains("one TestingKey per target"))
+    }
+
     /// The keyless path is untouched by the rule: no key, no diagnostic.
     @Test func noTestingKeyIsNotAnError() {
         let source = """

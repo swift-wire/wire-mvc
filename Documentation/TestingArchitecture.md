@@ -99,6 +99,24 @@ loopback configuration the harness owns — not a separate mechanism.
 - **Services `.run` vs `.skip`** (all modes). Whether the graph's collated `ServiceLifecycle` services start.
   Defaults per mode: `.inProcess` → `.skip` (isolation), live → `.run` (E2E). Not a mode — it cross-cuts them.
 
+### What the live default actually starts
+
+`.server(_:)` and `.server(_:on:)` default to `services: .run`, which starts the graph's **real** app-scoped
+`ServiceLifecycle` services against whatever configuration the graph resolves. That is the point of a live
+mode — it is the fidelity you are paying the socket for — but it is worth stating plainly, because it is the
+one direction the rest of this document's safety machinery does not cover.
+
+Everything else here protects *production from tests*: the `--testing-variants` gate keeps variant graphs out
+of shipping binaries, and the keyed dispatch resolves doubles only under a live harness. This axis runs the
+other way. A live suite reaches whatever the app's own config points at, and nothing in the harness knows
+whether that is a throwaway container or something you care about. A `@Replaces`d config binding, an
+environment closure (`.wiremvc(mode, environment:)`), or a container-per-run is the app's responsibility, not
+the harness's.
+
+`.inProcess` is the isolation-safe default and defaults to `.skip` for exactly this reason: a route-logic
+suite has no business starting the app's services. Reach for a live mode when you specifically want the
+transport or the services in the picture, and know what the config resolves to when you do.
+
 ## Selecting a variant — one testing key per target
 
 `.wiremvc(_ key: TestingKey, _ mode:)` names the variant app graph to serve. Each `TestingKey` produces one

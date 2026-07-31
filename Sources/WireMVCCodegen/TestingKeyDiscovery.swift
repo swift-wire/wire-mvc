@@ -155,16 +155,28 @@ func lowerCamelFirst(_ name: String) -> String {
 /// a second key has no way to be served and would otherwise be a silent wrong-graph bug.
 public func discoverTestingKeys(
     in sourceFiles: [(path: String, tree: SourceFileSyntax)],
-    sourceModules: [String: String] = [:]
+    sourceModules: [String: String] = [:],
+    consumerModule: String? = nil
 ) -> (key: DiscoveredTestingKey?, diagnostics: [LocatedRouteDiagnostic]) {
     // The keyed `@BindType(K.member, …)` form names the slot by its `BindingKey` reference, not its type, so
     // its doubles field needs the `BindingKey<Slot>` declaration's `Slot`. Collect those across every source
-    // first (the key may be declared in the app, re-parsed into a test target).
+    // first — that one *may* legitimately live in the app and be re-parsed here, unlike the key itself.
     let bindingKeySlots = bindingKeySlotTypes(in: sourceFiles.map(\.tree))
+
+    // Only the target being built may declare the key it serves. A dependency's sources are re-parsed into
+    // every consumer, so a library's `TestingKey` would otherwise be picked up here — and, because the first
+    // key found wins, could be served *instead of* this target's own, reporting the target's real key as the
+    // duplicate. swift-wire refuses a foreign key outright (`foreignTestingKeyDiagnostic`), so there is no
+    // second diagnostic to raise here; skipping keeps the two sides agreeing on which key is served.
+    // Files with no module attribution are kept, so the older flat argument form still behaves as before.
+    let ownSources = sourceFiles.filter { file in
+        guard let consumerModule, let module = sourceModules[file.path] else { return true }
+        return module == consumerModule
+    }
 
     var served: DiscoveredTestingKey?
     var diagnostics: [LocatedRouteDiagnostic] = []
-    for file in sourceFiles {
+    for file in ownSources {
         let finder = TestingKeyFinder(bindingKeySlots: bindingKeySlots)
         finder.walk(file.tree)
         guard !finder.keys.isEmpty else { continue }
