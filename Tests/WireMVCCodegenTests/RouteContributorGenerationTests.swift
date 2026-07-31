@@ -1425,7 +1425,9 @@ struct RouteContributorGenerationTests {
         #expect(keyed.source.contains("import WireTesting"))
 
         // Drop the whole `enum Binds { … }` block — renaming it would leave the `TestingKey()` inside.
-        let withoutKey = String(keyedHarnessFixture.prefix(upTo: keyedHarnessFixture.range(of: "enum Binds {")!.lowerBound))
+        let withoutKey = String(
+            keyedHarnessFixture.prefix(upTo: keyedHarnessFixture.range(of: "enum Binds {")!.lowerBound)
+        )
         let keyless = generateRouteContributors(files: [("App.swift", withoutKey)], testEntry: true)
         #expect(!keyless.source.contains("TestingKey"))
         #expect(!keyless.source.contains("import WireTesting"))
