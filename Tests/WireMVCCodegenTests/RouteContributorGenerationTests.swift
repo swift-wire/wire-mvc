@@ -1321,7 +1321,7 @@ struct RouteContributorGenerationTests {
     }
 
     /// A `TestingKey` `@BindType`ing a slot a `@Scoped(seed:)` controller injects, in a test consumer, makes
-    /// that controller's route dispatch doubles-aware and emits the keyed factory + statics + `withBindValues`.
+    /// that controller's route dispatch doubles-aware and emits the keyed factory + statics + `withClient(supplying:)`.
     @Test func keyedHarnessEmitsDoublesAwareDispatchAndFactory() {
         let rendered = generateRouteContributors(files: [("App.swift", keyedHarnessFixture)], testEntry: true)
         #expect(rendered.diagnostics.isEmpty)
@@ -1347,7 +1347,7 @@ struct RouteContributorGenerationTests {
         // The production witness stays keyless — the plain scope entry, no doubles.
         #expect(rendered.source.contains("try await self._wireEnterScope(request)"))
         // Statics: one store per routed subject (no proxy holder), each typed by that subject's own doubles
-        // struct, plus the call-site alias and the `withBindValues` overload that routes to it.
+        // struct, plus the call-site alias and the `withClient(supplying:)` overload that routes to it.
         #expect(rendered.source.contains("enum _WireMVCKeyed_Binds_mock {"))
         #expect(
             rendered.source.contains(
@@ -1355,10 +1355,10 @@ struct RouteContributorGenerationTests {
             )
         )
         #expect(rendered.source.contains("typealias NotesControllerDoubles = _Binds_mock_NotesControllerDoubles"))
-        #expect(rendered.source.contains("_ doubles: _Binds_mock_NotesControllerDoubles,"))
+        #expect(rendered.source.contains("supplying doubles: _Binds_mock_NotesControllerDoubles,"))
         // The 500 names the controller whose doubles are missing, not just the key — that is what a test
         // supplies now, so it is the actionable half of the message.
-        #expect(rendered.source.contains("withBindValues(NotesControllerDoubles(...))"))
+        #expect(rendered.source.contains("withClient(supplying: NotesControllerDoubles(...))"))
         #expect(
             rendered.source.contains(
                 "_ key: TestingKey, _ mode: WireMVCTestMode<WireMVCTestServerType>,"
@@ -1619,7 +1619,7 @@ struct RouteContributorGenerationTests {
         #expect(rendered.source.contains("try await self._wireSubject.stream(responseSender: responseSender)"))
     }
 
-    /// Issue 08 retired. It was a field-*ordering* hazard: `withBindValues` took the slots in `@BindType`
+    /// Issue 08 retired. It was a field-*ordering* hazard: `withBindValues` (as it was then) took the slots in
     /// source order and had to re-order them alphabetically to construct WireGen's sorted `_<Key>Doubles`,
     /// because Swift's memberwise init follows declaration order. Per-subject doubles removes the hazard
     /// structurally rather than fixing it again — wire-mvc no longer constructs a doubles struct anywhere. The
@@ -1632,7 +1632,7 @@ struct RouteContributorGenerationTests {
         // No key-wide construction, in either ordering.
         #expect(!rendered.source.contains("_Binds_mockDoubles("))
         // The overload takes an already-built value; it names the type as a parameter, never calls its init.
-        #expect(rendered.source.contains("_ doubles: _Binds_mock_"))
+        #expect(rendered.source.contains("supplying doubles: _Binds_mock_"))
         #expect(!rendered.source.contains("todoRepository: MockTodoRepository, sessionManager: MockSessionManager"))
     }
 }

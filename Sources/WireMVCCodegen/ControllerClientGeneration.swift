@@ -70,11 +70,6 @@ func renderControllerClient(controller: ControllerDeclaration, pathPrefix: Strin
         struct \(typeName) {
         let client: TestClient
 
-        /// This controller's routes over the running suite's transport. A **keyed** suite receives the client
-        /// as its `withBindValues` body argument instead, so the doubles and the routes arrive together; this
-        /// is how a keyless suite — which has no such block — reaches the same typed surface.
-        static var current: Self { Self(client: .current) }
-
         \(methods)
         }
         """

@@ -24,9 +24,11 @@ struct ReplaceTests {
         // Through the generated typed client: `hello(name:)` is `GET /hello/{name}`, and its return is the
         // route's own `@JSONResponse` type. No path string, no status assertion, no decode — and renaming
         // the route or changing `Greeting` breaks this at compile time rather than at runtime.
-        let greeting = try await HelloControllerClient.current.hello(name: "Alice")
-        #expect(greeting.message == "FAKE:Alice")
-        #expect(greeting.message != "Hello, Alice!")
+        try await withClient(for: HelloControllerClient.self) { hello in
+            let greeting = try await hello.hello(name: "Alice")
+            #expect(greeting.message == "FAKE:Alice")
+            #expect(greeting.message != "Hello, Alice!")
+        }
     }
 
     /// Mode parity, 1/3 — the global `@ErrorResponse(TenantMissing.self, .badRequest)` tier. `GET
@@ -34,10 +36,12 @@ struct ReplaceTests {
     /// folded into the route by the same build, so the transport never sees it.
     @Test func globalErrorTierMapsToBadRequest() async throws {
         // A typed method returns the decoded response, so a non-2xx arrives as a throw carrying the status.
-        let error = try await #require(throws: WireMVCRouteError.self) {
-            try await HelloControllerClient.current.tenant()
+        try await withClient(for: HelloControllerClient.self) { hello in
+            let error = try await #require(throws: WireMVCRouteError.self) {
+                try await hello.tenant()
+            }
+            #expect(error.status == .badRequest)
         }
-        #expect(error.status == .badRequest)
     }
 
     /// The raw-route shim. `@RawRoute` writes its own response, so nothing about the payload is typed — but
@@ -46,11 +50,13 @@ struct ReplaceTests {
     /// `HTTPClient.perform` — head and body reader into a closure — and a non-2xx would not be a failure here
     /// the way it is for a typed method.
     @Test func rawRouteShimDerivesThePath() async throws {
-        let body = try await HelloControllerClient.current.rawGreeting(name: "Alice") { response, reader in
-            #expect(response.status == .ok)
-            return try await reader.collectText()
+        try await withClient(for: HelloControllerClient.self) { hello in
+            let body = try await hello.rawGreeting(name: "Alice") { response, reader in
+                #expect(response.status == .ok)
+                return try await reader.collectText()
+            }
+            #expect(body == "raw:FAKE:Alice")
         }
-        #expect(body == "raw:FAKE:Alice")
     }
 
     /// Mode parity, 2/3 — the `@NotFound` `@RawRoute` fallback. No typed method exists for it: an unmatched
@@ -59,9 +65,11 @@ struct ReplaceTests {
     /// handler, which writes its 404 through the response sender directly (the raw path, not a typed
     /// response) — so this also covers ``InProcessResponseSender`` serving a route that owns its own writes.
     @Test func notFoundFallbackServes() async throws {
-        let response = try await TestClient.current.get("/no/such/route")
-        #expect(response.status == 404)
-        #expect(response.bodyText.contains("no route here"))
+        try await withClient { client in
+            let response = try await client.get("/no/such/route")
+            #expect(response.status == 404)
+            #expect(response.bodyText.contains("no route here"))
+        }
     }
 
     /// Mode parity, 3/3 — the `@Middleware`-guarded introspection mount. Also untyped: `/wiring` is mounted
@@ -69,8 +77,10 @@ struct ReplaceTests {
     /// `finalize()` with its guard chain folded around it, so it is a real route in-process too and answers
     /// the graph's wiring model as JSON.
     @Test func guardedIntrospectionRouteServes() async throws {
-        let response = try await TestClient.current.get("/wiring")
-        #expect(response.status == 200)
-        #expect(response.bodyText.contains("HelloController"))
+        try await withClient { client in
+            let response = try await client.get("/wiring")
+            #expect(response.status == 200)
+            #expect(response.bodyText.contains("HelloController"))
+        }
     }
 }

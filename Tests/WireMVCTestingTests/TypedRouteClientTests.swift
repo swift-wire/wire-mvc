@@ -115,7 +115,7 @@ private struct ChunkedHandler: HTTPServerRequestHandler {
     @Test func theResolvedPathReachesTheRoute() async throws {
         let mode = WireMVCTestMode.inProcess
         try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: RouteEchoHandler(), services: []) {
-            let response = try await TestClient.current.routeResponse(
+            let response = try await TestClient.forSuite.routeResponse(
                 method: "GET",
                 path: "/notes/{id}",
                 pathParameters: ["id": "alpha"],
@@ -131,7 +131,7 @@ private struct ChunkedHandler: HTTPServerRequestHandler {
         let mode = WireMVCTestMode.inProcess
         try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: RouteEchoHandler(), services: []) {
             let error = try await #require(throws: WireMVCRouteError.self) {
-                try await TestClient.current.routeResponse(method: "GET", path: "/fail")
+                try await TestClient.forSuite.routeResponse(method: "GET", path: "/fail")
             }
             #expect(error.status == .unauthorized)
             #expect(error.bodyText == "nope")
@@ -146,7 +146,7 @@ private struct ChunkedHandler: HTTPServerRequestHandler {
     @Test func theRawFormHandsOverTheHeadAndReader() async throws {
         let mode = WireMVCTestMode.inProcess
         try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: RouteEchoHandler(), services: []) {
-            let text = try await TestClient.current.performRawRoute(method: "GET", path: "/fail") {
+            let text = try await TestClient.forSuite.performRawRoute(method: "GET", path: "/fail") {
                 response,
                 reader in
                 // A non-2xx is not a failure for a raw route: the closure still runs.
@@ -163,7 +163,7 @@ private struct ChunkedHandler: HTTPServerRequestHandler {
     @Test func aStreamedRequestBodyReachesTheRoute() async throws {
         let mode = WireMVCTestMode.inProcess
         try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: RouteEchoHandler(), services: []) {
-            let echoed = try await TestClient.current.performRawRoute(
+            let echoed = try await TestClient.forSuite.performRawRoute(
                 method: "POST",
                 path: "/echo-body",
                 body: .restartable { writer in
@@ -190,7 +190,7 @@ private struct ChunkedHandler: HTTPServerRequestHandler {
         let handler = ChunkedHandler(progress: progress)
         let mode = WireMVCTestMode.inProcess
         try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: handler, services: []) {
-            let all = try await TestClient.current.performRawRoute(method: "GET", path: "/chunks") {
+            let all = try await TestClient.forSuite.performRawRoute(method: "GET", path: "/chunks") {
                 response,
                 reader in
                 #expect(response.status == .ok)
@@ -225,7 +225,7 @@ private struct ChunkedHandler: HTTPServerRequestHandler {
         struct Payload: Codable { let note: String }
         let mode = WireMVCTestMode.inProcess
         try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: RouteEchoHandler(), services: []) {
-            let response = try await TestClient.current.routeResponse(
+            let response = try await TestClient.forSuite.routeResponse(
                 method: "POST",
                 path: "/notes",
                 json: Payload(note: "hi")

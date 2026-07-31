@@ -8,7 +8,8 @@ import FoundationNetworking
 // The typed HTTP client a suite's tests drive, over whichever transport the suite's ``WireMVCTestMode``
 // stood up. The surface is the small verb set a controller test needs — `get`/`post`/`patch`/`delete` —
 // each returning a `TestResponse` that exposes the status, the raw body text, and typed JSON decoding. A
-// test reaches the running suite's client through the static `TestClient.current`.
+// test reaches the running suite's client through `withBindValues` (bound to that block's doubles) or
+// `withClient` (bound to none) — never ambiently, so every client states which binding it carries.
 //
 // The verbs are transport-agnostic: they build a method/path/body/headers triple and hand it to the
 // ``Transport``. `.loopback` renders it as a `URLRequest` and drives one real round-trip over
@@ -29,25 +30,50 @@ public struct TestClient: Sendable {
 
     let transport: Transport
 
-    init(host: String, port: Int) {
+    /// The correlation id this client was handed when it was created, if any — a client obtained from a
+    /// `withBindValues` body carries that block's id, so requests it drives resolve to *that* block's doubles
+    /// no matter where they are called from. `nil` for a client from `withClient`, which supplies no doubles.
+    let boundCorrelationID: CorrelationID?
+
+    init(host: String, port: Int, boundCorrelationID: CorrelationID? = nil) {
         self.transport = .loopback(host: host, port: port)
+        self.boundCorrelationID = boundCorrelationID
     }
 
-    init(dispatch: InProcessDispatch) {
+    init(dispatch: InProcessDispatch, boundCorrelationID: CorrelationID? = nil) {
         self.transport = .inProcess(dispatch)
+        self.boundCorrelationID = boundCorrelationID
+    }
+
+    /// This client's transport, pinned to `id`. The generated per-controller client is built from this, so
+    /// holding the client *is* holding the binding — two clients from two nested blocks address their own
+    /// doubles rather than both resolving to the innermost.
+    public func bound(to id: CorrelationID) -> TestClient {
+        TestClient(transport: transport, boundCorrelationID: id)
+    }
+
+    private init(transport: Transport, boundCorrelationID: CorrelationID?) {
+        self.transport = transport
+        self.boundCorrelationID = boundCorrelationID
     }
 
     /// The client for the running `@Suite(.wiremvc(…))` suite, bound for the duration of the suite by
     /// ``WireMVCTesting/serveForSuite(on:handler:services:runTests:)`` or
     /// ``WireMVCTesting/driveInProcess(handler:services:runTests:)``. Read it inside a suite-trait suite
-    /// (e.g. `TestClient.current.post(...)`); `nil` outside such a suite.
+    /// read through ``forSuite``; `nil` outside such a suite.
     @TaskLocal static var currentStorage: TestClient?
 
-    /// The client for the running `@Suite(.wiremvc(…))` suite. Available only inside a suite the trait
-    /// scopes — outside one there is no app to reach, so this precondition-fails.
-    public static var current: TestClient {
+    /// The running suite's client, for the framework's `withBindValues` / `withClient` entry points to hand
+    /// out. Deliberately **not** public: a client is only meaningful with a binding decision attached — with
+    /// a correlation id from `withBindValues`, or explicitly without one from `withClient` — so tests reach
+    /// it through those rather than ambiently. Available only inside a suite the trait scopes; outside one
+    /// there is no app to reach, so this precondition-fails.
+    static var forSuite: TestClient {
         guard let client = currentStorage else {
-            preconditionFailure("TestClient.current is only available inside an @Suite(.wiremvc(…)) suite")
+            preconditionFailure(
+                "A WireMVC test client is only available inside an @Suite(.wiremvc(…)) suite — "
+                    + "reach it through withBindValues(…) or withClient(…)"
+            )
         }
         return client
     }
@@ -125,12 +151,12 @@ public struct TestClient: Sendable {
         return head
     }
 
-    /// The correlation header value for the current request, or `nil` outside a `withBindValues` closure.
-    /// Inside one the task-local carries the request's correlation id; stamping it lets the dispatch pull
-    /// that closure's doubles from the store. Shared by both transports so the keyed harness works in
-    /// either mode.
+    /// The correlation header value for this client's requests, or `nil` when it carries no binding. A
+    /// client from a `withBindValues` body is pinned to that block's id; one from `withClient` is pinned to
+    /// nothing and so supplies no doubles. Stamping the id lets the dispatch pull that block's doubles from
+    /// the store. Shared by both transports so the keyed harness works in either mode.
     private var correlationHeaderValue: String? {
-        WireMVCTesting.currentCorrelationID?.rawValue.uuidString
+        boundCorrelationID?.rawValue.uuidString
     }
 
     /// Build the `URLRequest` for one loopback call. Split from ``send(_:_:body:headers:)`` so the

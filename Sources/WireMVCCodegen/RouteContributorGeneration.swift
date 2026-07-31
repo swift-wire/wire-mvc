@@ -252,6 +252,11 @@ private func renderBootstrapSources(
         testEntry: testEntry
     )
     var sources = artifacts.sources
+    // The `withClient` family — emitted for every test consumer, keyed or not: it is how a keyless suite
+    // reaches a client at all, and how a keyed one drives a route without supplying doubles.
+    if testEntry {
+        sources.append(renderClientAccessors(controllersWithClients: clientSubjects.sorted()))
+    }
     if testEntry, let harnessKey, !subjects.isEmpty {
         sources.append(
             renderKeyedHarnessStatics(

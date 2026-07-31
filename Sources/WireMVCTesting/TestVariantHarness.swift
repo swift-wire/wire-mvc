@@ -1,18 +1,17 @@
 public import HTTPTypes
 
 // The request-dispatch side of the keyed harness (H2.2b). The generated keyed `.wiremvc(_:)` factory builds
-// the H2.2a variant contributor proxy once (against the reused production graph) and binds it to a per-key
-// `@TaskLocal` *around* `serveForSuite`, so it rides the serve task tree into every request handler; each
-// scoped route's generated dispatch, on a request that carries the `X-WireMVC-Test-Binds` header, reads the
-// request's ``CorrelationID`` back off the header, pulls that closure's doubles from the per-key
-// ``TestBindStore``, and enters request scope through that variant proxy — so a `@BindType`d slot resolves to
-// the supplied mock. A request served where the task-local is unbound (a keyless `.wiremvc()` suite, or any
-// production serving) reads `nil` and takes the untouched production scope entry.
+// each subject's variant contributor proxy against the variant graph and registers its routes on the router
+// directly, so the variant witness *is* the registered instance — there is no production branch to take and
+// nothing held in a task-local. Each scoped route's generated dispatch reads the request's ``CorrelationID``
+// back off the `X-WireMVC-Test-Binds` header, pulls that controller's doubles from its ``TestBindStore``, and
+// enters request scope with them, so a `@BindType`d slot resolves to the supplied mock. A request arriving
+// without the header — a keyless suite, or a keyed route driven through `withClient` — finds no doubles and
+// is answered with the harness's explicit 500.
 //
-// The task-local replaces an earlier process-global holder: a suite-level value bound around `serve`
-// propagates to the handler (structured child tasks inherit it) *and* isolates across concurrently-served
-// suites, so parallel keyless and keyed suites can't cross. The per-request doubles still travel by header +
-// ``TestBindStore`` — a `withBindValues` closure runs client-side, in a task subtree disjoint from the server's.
+// The doubles travel by header + store rather than by task-local because a `withBindValues` closure runs
+// client-side, in a task subtree disjoint from the server's: the id on the request is the only thread
+// connecting the two.
 
 /// Read a request's ``CorrelationID`` from its `X-WireMVC-Test-Binds` header, or `nil` if the header is
 /// absent or malformed — the dispatch side's entry point, keeping the header name and `HTTPTypes` lookup in
