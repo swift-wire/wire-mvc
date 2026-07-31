@@ -50,6 +50,19 @@ let package = Package(
         // The adapter-owned build plugin a WireMVC consumer applies (instead of swift-wire's
         // WireBuildPlugin) — it runs WireGen + WireMVCRouteGen, emitting the proxy structs + witnesses.
         .plugin(name: "WireMVCBuildPlugin", targets: ["WireMVCBuildPlugin"]),
+        // The domain half alone, for an app that uses more than one adapter: it runs WireMVCRouteGen and
+        // leaves the graph to swift-wire's WireBuildPlugin, so adapters compose by being listed rather
+        // than by one of them orchestrating the others.
+        .plugin(name: "WireMVCRouteGenPlugin", targets: ["WireMVCRouteGenPlugin"]),
+        // The route-witness generator, exposed so *another* adapter's build plugin can invoke it via
+        // `context.tool(named: "WireMVCRouteGen")` — the same reason swift-wire exposes WireGen.
+        //
+        // An app using two adapters can apply only one build plugin, because both would run WireGen and
+        // emit `_WireGraph.swift`. So the plugin it does apply has to orchestrate every domain generator
+        // in play: wire-open-api's runs WireGen, then this, then its own. Without this product a
+        // `@Controller` in such an app compiles to a proxy with no witness — the conformance is simply
+        // never emitted, and the graph fails to build its `[any RouteContributor]`.
+        .executable(name: "WireMVCRouteGen", targets: ["WireMVCRouteGen"]),
     ],
     traits: [
         // Opt-in ServerTransport (swift-openapi-runtime) compatibility. Off by default, so the core
@@ -111,6 +124,11 @@ let package = Package(
             dependencies: ["WireMVCCodegen"]
         ),
         // The adapter-owned build plugin — runs WireGen (swift-wire) + WireMVCRouteGen (this package).
+        .plugin(
+            name: "WireMVCRouteGenPlugin",
+            capability: .buildTool(),
+            dependencies: ["WireMVCRouteGen"]
+        ),
         .plugin(
             name: "WireMVCBuildPlugin",
             capability: .buildTool(),
