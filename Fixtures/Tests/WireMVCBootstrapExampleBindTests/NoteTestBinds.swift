@@ -1,6 +1,7 @@
 import Synchronization
 package import Wire
 package import WireMVCBootstrapExample
+package import WireTesting
 
 // The test-graph variant for this suite: `@BindType(NoteBackend.self, MockNoteBackend.self)` binds the app's
 // request-scoped `NoteBackend` slot to a per-scope-entry mock the test supplies. One `TestingKey` = one

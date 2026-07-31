@@ -185,6 +185,12 @@ public func generateRouteContributors(
         : (key: nil, diagnostics: [])
     let harnessKey = harness.key
     located.append(contentsOf: harness.diagnostics)
+    // The keyed factory's signature names `TestingKey` (and its key-identity `precondition` constructs one),
+    // which `WireTesting` vends rather than `Wire` — declaring a variant is a dependency a target takes
+    // deliberately. Added only for a keyed harness, so a keyless test consumer does not link it.
+    if harnessKey != nil {
+        composition.imports.insert("import WireTesting")
+    }
 
     // The lifted `@Factory`s that consume the harness key's mocked slots — mock-consuming under this key, so
     // swift-wire re-emits each as a variant factory whose `create` takes doubles. One hop: a factory whose

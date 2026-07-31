@@ -159,6 +159,9 @@ let package = Package(
                 .product(name: "WireMVC", package: "wire-mvc"),
                 .product(name: "WireMVCRouter", package: "wire-mvc"),
                 .product(name: "Wire", package: "swift-wire"),
+                // `TestingKey` + `@BindType` — the test-graph vocabulary, split out of `Wire` so declaring a
+                // variant is a dependency a target takes deliberately. Only the keyed suite needs it.
+                .product(name: "WireTesting", package: "swift-wire"),
                 .product(name: "HTTPAPIs", package: "swift-http-api-proposal"),
                 .product(name: "HTTPTypes", package: "swift-http-types"),
                 .product(name: "BasicContainers", package: "swift-collections"),
