@@ -153,6 +153,7 @@ struct RouteContributorGenerationTests {
                 extension SuiteTrait where Self == WireMVCSuiteTrait {
                     static func wiremvc<WireMVCTestServerType: HTTPServer>(
                         _ mode: WireMVCTestMode<WireMVCTestServerType>,
+                        environment: (@Sendable () throws -> [String: String])? = nil,
                         services: WireMVCTestServices? = nil
                     ) -> WireMVCSuiteTrait
                     where
@@ -162,17 +163,19 @@ struct RouteContributorGenerationTests {
                         WireMVCTestServerType.ResponseSender.Writer: ~Copyable
                     {
                         WireMVCSuiteTrait { runTests in
-                            let graph = try await Wire.bootstrap()
-                            let bootstrap = graph.appBootstrap
-                            let server = mode.makeTestServer()
-                            var builder = bootstrap.createRouteBuilder(for: server)
-                            let wireMVCServices = try WireMVC.apply(graph, to: &builder)
-                            builder.registerNotFound { _, _, _, _, responseSender in
-                                try await responseSender.sendAndFinish(HTTPResponse(status: .notFound))
+                            try await WireMVCTesting.withEnvironment(environment) {
+                                let graph = try await Wire.bootstrap()
+                                let bootstrap = graph.appBootstrap
+                                let server = mode.makeTestServer()
+                                var builder = bootstrap.createRouteBuilder(for: server)
+                                let wireMVCServices = try WireMVC.apply(graph, to: &builder)
+                                builder.registerNotFound { _, _, _, _, responseSender in
+                                    try await responseSender.sendAndFinish(HTTPResponse(status: .notFound))
+                                }
+                                let handler = builder.finalize()
+                                let wireMVCServed = graph._WireGlobalMiddleware_AppBootstrap.wrapGlobalMiddleware(handler)
+                                try await WireMVCTesting.runSuite(mode, on: server, handler: wireMVCServed, services: wireMVCServices, servicePolicy: services, runTests: runTests)
                             }
-                            let handler = builder.finalize()
-                            let wireMVCServed = graph._WireGlobalMiddleware_AppBootstrap.wrapGlobalMiddleware(handler)
-                            try await WireMVCTesting.runSuite(mode, on: server, handler: wireMVCServed, services: wireMVCServices, servicePolicy: services, runTests: runTests)
                         }
                     }
                 }
@@ -1364,6 +1367,10 @@ struct RouteContributorGenerationTests {
                 "_ key: TestingKey, _ mode: WireMVCTestMode<WireMVCTestServerType>,"
             )
         )
+        // The suite factory takes an environment provider, and wraps its own bootstrap in it — so the values
+        // are applied before `Wire.bootstrap()` by construction rather than by trait ordering.
+        #expect(rendered.source.contains("environment: (@Sendable () throws -> [String: String])? = nil"))
+        #expect(rendered.source.contains("try await WireMVCTesting.withEnvironment(environment) {"))
         // The keyed factory bootstraps the variant graph and hand-registers each variant proxy's routes.
         #expect(rendered.source.contains("let graph = try await Wire.bootstrapBinds_mock()"))
         #expect(

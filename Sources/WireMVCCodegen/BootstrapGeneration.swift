@@ -178,6 +178,7 @@ func suiteFactory(
     return """
         static func wiremvc<WireMVCTestServerType: HTTPServer>(
             \(signatureParameters),
+            environment: (@Sendable () throws -> [String: String])? = nil,
             services: WireMVCTestServices? = nil
         ) -> WireMVCSuiteTrait
         where
@@ -187,8 +188,10 @@ func suiteFactory(
             WireMVCTestServerType.ResponseSender.Writer: ~Copyable
         {
             WireMVCSuiteTrait { runTests in
-                \(buildLines)
-                try await WireMVCTesting.runSuite(mode, on: server, handler: wireMVCServed, services: wireMVCServices, servicePolicy: services, runTests: runTests)
+                try await WireMVCTesting.withEnvironment(environment) {
+                    \(buildLines)
+                    try await WireMVCTesting.runSuite(mode, on: server, handler: wireMVCServed, services: wireMVCServices, servicePolicy: services, runTests: runTests)
+                }
             }
         }
         """
