@@ -66,20 +66,46 @@ public struct KeyedScopeEntry: Sendable, Equatable {
     public let harnessEnumName: String
     public let doublesStoreName: String
     public let keyReference: String
+    /// The subject whose doubles this route's entry takes — names the store and the 500 message, so a test
+    /// that forgets `withBindValues` is told which controller it missed rather than which key.
+    public let subject: String
 
     public init(
         harnessEnumName: String,
         doublesStoreName: String,
-        keyReference: String
+        keyReference: String,
+        subject: String
     ) {
         self.harnessEnumName = harnessEnumName
         self.doublesStoreName = doublesStoreName
         self.keyReference = keyReference
+        self.subject = subject
     }
 }
 
-/// The doubles ``TestBindStore`` member name inside the generated per-key harness enum.
-public let harnessDoublesStoreName = "doubles"
+/// The doubles ``TestBindStore`` member name for a subject inside the generated per-key harness enum. One
+/// store per routed subject, because each subject enters scope with its own `_<Variant>_<Subject>Doubles`.
+public func harnessDoublesStoreName(subject: String) -> String {
+    lowerCamelCased(subject) + "Doubles"
+}
+
+/// The per-subject doubles struct WireGen emits — `_<Variant>_<Subject>Doubles`, carrying only the slots that
+/// subject reaches. wire-mvc derives the *name* by the same convention swift-wire renders it under and trusts
+/// the field list, exactly as it already trusts `_<Key>Doubles`: a mismatch is a build error on swift-wire's
+/// side, so the two agree or the build fails.
+public func subjectDoublesTypeName(variantName: String, subject: String) -> String {
+    "_\(variantName)_\(subject)Doubles"
+}
+
+/// The unprefixed alias a test names at the call site — `NotesControllerDoubles`. The generated struct keeps
+/// swift-wire's `_` prefix; this is the ergonomic surface wire-mvc owns.
+public func subjectDoublesAliasName(subject: String) -> String { subject + "Doubles" }
+
+/// Lower-camel a type name for use as a member — `NotesController` → `notesController`.
+func lowerCamelCased(_ name: String) -> String {
+    guard let first = name.first else { return name }
+    return first.lowercased() + name.dropFirst()
+}
 
 /// The variant contributor-proxy type name for a subject under a key — `_<Variant>_WireRouteContributor_<Subject>`
 /// (`"_NoteTestBinds_mockBackend_WireRouteContributor_NotesController"`). Mirrors WireGen's

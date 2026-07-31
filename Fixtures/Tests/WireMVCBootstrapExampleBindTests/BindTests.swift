@@ -6,11 +6,11 @@ import WireMVCTesting
 // H2.2b gate — the keyed test harness end to end over real HTTP. `@Suite(.wiremvc(NoteTestBinds.mockBackend, .swiftHttpServer))`
 // stands the app up on a harness-owned server bound to an ephemeral loopback port — the app's own
 // `createServer()` is not involved — and parks the variant contributor proxies for the key; each
-// test supplies its per-request mocks with the generated `withBindValues(noteBackend:prefsBackendKeyed…:)` —
-// the key carries a by-type `@BindType(NoteBackend.self, …)` slot AND a keyed `@BindType(PrefsKeys.primary, …)`
-// slot, so its doubles struct (and `withBindValues`) has a field for each. `GET /notes/{id}` (by-type) and
-// `GET /prefs/{id}` (keyed) each observe their supplied mock. A request that reaches a keyed route without
-// supplied doubles is an explicit 500.
+// test supplies its per-request mocks with `withBindValues(<Controller>Doubles(...))` — one overload per
+// routed controller, each taking only the slots that controller reaches. The key carries a by-type
+// `@BindType(NoteBackend.self, …)` slot AND a keyed `@BindType(PrefsKeys.primary, …)` slot, but no test names
+// both: `/notes/{id}` supplies the by-type mock alone, `/prefs/{id}` the keyed one alone, and `/ping` supplies
+// nothing at all. A request that reaches a keyed route without supplied doubles is still an explicit 500.
 //
 // The suite is **parallel** (no `.serialized`): the harness's promise is that per-request doubles isolate
 // concurrent requests by correlation id, so the tests must run — and pass — under real concurrency.
@@ -23,7 +23,7 @@ struct BindTests {
     /// and the exact instance the test holds recorded the call (reference identity via its recorded state).
     @Test func suppliedMockIsObservedOverHTTP() async throws {
         let mock = MockNoteBackend()
-        try await withBindValues(noteBackend: mock, prefsBackendKeyedPrefsKeysPrimary: MockPrefsBackend()) {
+        try await withBindValues(NotesControllerDoubles(noteBackend: mock)) {
             let response = try await TestClient.current.get("/notes/x")
             #expect(response.status == 200)
             let note = try response.json(Note.self)
@@ -43,7 +43,7 @@ struct BindTests {
     /// call (before the chain forwards) and then the handler's `summary:x` call.
     @Test func appScopedTestScopableRouteServesMockSeedlessly() async throws {
         let mock = MockNoteBackend()
-        try await withBindValues(noteBackend: mock, prefsBackendKeyedPrefsKeysPrimary: MockPrefsBackend()) {
+        try await withBindValues(SummaryControllerDoubles(noteBackend: mock)) {
             let response = try await TestClient.current.get("/summary/x")
             #expect(response.status == 200)
             #expect(try response.json(Note.self).value == "mock:summary:x")
@@ -61,7 +61,7 @@ struct BindTests {
     /// then the handler's `audited:x`.
     @Test func seedScopedRouteWithMockConsumingMiddlewareServesMock() async throws {
         let mock = MockNoteBackend()
-        try await withBindValues(noteBackend: mock, prefsBackendKeyedPrefsKeysPrimary: MockPrefsBackend()) {
+        try await withBindValues(AuditedControllerDoubles(noteBackend: mock)) {
             let response = try await TestClient.current.get("/audited/x")
             #expect(response.status == 200)
             #expect(try response.json(Note.self).value == "mock:audited:x")
@@ -76,7 +76,7 @@ struct BindTests {
     /// isolating keyed vs by-type into separate suites needs multi-key.)
     @Test func keyedBindTypeSlotThreadsMockOverHTTP() async throws {
         let mock = MockPrefsBackend()
-        try await withBindValues(noteBackend: MockNoteBackend(), prefsBackendKeyedPrefsKeysPrimary: mock) {
+        try await withBindValues(PrefsControllerDoubles(prefsBackendKeyedPrefsKeysPrimary: mock)) {
             let response = try await TestClient.current.get("/prefs/x")
             #expect(response.status == 200)
             #expect(try response.json(Note.self).value == "mock-pref:x")
@@ -91,7 +91,7 @@ struct BindTests {
     /// (`mock:init`), and the exact supplied instance recorded that init-time `note("init")` call.
     @Test func cascadeMockThreadsThroughScopableSingletonInit() async throws {
         let mock = MockNoteBackend()
-        try await withBindValues(noteBackend: mock, prefsBackendKeyedPrefsKeysPrimary: MockPrefsBackend()) {
+        try await withBindValues(AccountControllerDoubles(noteBackend: mock)) {
             let response = try await TestClient.current.get("/account/x")
             #expect(response.status == 200)
             #expect(try response.json(Note.self).value == "mock:init")
@@ -107,7 +107,7 @@ struct BindTests {
     /// `GET /cart/x` returns the mock's init-read value; the exact instance recorded the init call.
     @Test func level2TransitiveRouteThreadsMockWithNoMark() async throws {
         let mock = MockNoteBackend()
-        try await withBindValues(noteBackend: mock, prefsBackendKeyedPrefsKeysPrimary: MockPrefsBackend()) {
+        try await withBindValues(CartControllerDoubles(noteBackend: mock)) {
             let response = try await TestClient.current.get("/cart/x")
             #expect(response.status == 200)
             #expect(try response.json(Note.self).value == "mock:init")
@@ -117,32 +117,32 @@ struct BindTests {
 
     /// A factory-carrying keyed route: `LoggedController` carries `@Middleware(AccessLogKeys.factory)`, so its
     /// variant proxy holds a lifted `_wireFactory_<key>`. Under the keyed suite it enters cleanly and serves
-    /// over HTTP (the swift-wire factory-facade fix) — `GET /logged/` returns its constant, mock ignored.
+    /// over HTTP (the swift-wire factory-facade fix) — `GET /logged/` returns its constant. Its factory
+    /// injects nothing mocked, so its doubles struct is empty: the test supplies `LoggedControllerDoubles()`
+    /// and never constructs a mock.
     @Test func factoryCarryingRouteEntersAndServes() async throws {
-        let mock = MockNoteBackend()
-        try await withBindValues(noteBackend: mock, prefsBackendKeyedPrefsKeysPrimary: MockPrefsBackend()) {
+        try await withBindValues(LoggedControllerDoubles()) {
             let response = try await TestClient.current.get("/logged/")
             #expect(response.status == 200)
             #expect(try response.json(Note.self).value == "logged")
         }
-        #expect(mock.recordedNotes == [])
     }
 
-    /// A mock-IGNORING keyed route: `/ping` injects nothing mocked, but under `.wiremvc(key)` it is keyed and
-    /// its variant proxy takes the key's Doubles, which it ignores. With `withBindValues` it parks, enters,
-    /// and serves its constant.
+    /// A mock-IGNORING keyed route: `/ping` injects nothing mocked, so its doubles struct has no fields at
+    /// all. The uniform "keyed suite ⇒ supply doubles" rule still holds — the store must carry an entry for
+    /// the request to correlate — but what it supplies is now `PingControllerDoubles()`, naming no mock. This
+    /// is the over-specification per-controller doubles exists to remove.
     @Test func mockIgnoringRouteServesUnderWithBindValues() async throws {
-        let mock = MockNoteBackend()
-        try await withBindValues(noteBackend: mock, prefsBackendKeyedPrefsKeysPrimary: MockPrefsBackend()) {
+        try await withBindValues(PingControllerDoubles()) {
             let response = try await TestClient.current.get("/ping/")
             #expect(response.status == 200)
             #expect(try response.json(Note.self).value == "pong")
         }
-        #expect(mock.recordedNotes == [])
     }
 
-    /// The uniform "keyed suite ⇒ supply doubles" rule applies even to a mock-ignoring route — a request to
-    /// `/ping` WITHOUT `withBindValues` is an explicit 500.
+    /// The uniform rule survives per-controller doubles: a request to `/ping` WITHOUT `withBindValues` is an
+    /// explicit 500, even though the doubles it would supply are empty. The 500 names the controller whose
+    /// doubles are missing, so the message says which `withBindValues` to add.
     @Test func mockIgnoringRouteWithoutDoublesIs500() async throws {
         let response = try await TestClient.current.get("/ping/")
         #expect(response.status == 500)
@@ -154,7 +154,7 @@ struct BindTests {
     /// keyed suite's serve task tree.
     @Test func keyedSuiteServesMockOnSharedRoute() async throws {
         let mock = MockNoteBackend()
-        try await withBindValues(noteBackend: mock, prefsBackendKeyedPrefsKeysPrimary: MockPrefsBackend()) {
+        try await withBindValues(NotesControllerDoubles(noteBackend: mock)) {
             let response = try await TestClient.current.get("/notes/z")
             #expect(response.status == 200)
             #expect(try response.json(Note.self).value == "stamped:mock:z")
@@ -185,10 +185,7 @@ struct BindTests {
                     for tag in ["alpha", "beta"] {
                         requests.addTask {
                             let mock = MockNoteBackend(onNote: { await barrier.arrive() })
-                            try await withBindValues(
-                                noteBackend: mock,
-                                prefsBackendKeyedPrefsKeysPrimary: MockPrefsBackend()
-                            ) {
+                            try await withBindValues(NotesControllerDoubles(noteBackend: mock)) {
                                 let response = try await TestClient.current.get("/notes/\(tag)")
                                 #expect(response.status == 200)
                                 #expect(try response.json(Note.self).value == "stamped:mock:\(tag)")
