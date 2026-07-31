@@ -66,7 +66,6 @@ struct WireMVCRouteGenPlugin: BuildToolPlugin {
 
         let allInputFiles = swiftSources + dependencyGroups.flatMap(\.sources)
 
-
         // WireMVCRouteGen: the witness extensions. It scans every source for `@Controller` types, so it
         // takes the same flat source set (consumer + Wire-aware dependencies). A test consumer — one that
         // depends on the `WireMVCTesting` product — gets `--test-entry`, so a `@WireMVCBootstrap` root emits
@@ -104,7 +103,7 @@ struct WireMVCRouteGenPlugin: BuildToolPlugin {
                 arguments: routeGenArguments,
                 inputFiles: allInputFiles,
                 outputFiles: [routesURL]
-            ),
+            )
         ]
     }
 
