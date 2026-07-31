@@ -15,6 +15,11 @@ import SwiftSyntax
 // and throw `WireMVCRouteError` on a non-2xx (see `WireMVCTesting/TypedRouteClient.swift`), so the happy
 // path carries no status assertion and no decode.
 //
+// Every method also takes `headers:`, defaulted empty. A route can depend on a header it does not declare —
+// read by a middleware or a scoped binding off the `HTTPRequest` rather than bound with `@Header` — and the
+// typed surface would otherwise be unusable for it. A declared `@Header` binding wins over an extra of the
+// same name.
+//
 // A `@RawRoute` gets a **shim** rather than a typed method. Its parameters are all *roles* (the request,
 // reader and sender the server supplies), and it writes its own response — so there is nothing to type on
 // either side. What is still derivable is the request line: the verb and the path template, including its
@@ -92,6 +97,13 @@ private func renderClientMethod(_ route: ClientRoute) -> String {
             "responseHandler: (HTTPResponse, consuming TestResponseReader) async throws -> WireMVCRawReturn"
         )
     }
+    if !route.isRaw {
+        // Every method takes extra headers, matching the raw shim. A route can depend on a header it does not
+        // *declare* — an auth token, tenant id or trace id read by a middleware or a scoped binding off the
+        // `HTTPRequest` rather than bound with `@Header` — and without this a test for such a route would have
+        // to abandon the typed method entirely, losing the derived path and decoded response along with it.
+        signatureParts.append("headers: [String: String] = [:]")
+    }
     let signature = signatureParts.joined(separator: ", ")
     let generics = route.isRaw ? "<WireMVCRawReturn: ~Copyable>" : ""
     let returns = route.isRaw ? " -> WireMVCRawReturn" : route.responseType.map { " -> \($0)" } ?? ""
@@ -110,8 +122,8 @@ private func renderClientMethod(_ route: ClientRoute) -> String {
         arguments.append("headers: headers")
         arguments.append("body: body")
         arguments.append("responseHandler: responseHandler")
-    } else if let headers {
-        arguments.append("headers: \(headers)")
+    } else {
+        arguments.append("headers: \(headerArgument(route.parameters.filter { $0.wrapper == "Header" }))")
     }
     if let body = route.parameters.first(where: { $0.wrapper == "JSONBody" }) {
         arguments.append("json: \(body.name)")
@@ -148,6 +160,25 @@ private func renderClientMethod(_ route: ClientRoute) -> String {
 /// A `[wire: String(value)]` dictionary literal for path or header bindings, or `nil` when there are none.
 /// An optional binding is folded in only when non-`nil`, so omitting it omits the header rather than
 /// sending `"nil"`.
+/// The `headers:` argument for a typed method: the caller's `headers` merged under the route's own `@Header`
+/// bindings, so a declared binding wins over an extra of the same name. Built as a chain from `headers`
+/// rather than merging a separate literal into it, which keeps the optional case from nesting one merge
+/// inside another.
+private func headerArgument(_ parameters: [ClientRouteParameter]) -> String {
+    let required = parameters.filter { !$0.isOptional }
+    var expression = "headers"
+    if !required.isEmpty {
+        let literal = "[" + required.map { "\"\($0.wireName)\": String(\($0.name))" }.joined(separator: ", ") + "]"
+        expression += ".merging(\(literal)) { _, declared in declared }"
+    }
+    for parameter in parameters where parameter.isOptional {
+        expression +=
+            ".merging(\(parameter.name).map { [\"\(parameter.wireName)\": String($0)] } ?? [:]) "
+            + "{ _, declared in declared }"
+    }
+    return expression
+}
+
 private func wireEntries(_ parameters: [ClientRouteParameter]) -> String? {
     guard !parameters.isEmpty else { return nil }
     let required = parameters.filter { !$0.isOptional }

@@ -43,8 +43,8 @@ struct ControllerClientGenerationTests {
                     let client: TestClient
 
                     /// `GET /notes/{id}`
-                    func fetch(id: String) async throws -> Note {
-                        let wireMVCResponse = try await client.routeResponse(method: "GET", path: "/notes/{id}", pathParameters: ["id": String(id)])
+                    func fetch(id: String, headers: [String: String] = [:]) async throws -> Note {
+                        let wireMVCResponse = try await client.routeResponse(method: "GET", path: "/notes/{id}", pathParameters: ["id": String(id)], headers: headers)
                         return try wireMVCResponse.json(Note.self)
                     }
                 }
@@ -86,9 +86,19 @@ struct ControllerClientGenerationTests {
             """
         )
         let rendered = try! #require(renderControllerClient(controller: declaration, pathPrefix: "/todos"))
-        #expect(rendered.contains(#"headers: ["x-session": String(session)]"#))
         #expect(rendered.contains("json: body"))
-        #expect(rendered.contains("func create(body: NewTodo, session: String) async throws -> Todo"))
+        #expect(
+            rendered.contains(
+                "func create(body: NewTodo, session: String, headers: [String: String] = [:]) async throws -> Todo"
+            )
+        )
+        // A declared `@Header` wins over an extra of the same name: the caller's dictionary is merged under
+        // the binding, not over it, so the typed contract can't be silently overridden.
+        #expect(
+            rendered.contains(
+                #"headers: headers.merging(["x-session": String(session)])"#
+            )
+        )
     }
 
     /// A `@ResponseStatus` route returns `Void` — there is no body to decode, and `routeResponse` has
@@ -105,7 +115,7 @@ struct ControllerClientGenerationTests {
             """
         )
         let rendered = try! #require(renderControllerClient(controller: declaration, pathPrefix: "/todos"))
-        #expect(rendered.contains("func remove(id: Int) async throws {"))
+        #expect(rendered.contains("func remove(id: Int, headers: [String: String] = [:]) async throws {"))
         #expect(rendered.contains("_ = try await client.routeResponse("))
         #expect(!rendered.contains(".json("))
     }
@@ -130,7 +140,7 @@ struct ControllerClientGenerationTests {
             """
         )
         let rendered = try! #require(renderControllerClient(controller: declaration, pathPrefix: "/exports"))
-        #expect(rendered.contains("func fetch(id: String) async throws -> Export"))
+        #expect(rendered.contains("func fetch(id: String, headers: [String: String] = [:]) async throws -> Export"))
         #expect(rendered.contains("func stream<WireMVCRawReturn: ~Copyable>("))
         #expect(
             rendered.contains(
