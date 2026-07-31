@@ -24,7 +24,7 @@ struct ReplaceTests {
         // Through the generated typed client: `hello(name:)` is `GET /hello/{name}`, and its return is the
         // route's own `@JSONResponse` type. No path string, no status assertion, no decode — and renaming
         // the route or changing `Greeting` breaks this at compile time rather than at runtime.
-        let greeting = try await helloController.hello(name: "Alice")
+        let greeting = try await HelloControllerClient.current.hello(name: "Alice")
         #expect(greeting.message == "FAKE:Alice")
         #expect(greeting.message != "Hello, Alice!")
     }
@@ -35,7 +35,7 @@ struct ReplaceTests {
     @Test func globalErrorTierMapsToBadRequest() async throws {
         // A typed method returns the decoded response, so a non-2xx arrives as a throw carrying the status.
         let error = try await #require(throws: WireMVCRouteError.self) {
-            try await helloController.tenant()
+            try await HelloControllerClient.current.tenant()
         }
         #expect(error.status == .badRequest)
     }
@@ -46,7 +46,7 @@ struct ReplaceTests {
     /// `HTTPClient.perform` — head and body reader into a closure — and a non-2xx would not be a failure here
     /// the way it is for a typed method.
     @Test func rawRouteShimDerivesThePath() async throws {
-        let body = try await helloController.rawGreeting(name: "Alice") { response, reader in
+        let body = try await HelloControllerClient.current.rawGreeting(name: "Alice") { response, reader in
             #expect(response.status == .ok)
             return try await reader.collectText()
         }

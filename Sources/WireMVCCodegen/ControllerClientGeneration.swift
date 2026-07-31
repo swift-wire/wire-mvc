@@ -3,8 +3,11 @@ import SwiftSyntax
 
 // The per-controller typed test client. For each `@Controller` in a **test** consumer, this emits a
 // `struct <Name>Client` with one method per typed route — parameters taken from the route's
-// `@Path`/`@Query`/`@Header`/`@JSONBody` bindings, return taken from its `@JSONResponse` type — plus a
-// module-scope `var <name>: <Name>Client` the suite reads, mirroring the generated free `withBindValues`.
+// `@Path`/`@Query`/`@Header`/`@JSONBody` bindings, return taken from its `@JSONResponse` type.
+//
+// The client is handed to the body of that controller's `withBindValues` rather than reached through a
+// module-scope variable, so the doubles a test supplies and the routes it can call arrive together and name
+// the same controller. See `KeyedHarnessGeneration`.
 //
 // Everything here is derived from the same declarations the witness is, so a test driving a route through
 // its generated method is checked against the route: renaming it, changing a `@Path`'s type, or altering the
@@ -53,11 +56,6 @@ struct ClientRouteParameter {
 /// The generated client type for a controller — `NotesControllerClient`.
 func controllerClientTypeName(_ controller: String) -> String { controller + "Client" }
 
-/// The module-scope accessor a suite reads — `notesController` for `NotesController`. Lower-camelled like
-/// the graph's binding properties, and a free variable like the generated `withBindValues`, so a test
-/// writes `try await notesController.fetch(id: "x")`.
-func controllerClientAccessorName(_ controller: String) -> String { lowerCamelFirst(controller) }
-
 /// The typed client for one controller, or `nil` when it has no route with a derivable shape (every route
 /// `@RawRoute`, or none annotated) — an empty client is noise, so nothing is emitted.
 func renderControllerClient(controller: ControllerDeclaration, pathPrefix: String) -> String? {
@@ -72,12 +70,12 @@ func renderControllerClient(controller: ControllerDeclaration, pathPrefix: Strin
         struct \(typeName) {
         let client: TestClient
 
-        \(methods)
-        }
+        /// This controller's routes over the running suite's transport. A **keyed** suite receives the client
+        /// as its `withBindValues` body argument instead, so the doubles and the routes arrive together; this
+        /// is how a keyless suite — which has no such block — reaches the same typed surface.
+        static var current: Self { Self(client: .current) }
 
-        /// `\(controller.name)`'s routes, over the running suite's transport.
-        var \(controllerClientAccessorName(controller.name)): \(typeName) {
-            \(typeName)(client: .current)
+        \(methods)
         }
         """
     return Parser.parse(source: raw).formatted().description
