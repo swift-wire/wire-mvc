@@ -23,10 +23,8 @@ struct BindTests {
     /// and the exact instance the test holds recorded the call (reference identity via its recorded state).
     @Test func suppliedMockIsObservedOverHTTP() async throws {
         let mock = MockNoteBackend()
-        try await withBindValues(NotesControllerDoubles(noteBackend: mock)) {
-            let response = try await TestClient.current.get("/notes/x")
-            #expect(response.status == 200)
-            let note = try response.json(Note.self)
+        try await withBindValues(NotesControllerDoubles(noteBackend: mock)) { notes in
+            let note = try await notes.note(id: "x")
             #expect(note.value == "stamped:mock:x")
         }
         #expect(mock.recordedNotes == ["x"])
@@ -43,10 +41,9 @@ struct BindTests {
     /// call (before the chain forwards) and then the handler's `summary:x` call.
     @Test func appScopedTestScopableRouteServesMockSeedlessly() async throws {
         let mock = MockNoteBackend()
-        try await withBindValues(SummaryControllerDoubles(noteBackend: mock)) {
-            let response = try await TestClient.current.get("/summary/x")
-            #expect(response.status == 200)
-            #expect(try response.json(Note.self).value == "mock:summary:x")
+        try await withBindValues(SummaryControllerDoubles(noteBackend: mock)) { summary in
+            let note = try await summary.summary(id: "x")
+            #expect(note.value == "mock:summary:x")
         }
         // The exact supplied instance recorded the mock-consuming middleware's `audit` call *and* the handler's
         // `summary:x` call, in order — the one mock threaded both the seedless reconstruction and the lifted
@@ -61,10 +58,9 @@ struct BindTests {
     /// then the handler's `audited:x`.
     @Test func seedScopedRouteWithMockConsumingMiddlewareServesMock() async throws {
         let mock = MockNoteBackend()
-        try await withBindValues(AuditedControllerDoubles(noteBackend: mock)) {
-            let response = try await TestClient.current.get("/audited/x")
-            #expect(response.status == 200)
-            #expect(try response.json(Note.self).value == "mock:audited:x")
+        try await withBindValues(AuditedControllerDoubles(noteBackend: mock)) { audited in
+            let note = try await audited.audited(id: "x")
+            #expect(note.value == "mock:audited:x")
         }
         #expect(mock.recordedNotes == ["scoped-audit", "audited:x"])
     }
@@ -76,10 +72,9 @@ struct BindTests {
     /// isolating keyed vs by-type into separate suites needs multi-key.)
     @Test func keyedBindTypeSlotThreadsMockOverHTTP() async throws {
         let mock = MockPrefsBackend()
-        try await withBindValues(PrefsControllerDoubles(prefsBackendKeyedPrefsKeysPrimary: mock)) {
-            let response = try await TestClient.current.get("/prefs/x")
-            #expect(response.status == 200)
-            #expect(try response.json(Note.self).value == "mock-pref:x")
+        try await withBindValues(PrefsControllerDoubles(prefsBackendKeyedPrefsKeysPrimary: mock)) { prefs in
+            let note = try await prefs.read(id: "x")
+            #expect(note.value == "mock-pref:x")
         }
         #expect(mock.recordedPrefs == ["x"])
     }
@@ -91,10 +86,9 @@ struct BindTests {
     /// (`mock:init`), and the exact supplied instance recorded that init-time `note("init")` call.
     @Test func cascadeMockThreadsThroughScopableSingletonInit() async throws {
         let mock = MockNoteBackend()
-        try await withBindValues(AccountControllerDoubles(noteBackend: mock)) {
-            let response = try await TestClient.current.get("/account/x")
-            #expect(response.status == 200)
-            #expect(try response.json(Note.self).value == "mock:init")
+        try await withBindValues(AccountControllerDoubles(noteBackend: mock)) { account in
+            let note = try await account.account(id: "x")
+            #expect(note.value == "mock:init")
         }
         // The lifted singleton's init read the exact supplied instance (reference identity via its recording).
         #expect(mock.recordedNotes == ["init"])
@@ -107,10 +101,9 @@ struct BindTests {
     /// `GET /cart/x` returns the mock's init-read value; the exact instance recorded the init call.
     @Test func level2TransitiveRouteThreadsMockWithNoMark() async throws {
         let mock = MockNoteBackend()
-        try await withBindValues(CartControllerDoubles(noteBackend: mock)) {
-            let response = try await TestClient.current.get("/cart/x")
-            #expect(response.status == 200)
-            #expect(try response.json(Note.self).value == "mock:init")
+        try await withBindValues(CartControllerDoubles(noteBackend: mock)) { cart in
+            let note = try await cart.cart(id: "x")
+            #expect(note.value == "mock:init")
         }
         #expect(mock.recordedNotes == ["init"])
     }
@@ -121,10 +114,9 @@ struct BindTests {
     /// injects nothing mocked, so its doubles struct is empty: the test supplies `LoggedControllerDoubles()`
     /// and never constructs a mock.
     @Test func factoryCarryingRouteEntersAndServes() async throws {
-        try await withBindValues(LoggedControllerDoubles()) {
-            let response = try await TestClient.current.get("/logged/")
-            #expect(response.status == 200)
-            #expect(try response.json(Note.self).value == "logged")
+        try await withBindValues(LoggedControllerDoubles()) { logged in
+            let note = try await logged.logged()
+            #expect(note.value == "logged")
         }
     }
 
@@ -133,10 +125,9 @@ struct BindTests {
     /// the request to correlate — but what it supplies is now `PingControllerDoubles()`, naming no mock. This
     /// is the over-specification per-controller doubles exists to remove.
     @Test func mockIgnoringRouteServesUnderWithBindValues() async throws {
-        try await withBindValues(PingControllerDoubles()) {
-            let response = try await TestClient.current.get("/ping/")
-            #expect(response.status == 200)
-            #expect(try response.json(Note.self).value == "pong")
+        try await withBindValues(PingControllerDoubles()) { ping in
+            let note = try await ping.ping()
+            #expect(note.value == "pong")
         }
     }
 
@@ -154,10 +145,9 @@ struct BindTests {
     /// keyed suite's serve task tree.
     @Test func keyedSuiteServesMockOnSharedRoute() async throws {
         let mock = MockNoteBackend()
-        try await withBindValues(NotesControllerDoubles(noteBackend: mock)) {
-            let response = try await TestClient.current.get("/notes/z")
-            #expect(response.status == 200)
-            #expect(try response.json(Note.self).value == "stamped:mock:z")
+        try await withBindValues(NotesControllerDoubles(noteBackend: mock)) { notes in
+            let note = try await notes.note(id: "z")
+            #expect(note.value == "stamped:mock:z")
         }
         #expect(mock.recordedNotes == ["z"])
     }
@@ -185,10 +175,9 @@ struct BindTests {
                     for tag in ["alpha", "beta"] {
                         requests.addTask {
                             let mock = MockNoteBackend(onNote: { await barrier.arrive() })
-                            try await withBindValues(NotesControllerDoubles(noteBackend: mock)) {
-                                let response = try await TestClient.current.get("/notes/\(tag)")
-                                #expect(response.status == 200)
-                                #expect(try response.json(Note.self).value == "stamped:mock:\(tag)")
+                            try await withBindValues(NotesControllerDoubles(noteBackend: mock)) { notes in
+                                let note = try await notes.note(id: tag)
+                                #expect(note.value == "stamped:mock:\(tag)")
                             }
                             // Reference identity: this exact instance recorded only its own tag — no cross.
                             #expect(mock.recordedNotes == [tag])

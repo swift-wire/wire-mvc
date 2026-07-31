@@ -42,16 +42,18 @@ struct ControllerClientGenerationTests {
                 struct NotesControllerClient {
                     let client: TestClient
 
+                    /// This controller's routes over the running suite's transport. A **keyed** suite receives the client
+                    /// as its `withBindValues` body argument instead, so the doubles and the routes arrive together; this
+                    /// is how a keyless suite — which has no such block — reaches the same typed surface.
+                    static var current: Self {
+                        Self(client: .current)
+                    }
+
                     /// `GET /notes/{id}`
                     func fetch(id: String) async throws -> Note {
                         let wireMVCResponse = try await client.routeResponse(method: "GET", path: "/notes/{id}", pathParameters: ["id": String(id)])
                         return try wireMVCResponse.json(Note.self)
                     }
-                }
-
-                /// `NotesController`'s routes, over the running suite's transport.
-                var notesController: NotesControllerClient {
-                    NotesControllerClient(client: .current)
                 }
                 """
         )
@@ -213,6 +215,9 @@ struct ControllerClientGenerationTests {
 
         let test = generateRouteContributors(files: [("App.swift", source)], testEntry: true)
         #expect(test.source.contains("struct NotesControllerClient {"))
-        #expect(test.source.contains("var notesController: NotesControllerClient {"))
+        // No free-floating module-scope accessor: a keyed suite receives the client from `withBindValues`,
+        // a keyless one reaches it through the type's own `.current`.
+        #expect(!test.source.contains("var notesController:"))
+        #expect(test.source.contains("static var current: Self {"))
     }
 }

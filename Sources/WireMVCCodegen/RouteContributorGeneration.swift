@@ -216,6 +216,7 @@ public func generateRouteContributors(
     let bootstrap = renderBootstrapSources(
         composition: composition,
         subjects: controllerExtensions.subjects,
+        clientSubjects: Set(controllerExtensions.clients.map(\.name)),
         harnessKey: harnessKey,
         testEntry: testEntry
     )
@@ -238,6 +239,7 @@ public func generateRouteContributors(
 private func renderBootstrapSources(
     composition: ComposedInputs,
     subjects: [String],
+    clientSubjects: Set<String>,
     harnessKey: DiscoveredTestingKey?,
     testEntry: Bool
 ) -> (sources: [String], diagnostics: [LocatedRouteDiagnostic]) {
@@ -251,7 +253,13 @@ private func renderBootstrapSources(
     )
     var sources = artifacts.sources
     if testEntry, let harnessKey, !subjects.isEmpty {
-        sources.append(renderKeyedHarnessStatics(key: harnessKey, subjects: subjects))
+        sources.append(
+            renderKeyedHarnessStatics(
+                key: harnessKey,
+                subjects: subjects,
+                clientSubjects: clientSubjects
+            )
+        )
         sources.append(
             renderBootstrapKeyedTestEntry(
                 bootstrap: bootstrap,

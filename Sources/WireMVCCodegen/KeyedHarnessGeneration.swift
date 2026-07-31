@@ -38,7 +38,11 @@ func keyedScopeEntry(for controller: ControllerDeclaration, key: DiscoveredTesti
 /// `.wiremvc(_:)` factory, referencing the `_<Key>Doubles` type WireGen emits in the same module. The store
 /// correlates each request's doubles (by the `X-WireMVC-Test-Binds` header); the variant witness reads it per
 /// request.
-func renderKeyedHarnessStatics(key: DiscoveredTestingKey, subjects: [String]) -> String {
+func renderKeyedHarnessStatics(
+    key: DiscoveredTestingKey,
+    subjects: [String],
+    clientSubjects: Set<String>
+) -> String {
     // One store per routed subject: each subject's `_wireEnterScope` takes its own doubles type, so a single
     // key-wide store could not type-check against all of them.
     var lines: [String] = ["enum \(key.harnessEnumName) {"]
@@ -54,8 +58,16 @@ func renderKeyedHarnessStatics(key: DiscoveredTestingKey, subjects: [String]) ->
     // doubles *type* keeps one verb at every call site: `withBindValues(NotesControllerDoubles(noteBackend:))`
     // resolves to the notes store, and supplying a slot that controller doesn't reach is a compile error.
     // `@discardableResult` mirrors the core.
+    //
+    // The body receives that controller's typed client, so the doubles a test supplies and the routes it can
+    // call arrive together and name the same controller — the client is scoped to the block rather than
+    // reached through a module-scope variable that outlives it. A controller with no typed route (every route
+    // `@RawRoute`, or none annotated) has no client to hand over, so its body takes no argument.
     for subject in subjects {
         let doublesType = subjectDoublesTypeName(variantName: key.variantName, subject: subject)
+        let clientType = clientSubjects.contains(subject) ? controllerClientTypeName(subject) : nil
+        let bodyParameter = clientType.map { "(\($0)) async throws -> R" } ?? "() async throws -> R"
+        let bodyCall = clientType.map { "try await body(\($0)(client: .current))" } ?? "try await body()"
         lines.append(
             """
 
@@ -64,13 +76,14 @@ func renderKeyedHarnessStatics(key: DiscoveredTestingKey, subjects: [String]) ->
             @discardableResult
             func withBindValues<R>(
                 _ doubles: \(doublesType),
-                _ body: () async throws -> R
+                _ body: \(bodyParameter)
             ) async throws -> R {
                 try await WireMVCTesting.withBindValues(
                     doubles,
-                    in: \(key.harnessEnumName).\(harnessDoublesStoreName(subject: subject)),
-                    body
-                )
+                    in: \(key.harnessEnumName).\(harnessDoublesStoreName(subject: subject))
+                ) {
+                    \(bodyCall)
+                }
             }
             """
         )
