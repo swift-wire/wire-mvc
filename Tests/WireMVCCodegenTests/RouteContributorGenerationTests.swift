@@ -1418,6 +1418,19 @@ struct RouteContributorGenerationTests {
         #expect(rendered.source.contains("does not serve"))
     }
 
+    /// The keyed factory names `TestingKey` in its signature, and `WireTesting` vends it rather than `Wire`
+    /// — so a keyed harness must import it. A keyless test consumer must not, since it declares no variant.
+    @Test func keyedHarnessImportsWireTestingAndKeylessDoesNot() {
+        let keyed = generateRouteContributors(files: [("App.swift", keyedHarnessFixture)], testEntry: true)
+        #expect(keyed.source.contains("import WireTesting"))
+
+        // Drop the whole `enum Binds { … }` block — renaming it would leave the `TestingKey()` inside.
+        let withoutKey = String(keyedHarnessFixture.prefix(upTo: keyedHarnessFixture.range(of: "enum Binds {")!.lowerBound))
+        let keyless = generateRouteContributors(files: [("App.swift", withoutKey)], testEntry: true)
+        #expect(!keyless.source.contains("TestingKey"))
+        #expect(!keyless.source.contains("import WireTesting"))
+    }
+
     /// No module attribution → no assertion. `#fileID` carries the module name, so without it the generator
     /// would be guessing — and a wrong guess fails every suite that passes the *right* key. Skipping is the
     /// safe direction: it restores the prior behaviour rather than breaking a correct call.
