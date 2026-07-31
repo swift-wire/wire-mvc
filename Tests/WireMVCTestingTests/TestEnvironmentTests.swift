@@ -3,6 +3,14 @@ import Testing
 
 @testable import WireMVCTesting
 
+// `setenv`/`unsetenv` come from the platform C library. Foundation re-exports Darwin on macOS but not Glibc on
+// Linux, so the import has to be explicit for the test's own set-up calls to build on both.
+#if canImport(Glibc)
+import Glibc
+#elseif canImport(Darwin)
+import Darwin
+#endif
+
 /// `withEnvironment` applies values for the duration of a body and restores what was there before. Unit-level
 /// and `.serialized`, because the process environment is global: two of these running concurrently would race
 /// on the same keys, which is the constraint the suite-factory parameter documents.

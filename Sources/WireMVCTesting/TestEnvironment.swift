@@ -39,10 +39,13 @@ extension WireMVCTesting {
         _ body: () async throws -> R
     ) async throws -> R {
         // Sorted so the applied order is deterministic, which matters only for legibility when a test logs it.
+        // Iterated as pairs rather than subscripting by key: Glibc's `setenv` takes a non-optional
+        // `UnsafePointer<CChar>` where Darwin's is nullable, so a subscript's `String?` builds on macOS and
+        // fails on Linux.
         var restore: [(key: String, value: String?)] = []
-        for key in values.keys.sorted() {
+        for (key, value) in values.sorted(by: { $0.key < $1.key }) {
             restore.append((key, ProcessInfo.processInfo.environment[key]))
-            unsafe setenv(key, values[key], 1)
+            unsafe setenv(key, value, 1)
         }
         defer {
             for entry in restore {
