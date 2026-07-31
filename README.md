@@ -53,6 +53,35 @@ Under construction (M5.1).
 
 Validated on macOS and Linux (see CI).
 
+## Building and testing
+
+Two packages, and both need running:
+
+```sh
+swift test              # the core: codegen, router, testing runtime
+cd Fixtures && swift test   # the runnable examples and their integration suites
+```
+
+`Fixtures/` is a separate package with a path dependency on the root (`.package(path: "..")`). It exists
+because its targets serve on `NIOHTTPServer`, and it is **the only place `WireMVCBuildPlugin` actually runs** —
+no root target applies it. A change to the plugin, or to what the two codegen tools emit, is unverified until
+the fixtures build. `WireMVCBootstrapExampleBindTests` is the one that exercises the keyed `TestingKey`
+harness end to end.
+
+Both packages are tools-version 6.4, so they need a 6.4 toolchain.
+
+One trap worth knowing: **`swift build --target WireMVCBuildPlugin` does not type-check the plugin.** SwiftPM
+compiles a build-tool plugin only when some target applies it, and the flag no-ops silently rather than
+erroring — a type error in the plugin will pass that command and then fail in CI on the fixtures. To check it
+directly:
+
+```sh
+xcrun swiftc -typecheck -parse-as-library -swift-version 6 \
+  -I "$(xcrun --show-sdk-platform-path)/../../Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/pm/PluginAPI" \
+  -Xfrontend -disable-availability-checking \
+  Plugins/WireMVCBuildPlugin/WireMVCBuildPlugin.swift
+```
+
 ## Related work
 
 Vapor 5 has an experimental macro-based `@Controller` router of its own (behind

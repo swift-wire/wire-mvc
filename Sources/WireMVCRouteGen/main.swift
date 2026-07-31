@@ -45,6 +45,9 @@ var sourcePaths: [String] = []
 // simply absent, which is why the flat form still works.
 var sourceModules: [String: String] = [:]
 var currentModule: String?
+// The first `--module` group is the target being built (the plugin passes it first, as WireGen's CLI does).
+// Only its `TestingKey` may be served — a dependency's is skipped.
+var consumerModule: String?
 let remaining = Array(arguments.dropFirst(2))
 var index = remaining.startIndex
 while index < remaining.endIndex {
@@ -67,6 +70,7 @@ while index < remaining.endIndex {
             exit(1)
         }
         currentModule = remaining[next]
+        if consumerModule == nil { consumerModule = currentModule }
         index = next
     default:
         sourcePaths.append(argument)
@@ -89,7 +93,8 @@ let result = generateRouteContributors(
     files: files,
     testEntry: testEntry,
     extraImports: extraImports,
-    sourceModules: sourceModules
+    sourceModules: sourceModules,
+    consumerModule: consumerModule
 )
 
 if !result.diagnostics.isEmpty {
