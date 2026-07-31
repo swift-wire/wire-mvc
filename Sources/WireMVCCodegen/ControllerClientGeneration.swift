@@ -5,7 +5,7 @@ import SwiftSyntax
 // `struct <Name>Client` with one method per typed route — parameters taken from the route's
 // `@Path`/`@Query`/`@Header`/`@JSONBody` bindings, return taken from its `@JSONResponse` type.
 //
-// The client is handed to the body of that controller's `withBindValues` rather than reached through a
+// The client is handed to the body of that controller's `withClient` rather than reached through a
 // module-scope variable, so the doubles a test supplies and the routes it can call arrive together and name
 // the same controller. See `KeyedHarnessGeneration`.
 //
@@ -69,11 +69,6 @@ func renderControllerClient(controller: ControllerDeclaration, pathPrefix: Strin
         /// returns the route's decoded response and throws `WireMVCRouteError` for a non-2xx.
         struct \(typeName) {
         let client: TestClient
-
-        /// This controller's routes over the running suite's transport. A **keyed** suite receives the client
-        /// as its `withBindValues` body argument instead, so the doubles and the routes arrive together; this
-        /// is how a keyless suite — which has no such block — reaches the same typed surface.
-        static var current: Self { Self(client: .current) }
 
         \(methods)
         }

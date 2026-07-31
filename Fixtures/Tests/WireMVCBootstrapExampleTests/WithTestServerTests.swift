@@ -16,24 +16,27 @@ struct WithTestServerTests {
     /// `GET /hello/{name}` routes through the graph-constructed `HelloController` (its injected `Greeter`)
     /// and answers `{"message":"Hello, <name>!"}` — a real 200 over HTTP via the harness-owned suite server.
     @Test func servesHelloRouteOverEphemeralPort() async throws {
-        let client = TestClient.current
-        let response = try await client.get("/hello/Alice")
-        #expect(response.status == 200)
-        let greeting = try response.json(Greeting.self)
-        #expect(greeting.message == "Hello, Alice!")
+        try await withClient(for: HelloControllerClient.self) { hello in
+            let greeting = try await hello.hello(name: "Alice")
+            #expect(greeting.message == "Hello, Alice!")
+        }
     }
 
     /// `GET /hello/tenant` throws `TenantMissing`, which the composition root's global
     /// `@ErrorResponse(TenantMissing.self, .badRequest)` maps — proving the global tier serves over the seam.
     @Test func globalErrorTierMapsToBadRequest() async throws {
-        let response = try await TestClient.current.get("/hello/tenant")
-        #expect(response.status == 400)
+        try await withClient(for: HelloControllerClient.self) { hello in
+            let error = try await #require(throws: WireMVCRouteError.self) { try await hello.tenant() }
+            #expect(error.status == .badRequest)
+        }
     }
 
     /// An unmatched path hits the `@NotFound` `@RawRoute` fallback — a 404 with the handler's body.
     @Test func notFoundFallbackServes() async throws {
-        let response = try await TestClient.current.get("/no/such/route")
-        #expect(response.status == 404)
-        #expect(response.bodyText.contains("no route here"))
+        try await withClient { client in
+            let response = try await client.get("/no/such/route")
+            #expect(response.status == 404)
+            #expect(response.bodyText.contains("no route here"))
+        }
     }
 }

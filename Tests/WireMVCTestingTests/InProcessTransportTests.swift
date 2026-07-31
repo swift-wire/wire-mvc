@@ -76,16 +76,16 @@ private struct SilentHandler: HTTPServerRequestHandler {
         let note: String
     }
 
-    /// `runSuite` points `TestClient.current` at the handler for the duration of the body, and each verb
+    /// `runSuite` points `TestClient.forSuite` at the handler for the duration of the body, and each verb
     /// reaches it with its method and path intact.
     @Test func driverBindsClientAndRoutesMethodAndPath() async throws {
         let mode = WireMVCTestMode.inProcess
         try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: EchoHandler(), services: []) {
-            let get = try await TestClient.current.get("/hello")
+            let get = try await TestClient.forSuite.get("/hello")
             #expect(get.status == 200)
             #expect(get.bodyText == "GET /hello|")
 
-            let delete = try await TestClient.current.delete("/hello")
+            let delete = try await TestClient.forSuite.delete("/hello")
             #expect(delete.bodyText == "DELETE /hello|")
         }
         // The client is scoped to the run, exactly as it is for a live transport.
@@ -97,7 +97,7 @@ private struct SilentHandler: HTTPServerRequestHandler {
     @Test func requestBodyAndHeadersReachTheHandler() async throws {
         let mode = WireMVCTestMode.inProcess
         try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: EchoHandler(), services: []) {
-            let response = try await TestClient.current.post(
+            let response = try await TestClient.forSuite.post(
                 "/notes",
                 json: Payload(note: "hi"),
                 headers: ["X-Echo": "seen"]
@@ -113,7 +113,7 @@ private struct SilentHandler: HTTPServerRequestHandler {
     @Test func streamedWritesAccumulateIntoOneBody() async throws {
         let mode = WireMVCTestMode.inProcess
         try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: EchoHandler(), services: []) {
-            let response = try await TestClient.current.get("/stream")
+            let response = try await TestClient.forSuite.get("/stream")
             #expect(response.status == 202)
             #expect(response.bodyText == "onetwothree")
         }
@@ -124,7 +124,7 @@ private struct SilentHandler: HTTPServerRequestHandler {
     @Test func handlerThatNeverRespondsIsDistinguishable() async throws {
         let mode = WireMVCTestMode.inProcess
         try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: SilentHandler(), services: []) {
-            let response = try await TestClient.current.get("/anything")
+            let response = try await TestClient.forSuite.get("/anything")
             #expect(response.status == -1)
             #expect(response.body.isEmpty)
         }
@@ -133,16 +133,19 @@ private struct SilentHandler: HTTPServerRequestHandler {
     /// The correlation header the keyed harness rides on is stamped by both transports. In-process it lands
     /// on the `HTTPRequest`'s header fields, where `wireMVCTestCorrelationID` reads it back — the same
     /// function the generated dispatch calls.
-    @Test func correlationHeaderIsStampedOnTheInProcessRequest() async throws {
-        let client = TestClient(dispatch: InProcessDispatch())
+    ///
+    /// Stamping is a property of the *client*, not of being inside a closure: a client from `withClient`
+    /// carries no id and stamps nothing, one from `withClient(supplying:)` carries its block's id and stamps it. That
+    /// is what lets two nested bindings stay distinguishable.
+    @Test func correlationHeaderIsStampedOnTheInProcessRequest() {
+        let unbound = TestClient(dispatch: InProcessDispatch())
+        #expect(wireMVCTestCorrelationID(in: unbound.makeHTTPRequest("GET", "/notes", headers: [:])) == nil)
 
-        let outside = client.makeHTTPRequest("GET", "/notes", headers: [:])
-        #expect(wireMVCTestCorrelationID(in: outside) == nil)
+        let id = CorrelationID.mint()
+        let bound = unbound.bound(to: id)
+        #expect(wireMVCTestCorrelationID(in: bound.makeHTTPRequest("GET", "/notes", headers: [:])) == id)
 
-        let store = TestBindStore<Int>()
-        try await WireMVCTesting.withBindValues(1, in: store) {
-            let inside = client.makeHTTPRequest("GET", "/notes", headers: [:])
-            #expect(wireMVCTestCorrelationID(in: inside) == WireMVCTesting.currentCorrelationID)
-        }
+        // `bound(to:)` returns a new client rather than mutating — the original still stamps nothing.
+        #expect(wireMVCTestCorrelationID(in: unbound.makeHTTPRequest("GET", "/notes", headers: [:])) == nil)
     }
 }

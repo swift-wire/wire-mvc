@@ -234,7 +234,7 @@ public func generateRouteContributors(
 /// The `@WireMVCBootstrap` root's module-scope sources: the global-middleware proxy extension + the program
 /// entry (`@main` or keyless `.wiremvc()`) via ``bootstrapArtifacts``, then — for a test consumer whose
 /// composed sources declare a `TestingKey` with at least one matching `@Scoped(seed:)` subject — the keyed
-/// harness (H2.2b): the per-key statics + typed `withBindValues`, and the `.wiremvc(_:)` factory. A key with
+/// harness (H2.2b): the per-key statics + typed `withClient(supplying:)`, and the `.wiremvc(_:)` factory. A key with
 /// no matching subject appends nothing, so the keyless path stands unchanged. Empty when there's no bootstrap.
 private func renderBootstrapSources(
     composition: ComposedInputs,
@@ -252,6 +252,11 @@ private func renderBootstrapSources(
         testEntry: testEntry
     )
     var sources = artifacts.sources
+    // The `withClient` family — emitted for every test consumer, keyed or not: it is how a keyless suite
+    // reaches a client at all, and how a keyed one drives a route without supplying doubles.
+    if testEntry {
+        sources.append(renderClientAccessors(controllersWithClients: clientSubjects.sorted()))
+    }
     if testEntry, let harnessKey, !subjects.isEmpty {
         sources.append(
             renderKeyedHarnessStatics(

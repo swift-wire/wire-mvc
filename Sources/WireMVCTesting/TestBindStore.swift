@@ -2,15 +2,17 @@ public import Foundation
 import Synchronization
 
 // The doubles-supply channel for a `@WireMVCBootstrap` app under real HTTP. The test drives the server
-// over the loopback boundary, so the only per-request channel is the request itself: `withBindValues`
-// registers the test's concrete doubles in an in-process store under a freshly minted `CorrelationID`,
-// binds that id to a task-local, and `TestClient` stamps it on the `X-WireMVC-Test-Binds` header of every
-// request inside the closure. The request dispatch (generated, H2) reads the header back, pulls the
+// over the loopback boundary, so the only per-request channel is the request itself:
+// `withClient(supplying:)` registers the test's concrete doubles in an in-process store under a freshly minted
+// `CorrelationID`, and
+// hands the body a `TestClient` pinned to that id, which stamps it on the `X-WireMVC-Test-Binds` header of
+// every request that client drives. The request dispatch (generated, H2) reads the header back, pulls the
 // doubles from the store, and threads them into the variant scope-entry. The store holds the CONCRETE
 // `_<Key>Doubles` through its type parameter — no boxing, no downcast.
 
-/// Correlates a `withBindValues` closure with the requests it drives: minted per closure, carried on the
-/// task-local, stamped on the request header, and used to key the store slot holding that closure's doubles.
+/// Correlates a `withClient(supplying:)` closure with the requests it drives: minted per closure, carried by the
+/// client that closure hands out, stamped on the request header, and used to key the store slot holding that
+/// closure's doubles.
 public struct CorrelationID: Sendable, Hashable {
     /// The underlying identity, rendered onto the request header as its UUID string.
     public let rawValue: UUID
@@ -20,7 +22,7 @@ public struct CorrelationID: Sendable, Hashable {
         self.rawValue = rawValue
     }
 
-    /// A fresh, unique correlation id for one `withBindValues` closure.
+    /// A fresh, unique correlation id for one `withClient(supplying:)` closure.
     public static func mint() -> CorrelationID {
         CorrelationID(rawValue: UUID())
     }
@@ -28,7 +30,7 @@ public struct CorrelationID: Sendable, Hashable {
 
 /// The per-key doubles store: a `Mutex`-guarded map from a request's ``CorrelationID`` to the concrete
 /// `Doubles` the test supplied for it. A framework generic instantiated per `TestingKey` as a generated
-/// static (the generated `_<Key>Doubles` is `Sendable`), so `withBindValues` and the request dispatch share
+/// static (the generated `_<Key>Doubles` is `Sendable`), so the supplying call and the dispatch share
 /// the exact stored type — the dispatch reads it back concretely and hands it straight to the scope-entry.
 public final class TestBindStore<Doubles: Sendable>: Sendable {
     private let slots = Mutex<[CorrelationID: Doubles]>([:])
@@ -47,14 +49,14 @@ public final class TestBindStore<Doubles: Sendable>: Sendable {
         slots.withLock { $0[id] }
     }
 
-    /// Drop `id`'s slot — called from `withBindValues`'s `defer` on the way out.
+    /// Drop `id`'s slot — called from `withClient(supplying:)`'s `defer` on the way out.
     public func remove(_ id: CorrelationID) {
         slots.withLock { _ = $0.removeValue(forKey: id) }
     }
 }
 
 /// The request header carrying a request's ``CorrelationID`` from `TestClient` to the dispatch. Never
-/// emitted in production — only `TestClient`, inside a `withBindValues` closure, stamps it.
+/// emitted in production — only a `TestClient` carrying a binding stamps it.
 public let wireMVCTestBindsHeader = "X-WireMVC-Test-Binds"
 
 /// Parse a ``CorrelationID`` from a raw `X-WireMVC-Test-Binds` header value, or `nil` if it isn't a valid
@@ -64,26 +66,33 @@ public func correlationID(fromHeaderValue value: String) -> CorrelationID? {
 }
 
 extension WireMVCTesting {
-    /// Carries the current `withBindValues` closure's ``CorrelationID`` down its task tree; `TestClient`
-    /// reads it to stamp the request header. `nil` outside a `withBindValues` closure, so requests driven
-    /// there carry no header.
-    @TaskLocal public static var currentCorrelationID: CorrelationID?
-
-    /// The framework core the generated per-key `withBindValues` wrapper calls: mint a ``CorrelationID``,
-    /// register `doubles` under it in `store`, bind it to the task-local for the duration of `body`, and
-    /// drop the store slot on exit (`defer` — survives throws/cancellation; a crashed process drops the
-    /// whole store). The generated wrapper builds the concrete `_<Key>Doubles` from its per-slot parameters
-    /// and passes it here, so the store's type parameter is that exact type — no boxing.
-    public static func withBindValues<Doubles: Sendable, R>(
-        _ doubles: Doubles,
+    /// The framework core the generated per-controller `withClient(supplying:)` wrapper calls: mint a
+    /// ``CorrelationID``, register `doubles` under it in that controller's `store`, and hand `body` a
+    /// ``TestClient`` **pinned to that id**. The slot is dropped on exit (`defer` — survives
+    /// throws/cancellation; a crashed process drops the whole store). The generated wrapper passes the
+    /// concrete `_<Variant>_<Subject>Doubles` the test built, so the store's type parameter is that exact
+    /// type — no boxing.
+    ///
+    /// **The id rides the client, not a task-local.** A client is the handle on one binding: requests it
+    /// drives carry its id wherever they are called from, so nested blocks address their own doubles and two
+    /// bindings of the same controller stay distinguishable. An ambient id would instead make every request
+    /// inside a block resolve to the innermost binding, whichever client it was driven through.
+    public static func withClient<Doubles: Sendable, R>(
+        supplying doubles: Doubles,
         in store: TestBindStore<Doubles>,
-        _ body: () async throws -> R
+        _ body: (TestClient) async throws -> R
     ) async throws -> R {
         let id = CorrelationID.mint()
         store.put(doubles, for: id)
         defer { store.remove(id) }
-        return try await $currentCorrelationID.withValue(id) {
-            try await body()
-        }
+        return try await body(TestClient.forSuite.bound(to: id))
+    }
+
+    /// The no-doubles sibling: a ``TestClient`` carrying no correlation id, for requests that supply nothing —
+    /// a keyless suite, a path no controller declares (the `@NotFound` fallback, the Bootstrap's introspection
+    /// mount), or a keyed route driven deliberately unbound to assert its explicit 500. The generated
+    /// `withClient(for:)` wrappers call this.
+    public static func withClient<R>(_ body: (TestClient) async throws -> R) async throws -> R {
+        try await body(TestClient.forSuite)
     }
 }

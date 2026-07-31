@@ -57,7 +57,7 @@ private struct OKHandler: HTTPServerRequestHandler {
             handler: OKHandler(),
             services: [service]
         ) {
-            let response = try await TestClient.current.get("/")
+            let response = try await TestClient.forSuite.get("/")
             #expect(response.status == 200)
         }
         #expect(service.didRun.withLock { $0 } == false)

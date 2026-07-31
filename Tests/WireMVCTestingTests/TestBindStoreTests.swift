@@ -1,4 +1,6 @@
 import Foundation
+import HTTPAPIs
+import HTTPTypes
 import Synchronization
 import Testing
 
@@ -12,6 +14,23 @@ import FoundationNetworking
 // the generated `_<Key>Doubles`.
 private struct Doubles: Sendable, Equatable {
     let value: Int
+}
+
+/// A minimal handler for the suites these tests stand up — `withClient(supplying:)` hands out a client, so
+/// it needs a running suite to take one from.
+private struct OKHandler: HTTPServerRequestHandler {
+    typealias RequestContext = InProcessRequestContext
+    typealias Reader = InProcessReader
+    typealias ResponseSender = InProcessResponseSender
+
+    func handle(
+        request: HTTPRequest,
+        requestContext: consuming InProcessRequestContext,
+        reader: consuming sending InProcessReader,
+        responseSender: consuming sending InProcessResponseSender
+    ) async throws {
+        try await responseSender.sendAndFinish(HTTPResponse(status: .ok))
+    }
 }
 
 @Suite struct TestBindStoreTests {
@@ -30,37 +49,44 @@ private struct Doubles: Sendable, Equatable {
         #expect(store.value(for: id) == nil)
     }
 
-    @Test func withBindValuesBindsTaskLocalAndClearsAfter() async throws {
-        #expect(WireMVCTesting.currentCorrelationID == nil)
-
+    /// `withClient(supplying:)` hands the body a client **pinned to the minted id**, with the doubles registered
+    /// under that id for the closure's duration, and drops the slot on exit. The id rides the client rather
+    /// than a task-local, so what the body holds is what its requests will carry.
+    @Test func suppliedDoublesBindTheClientAndClearAfter() async throws {
         let store = TestBindStore<Doubles>()
-        let observed: CorrelationID? = try await WireMVCTesting.withBindValues(Doubles(value: 3), in: store) {
-            let id = try #require(WireMVCTesting.currentCorrelationID)
-            // The double is in the store under the bound id for the duration of the closure.
-            #expect(store.value(for: id) == Doubles(value: 3))
-            return id
+        let mode = WireMVCTestMode.inProcess
+        let observed = Mutex<CorrelationID?>(nil)
+        try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: OKHandler(), services: []) {
+            let id = try await WireMVCTesting.withClient(supplying: Doubles(value: 3), in: store) { client in
+                let id = try #require(client.boundCorrelationID)
+                // The double is in the store under the client's id for the duration of the closure.
+                #expect(store.value(for: id) == Doubles(value: 3))
+                return id
+            }
+            observed.withLock { $0 = id }
+            // A client obtained without a binding carries no id, so it supplies no doubles.
+            #expect(TestClient.forSuite.boundCorrelationID == nil)
         }
-
-        // Task-local cleared and store slot dropped on exit.
-        #expect(WireMVCTesting.currentCorrelationID == nil)
-        #expect(store.value(for: try #require(observed)) == nil)
+        #expect(store.value(for: try #require(observed.withLock { $0 })) == nil)
     }
 
     struct MarkerError: Error {}
 
-    @Test func withBindValuesClearsAndRemovesOnThrow() async {
+    @Test func suppliedDoublesRemoveTheSlotOnThrow() async throws {
         let store = TestBindStore<Doubles>()
         let captured = Mutex<CorrelationID?>(nil)
+        let mode = WireMVCTestMode.inProcess
 
-        await #expect(throws: MarkerError.self) {
-            try await WireMVCTesting.withBindValues(Doubles(value: 9), in: store) {
-                captured.withLock { $0 = WireMVCTesting.currentCorrelationID }
-                throw MarkerError()
+        try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: OKHandler(), services: []) {
+            await #expect(throws: MarkerError.self) {
+                try await WireMVCTesting.withClient(supplying: Doubles(value: 9), in: store) { client in
+                    captured.withLock { $0 = client.boundCorrelationID }
+                    throw MarkerError()
+                }
             }
         }
 
-        // `defer` ran despite the throw: task-local restored, store slot dropped.
-        #expect(WireMVCTesting.currentCorrelationID == nil)
+        // `defer` ran despite the throw: the store slot was dropped.
         let id = captured.withLock { $0 }
         #expect(id != nil)
         #expect(store.value(for: id!) == nil)
@@ -68,22 +94,27 @@ private struct Doubles: Sendable, Equatable {
 
     @Test func concurrentClosuresGetDistinctIDsAndIsolatedSlots() async throws {
         let store = TestBindStore<Doubles>()
+        let mode = WireMVCTestMode.inProcess
+        let results = Mutex<[(CorrelationID, Doubles?)]>([])
 
-        async let first = WireMVCTesting.withBindValues(Doubles(value: 100), in: store) {
-            () -> (CorrelationID, Doubles?) in
-            let id = try #require(WireMVCTesting.currentCorrelationID)
-            try await Task.sleep(for: .milliseconds(20))
-            return (id, store.value(for: id))
+        try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: OKHandler(), services: []) {
+            async let first = WireMVCTesting.withClient(supplying: Doubles(value: 100), in: store) {
+                (client: TestClient) -> (CorrelationID, Doubles?) in
+                let id = try #require(client.boundCorrelationID)
+                try await Task.sleep(for: .milliseconds(20))
+                return (id, store.value(for: id))
+            }
+            async let second = WireMVCTesting.withClient(supplying: Doubles(value: 200), in: store) {
+                (client: TestClient) -> (CorrelationID, Doubles?) in
+                let id = try #require(client.boundCorrelationID)
+                try await Task.sleep(for: .milliseconds(20))
+                return (id, store.value(for: id))
+            }
+            let a = try await first
+            let b = try await second
+            results.withLock { $0 = [a, b] }
         }
-        async let second = WireMVCTesting.withBindValues(Doubles(value: 200), in: store) {
-            () -> (CorrelationID, Doubles?) in
-            let id = try #require(WireMVCTesting.currentCorrelationID)
-            try await Task.sleep(for: .milliseconds(20))
-            return (id, store.value(for: id))
-        }
-
-        let (idA, valueA) = try await first
-        let (idB, valueB) = try await second
+        let ((idA, valueA), (idB, valueB)) = (results.withLock { $0 }[0], results.withLock { $0 }[1])
 
         // Distinct ids and each closure reads back only its own double.
         #expect(idA != idB)
@@ -105,22 +136,25 @@ private struct Doubles: Sendable, Equatable {
 }
 
 @Suite struct TestClientHeaderTests {
-    @Test func stampsHeaderInsideClosureOmitsOutside() async throws {
-        let client = TestClient(host: "127.0.0.1", port: 8080)
+    /// The loopback transport's half of the stamping rule: the header is present exactly when the *client*
+    /// carries an id, not when the call happens to sit inside a closure.
+    @Test func stampsHeaderWhenTheClientCarriesAnID() {
+        let unbound = TestClient(host: "127.0.0.1", port: 8080)
+        #expect(
+            unbound.makeRequest("GET", "/todos", body: nil, headers: [:])
+                .value(forHTTPHeaderField: wireMVCTestBindsHeader) == nil
+        )
 
-        // Outside a `withBindValues` closure — no header.
-        let outside = client.makeRequest("GET", "/todos", body: nil, headers: [:])
-        #expect(outside.value(forHTTPHeaderField: wireMVCTestBindsHeader) == nil)
+        let id = CorrelationID.mint()
+        #expect(
+            unbound.bound(to: id).makeRequest("GET", "/todos", body: nil, headers: [:])
+                .value(forHTTPHeaderField: wireMVCTestBindsHeader) == id.rawValue.uuidString
+        )
 
-        let store = TestBindStore<Doubles>()
-        try await WireMVCTesting.withBindValues(Doubles(value: 1), in: store) {
-            let id = try #require(WireMVCTesting.currentCorrelationID)
-            let inside = client.makeRequest("GET", "/todos", body: nil, headers: [:])
-            #expect(inside.value(forHTTPHeaderField: wireMVCTestBindsHeader) == id.rawValue.uuidString)
-        }
-
-        // Back outside — no header again.
-        let after = client.makeRequest("GET", "/todos", body: nil, headers: [:])
-        #expect(after.value(forHTTPHeaderField: wireMVCTestBindsHeader) == nil)
+        // The original is untouched — binding produces a new client.
+        #expect(
+            unbound.makeRequest("GET", "/todos", body: nil, headers: [:])
+                .value(forHTTPHeaderField: wireMVCTestBindsHeader) == nil
+        )
     }
 }

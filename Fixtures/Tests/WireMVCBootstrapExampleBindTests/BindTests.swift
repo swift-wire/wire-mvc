@@ -6,7 +6,7 @@ import WireMVCTesting
 // H2.2b gate — the keyed test harness end to end over real HTTP. `@Suite(.wiremvc(NoteTestBinds.mockBackend, .swiftHttpServer))`
 // stands the app up on a harness-owned server bound to an ephemeral loopback port — the app's own
 // `createServer()` is not involved — and parks the variant contributor proxies for the key; each
-// test supplies its per-request mocks with `withBindValues(<Controller>Doubles(...))` — one overload per
+// test supplies its per-request mocks with `withClient(supplying: <Controller>Doubles(...))` — one overload per
 // routed controller, each taking only the slots that controller reaches. The key carries a by-type
 // `@BindType(NoteBackend.self, …)` slot AND a keyed `@BindType(PrefsKeys.primary, …)` slot, but no test names
 // both: `/notes/{id}` supplies the by-type mock alone, `/prefs/{id}` the keyed one alone, and `/ping` supplies
@@ -23,7 +23,7 @@ struct BindTests {
     /// and the exact instance the test holds recorded the call (reference identity via its recorded state).
     @Test func suppliedMockIsObservedOverHTTP() async throws {
         let mock = MockNoteBackend()
-        try await withBindValues(NotesControllerDoubles(noteBackend: mock)) { notes in
+        try await withClient(supplying: NotesControllerDoubles(noteBackend: mock)) { notes in
             let note = try await notes.note(id: "x")
             #expect(note.value == "stamped:mock:x")
         }
@@ -41,7 +41,7 @@ struct BindTests {
     /// call (before the chain forwards) and then the handler's `summary:x` call.
     @Test func appScopedTestScopableRouteServesMockSeedlessly() async throws {
         let mock = MockNoteBackend()
-        try await withBindValues(SummaryControllerDoubles(noteBackend: mock)) { summary in
+        try await withClient(supplying: SummaryControllerDoubles(noteBackend: mock)) { summary in
             let note = try await summary.summary(id: "x")
             #expect(note.value == "mock:summary:x")
         }
@@ -58,7 +58,7 @@ struct BindTests {
     /// then the handler's `audited:x`.
     @Test func seedScopedRouteWithMockConsumingMiddlewareServesMock() async throws {
         let mock = MockNoteBackend()
-        try await withBindValues(AuditedControllerDoubles(noteBackend: mock)) { audited in
+        try await withClient(supplying: AuditedControllerDoubles(noteBackend: mock)) { audited in
             let note = try await audited.audited(id: "x")
             #expect(note.value == "mock:audited:x")
         }
@@ -66,13 +66,13 @@ struct BindTests {
     }
 
     /// The KEYED `@BindType(PrefsKeys.primary, …)` slot form: `PrefsController` injects the keyed binding
-    /// (`@Inject(PrefsKeys.primary) var prefs`). `withBindValues` supplies the keyed doubles field WireGen
+    /// (`@Inject(PrefsKeys.primary) var prefs`). `withClient(supplying:)` supplies the keyed doubles field WireGen
     /// names — `prefsBackendKeyedPrefsKeysPrimary` — and `GET /prefs/x` returns the mock's `mock-pref:x`, the
     /// exact instance recording the call. (Both slots share the one key, so a throwaway note mock rides along;
     /// isolating keyed vs by-type into separate suites needs multi-key.)
     @Test func keyedBindTypeSlotThreadsMockOverHTTP() async throws {
         let mock = MockPrefsBackend()
-        try await withBindValues(PrefsControllerDoubles(prefsBackendKeyedPrefsKeysPrimary: mock)) { prefs in
+        try await withClient(supplying: PrefsControllerDoubles(prefsBackendKeyedPrefsKeysPrimary: mock)) { prefs in
             let note = try await prefs.read(id: "x")
             #expect(note.value == "mock-pref:x")
         }
@@ -86,7 +86,7 @@ struct BindTests {
     /// (`mock:init`), and the exact supplied instance recorded that init-time `note("init")` call.
     @Test func cascadeMockThreadsThroughScopableSingletonInit() async throws {
         let mock = MockNoteBackend()
-        try await withBindValues(AccountControllerDoubles(noteBackend: mock)) { account in
+        try await withClient(supplying: AccountControllerDoubles(noteBackend: mock)) { account in
             let note = try await account.account(id: "x")
             #expect(note.value == "mock:init")
         }
@@ -101,7 +101,7 @@ struct BindTests {
     /// `GET /cart/x` returns the mock's init-read value; the exact instance recorded the init call.
     @Test func level2TransitiveRouteThreadsMockWithNoMark() async throws {
         let mock = MockNoteBackend()
-        try await withBindValues(CartControllerDoubles(noteBackend: mock)) { cart in
+        try await withClient(supplying: CartControllerDoubles(noteBackend: mock)) { cart in
             let note = try await cart.cart(id: "x")
             #expect(note.value == "mock:init")
         }
@@ -114,7 +114,7 @@ struct BindTests {
     /// injects nothing mocked, so its doubles struct is empty: the test supplies `LoggedControllerDoubles()`
     /// and never constructs a mock.
     @Test func factoryCarryingRouteEntersAndServes() async throws {
-        try await withBindValues(LoggedControllerDoubles()) { logged in
+        try await withClient(supplying: LoggedControllerDoubles()) { logged in
             let note = try await logged.logged()
             #expect(note.value == "logged")
         }
@@ -125,40 +125,44 @@ struct BindTests {
     /// the request to correlate — but what it supplies is now `PingControllerDoubles()`, naming no mock. This
     /// is the over-specification per-controller doubles exists to remove.
     @Test func mockIgnoringRouteServesUnderWithBindValues() async throws {
-        try await withBindValues(PingControllerDoubles()) { ping in
+        try await withClient(supplying: PingControllerDoubles()) { ping in
             let note = try await ping.ping()
             #expect(note.value == "pong")
         }
     }
 
-    /// The uniform rule survives per-controller doubles: a request to `/ping` WITHOUT `withBindValues` is an
+    /// The uniform rule survives per-controller doubles: a request to `/ping` WITHOUT supplied doubles is an
     /// explicit 500, even though the doubles it would supply are empty. The 500 names the controller whose
-    /// doubles are missing, so the message says which `withBindValues` to add.
+    /// doubles are missing, so the message says which `withClient(supplying:)` to add.
     @Test func mockIgnoringRouteWithoutDoublesIs500() async throws {
-        let response = try await TestClient.current.get("/ping/")
-        #expect(response.status == 500)
+        try await withClient(for: PingControllerClient.self) { ping in
+            let error = try await #require(throws: WireMVCRouteError.self) { try await ping.ping() }
+            #expect(error.status == .internalServerError)
+        }
     }
 
     /// The keyed side of the shared-route coexistence check (see `KeylessCoexistTests`): under the keyed
-    /// suite, `withBindValues` + `GET /notes/z` resolves the mock — while the parallel keyless suite serves
+    /// suite, supplied doubles + `GET /notes/z` resolves the mock — while the parallel keyless suite serves
     /// the real backend on the very same route. The two don't cross because the variant proxy rides only the
     /// keyed suite's serve task tree.
     @Test func keyedSuiteServesMockOnSharedRoute() async throws {
         let mock = MockNoteBackend()
-        try await withBindValues(NotesControllerDoubles(noteBackend: mock)) { notes in
+        try await withClient(supplying: NotesControllerDoubles(noteBackend: mock)) { notes in
             let note = try await notes.note(id: "z")
             #expect(note.value == "stamped:mock:z")
         }
         #expect(mock.recordedNotes == ["z"])
     }
 
-    /// A request reaching a keyed route without `withBindValues` — no supplied doubles — is an explicit 500
+    /// A request reaching a keyed route through `withClient(for:)` — no supplied doubles — is an explicit 500
     /// under the keyed suite (the decided behaviour), not a silent fall-through to the real backend. Runs in
     /// the parallel suite alongside bound requests: an unbound, header-less request must still 500 while other
     /// tests hold live doubles in the store.
     @Test func missingDoublesIsExplicit500() async throws {
-        let response = try await TestClient.current.get("/notes/y")
-        #expect(response.status == 500)
+        try await withClient(for: NotesControllerClient.self) { notes in
+            let error = try await #require(throws: WireMVCRouteError.self) { try await notes.note(id: "y") }
+            #expect(error.status == .internalServerError)
+        }
     }
 
     /// The core isolation guarantee, under forced overlap: two differently-mocked requests are held
@@ -175,7 +179,7 @@ struct BindTests {
                     for tag in ["alpha", "beta"] {
                         requests.addTask {
                             let mock = MockNoteBackend(onNote: { await barrier.arrive() })
-                            try await withBindValues(NotesControllerDoubles(noteBackend: mock)) { notes in
+                            try await withClient(supplying: NotesControllerDoubles(noteBackend: mock)) { notes in
                                 let note = try await notes.note(id: tag)
                                 #expect(note.value == "stamped:mock:\(tag)")
                             }
@@ -204,7 +208,53 @@ struct BindTests {
             while (try? await group.next()) != nil {}  // drain the cancelled guard, swallowing its cancellation
         }
     }
+
+    /// A **cross-controller flow**: doubles are per controller, so a test driving two controllers nests one
+    /// block per controller — and both clients must keep working inside the innermost block. Each client
+    /// carries its own correlation id, so `notes` still reaches the notes store from inside the prefs block
+    /// and the nesting needs no coordination. Under an ambient id the outer store would have been keyed by an
+    /// id the inner block's requests no longer carried, and `notes.note` would 500 while telling the test to
+    /// wrap a call it had already wrapped. Each controller sees only its own mock.
+    @Test func crossControllerFlowDrivesBothClients() async throws {
+        let noteMock = MockNoteBackend()
+        let prefsMock = MockPrefsBackend()
+        try await withClient(supplying: NotesControllerDoubles(noteBackend: noteMock)) { notes in
+            try await withClient(supplying: PrefsControllerDoubles(prefsBackendKeyedPrefsKeysPrimary: prefsMock)) {
+                prefs in
+                let pref = try await prefs.read(id: "p")
+                #expect(pref.value == "mock-pref:p")
+                // The OUTER controller's client, driven from inside the inner block.
+                let note = try await notes.note(id: "n")
+                #expect(note.value == "stamped:mock:n")
+            }
+            // Still usable after the inner block exits — its restore didn't drop this block's slot.
+            let after = try await notes.note(id: "after")
+            #expect(after.value == "stamped:mock:after")
+        }
+        #expect(noteMock.recordedNotes == ["n", "after"])
+        #expect(prefsMock.recordedPrefs == ["p"])
+    }
+    /// Two bindings of the **same** controller, nested. Each client is a handle on its own binding — the id
+    /// rides the client, not an ambient task-local — so `notes1` still resolves to the outer mock from inside
+    /// the inner block. Under an ambient id both would have resolved to the innermost binding, making the two
+    /// parameters indistinguishable and `notes1` a lie.
+    @Test func nestedBindingsOfOneControllerStayDistinct() async throws {
+        let outerMock = MockNoteBackend()
+        let innerMock = MockNoteBackend()
+        try await withClient(supplying: NotesControllerDoubles(noteBackend: outerMock)) { notes1 in
+            try await withClient(supplying: NotesControllerDoubles(noteBackend: innerMock)) { notes2 in
+                let viaOuter = try await notes1.note(id: "outer")
+                #expect(viaOuter.value == "stamped:mock:outer")
+                let viaInner = try await notes2.note(id: "inner")
+                #expect(viaInner.value == "stamped:mock:inner")
+            }
+        }
+        #expect(outerMock.recordedNotes == ["outer"])
+        #expect(innerMock.recordedNotes == ["inner"])
+    }
+
 }
 
 /// The interleaving guard's timeout — thrown to unwind the suite when the two requests never rendezvous.
-private struct BarrierTimedOut: Error {}
+private struct BarrierTimedOut: Error {
+}
