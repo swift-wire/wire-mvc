@@ -219,7 +219,8 @@ struct BindTests {
         let noteMock = MockNoteBackend()
         let prefsMock = MockPrefsBackend()
         try await withClient(supplying: NotesControllerDoubles(noteBackend: noteMock)) { notes in
-            try await withClient(supplying: PrefsControllerDoubles(prefsBackendKeyedPrefsKeysPrimary: prefsMock)) { prefs in
+            try await withClient(supplying: PrefsControllerDoubles(prefsBackendKeyedPrefsKeysPrimary: prefsMock)) {
+                prefs in
                 let pref = try await prefs.read(id: "p")
                 #expect(pref.value == "mock-pref:p")
                 // The OUTER controller's client, driven from inside the inner block.
