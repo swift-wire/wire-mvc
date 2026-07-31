@@ -66,7 +66,7 @@ struct BindTests {
     }
 
     /// The KEYED `@BindType(PrefsKeys.primary, …)` slot form: `PrefsController` injects the keyed binding
-    /// (`@Inject(PrefsKeys.primary) var prefs`). `withBindValues` supplies the keyed doubles field WireGen
+    /// (`@Inject(PrefsKeys.primary) var prefs`). `withClient(supplying:)` supplies the keyed doubles field WireGen
     /// names — `prefsBackendKeyedPrefsKeysPrimary` — and `GET /prefs/x` returns the mock's `mock-pref:x`, the
     /// exact instance recording the call. (Both slots share the one key, so a throwaway note mock rides along;
     /// isolating keyed vs by-type into separate suites needs multi-key.)
@@ -131,9 +131,9 @@ struct BindTests {
         }
     }
 
-    /// The uniform rule survives per-controller doubles: a request to `/ping` WITHOUT `withBindValues` is an
+    /// The uniform rule survives per-controller doubles: a request to `/ping` WITHOUT supplied doubles is an
     /// explicit 500, even though the doubles it would supply are empty. The 500 names the controller whose
-    /// doubles are missing, so the message says which `withBindValues` to add.
+    /// doubles are missing, so the message says which `withClient(supplying:)` to add.
     @Test func mockIgnoringRouteWithoutDoublesIs500() async throws {
         try await withClient(for: PingControllerClient.self) { ping in
             let error = try await #require(throws: WireMVCRouteError.self) { try await ping.ping() }
@@ -142,7 +142,7 @@ struct BindTests {
     }
 
     /// The keyed side of the shared-route coexistence check (see `KeylessCoexistTests`): under the keyed
-    /// suite, `withBindValues` + `GET /notes/z` resolves the mock — while the parallel keyless suite serves
+    /// suite, supplied doubles + `GET /notes/z` resolves the mock — while the parallel keyless suite serves
     /// the real backend on the very same route. The two don't cross because the variant proxy rides only the
     /// keyed suite's serve task tree.
     @Test func keyedSuiteServesMockOnSharedRoute() async throws {
@@ -154,7 +154,7 @@ struct BindTests {
         #expect(mock.recordedNotes == ["z"])
     }
 
-    /// A request reaching a keyed route without `withBindValues` — no supplied doubles — is an explicit 500
+    /// A request reaching a keyed route through `withClient(for:)` — no supplied doubles — is an explicit 500
     /// under the keyed suite (the decided behaviour), not a silent fall-through to the real backend. Runs in
     /// the parallel suite alongside bound requests: an unbound, header-less request must still 500 while other
     /// tests hold live doubles in the store.
@@ -210,11 +210,11 @@ struct BindTests {
     }
 
     /// A **cross-controller flow**: doubles are per controller, so a test driving two controllers nests one
-    /// block per controller — and both clients must keep working inside the innermost block. That holds only
-    /// because a nested `withBindValues` reuses the ambient correlation id instead of minting a fresh one; a
-    /// fresh id would rebind the task-local and leave the OUTER controller's store — keyed by the outer id —
-    /// answering nothing, so `notes.note` here would 500 while telling the test to wrap a call it had already
-    /// wrapped. Each controller sees only its own mock.
+    /// block per controller — and both clients must keep working inside the innermost block. Each client
+    /// carries its own correlation id, so `notes` still reaches the notes store from inside the prefs block
+    /// and the nesting needs no coordination. Under an ambient id the outer store would have been keyed by an
+    /// id the inner block's requests no longer carried, and `notes.note` would 500 while telling the test to
+    /// wrap a call it had already wrapped. Each controller sees only its own mock.
     @Test func crossControllerFlowDrivesBothClients() async throws {
         let noteMock = MockNoteBackend()
         let prefsMock = MockPrefsBackend()

@@ -8,7 +8,7 @@ import FoundationNetworking
 // The typed HTTP client a suite's tests drive, over whichever transport the suite's ``WireMVCTestMode``
 // stood up. The surface is the small verb set a controller test needs — `get`/`post`/`patch`/`delete` —
 // each returning a `TestResponse` that exposes the status, the raw body text, and typed JSON decoding. A
-// test reaches the running suite's client through `withBindValues` (bound to that block's doubles) or
+// test reaches the running suite's client through `withClient(supplying:)` (bound to that block's doubles) or
 // `withClient` (bound to none) — never ambiently, so every client states which binding it carries.
 //
 // The verbs are transport-agnostic: they build a method/path/body/headers triple and hand it to the
@@ -31,7 +31,7 @@ public struct TestClient: Sendable {
     let transport: Transport
 
     /// The correlation id this client was handed when it was created, if any — a client obtained from a
-    /// `withBindValues` body carries that block's id, so requests it drives resolve to *that* block's doubles
+    /// `withClient(supplying:)` body carries that block's id, so requests it drives resolve to *that* block's doubles
     /// no matter where they are called from. `nil` for a client from `withClient`, which supplies no doubles.
     let boundCorrelationID: CorrelationID?
 
@@ -63,16 +63,16 @@ public struct TestClient: Sendable {
     /// read through ``forSuite``; `nil` outside such a suite.
     @TaskLocal static var currentStorage: TestClient?
 
-    /// The running suite's client, for the framework's `withBindValues` / `withClient` entry points to hand
+    /// The running suite's client, for the framework's `withClient` entry points to hand
     /// out. Deliberately **not** public: a client is only meaningful with a binding decision attached — with
-    /// a correlation id from `withBindValues`, or explicitly without one from `withClient` — so tests reach
+    /// a correlation id from `withClient(supplying:)`, or explicitly without one from `withClient(for:)` — so tests reach
     /// it through those rather than ambiently. Available only inside a suite the trait scopes; outside one
     /// there is no app to reach, so this precondition-fails.
     static var forSuite: TestClient {
         guard let client = currentStorage else {
             preconditionFailure(
                 "A WireMVC test client is only available inside an @Suite(.wiremvc(…)) suite — "
-                    + "reach it through withBindValues(…) or withClient(…)"
+                    + "reach it through withClient(supplying:) or withClient(for:)"
             )
         }
         return client
@@ -152,7 +152,7 @@ public struct TestClient: Sendable {
     }
 
     /// The correlation header value for this client's requests, or `nil` when it carries no binding. A
-    /// client from a `withBindValues` body is pinned to that block's id; one from `withClient` is pinned to
+    /// client from a `withClient(supplying:)` body is pinned to that block's id; one from `withClient(for:)` is pinned to
     /// nothing and so supplies no doubles. Stamping the id lets the dispatch pull that block's doubles from
     /// the store. Shared by both transports so the keyed harness works in either mode.
     private var correlationHeaderValue: String? {

@@ -2,7 +2,7 @@ import SwiftParser
 import SwiftSyntax
 
 // The keyed test harness's generated module-scope artifacts (H2.2b): the per-key doubles `TestBindStore`, the
-// typed `withBindValues`, and the `.wiremvc(_:)` suite-trait factory. The factory bootstraps the key's
+// typed `withClient(supplying:)`, and the `.wiremvc(_:)` suite-trait factory. The factory bootstraps the key's
 // **variant app graph** (`Wire.bootstrap<Variant>()` — production minus the mocked/lifted bindings and the
 // scoped-subject proxies, so a mocked eager `@Singleton`'s `init` never runs under the keyed suite), then
 // hand-registers each subject's routes from its variant proxy's `RouteContributor` witness (the variant
@@ -34,7 +34,7 @@ func keyedScopeEntry(for controller: ControllerDeclaration, key: DiscoveredTesti
 }
 
 /// The keyed test harness's module-scope statics (H2.2b): the per-key namespace enum holding the doubles
-/// ``TestBindStore``, plus the typed `withBindValues` the test calls. Emitted into the test module beside the
+/// ``TestBindStore``, plus the typed `withClient(supplying:)` the test calls. Emitted into the test module beside the
 /// `.wiremvc(_:)` factory, referencing the `_<Key>Doubles` type WireGen emits in the same module. The store
 /// correlates each request's doubles (by the `X-WireMVC-Test-Binds` header); the variant witness reads it per
 /// request.

@@ -5,7 +5,7 @@ import SwiftSyntax
 // `struct <Name>Client` with one method per typed route — parameters taken from the route's
 // `@Path`/`@Query`/`@Header`/`@JSONBody` bindings, return taken from its `@JSONResponse` type.
 //
-// The client is handed to the body of that controller's `withBindValues` rather than reached through a
+// The client is handed to the body of that controller's `withClient` rather than reached through a
 // module-scope variable, so the doubles a test supplies and the routes it can call arrive together and name
 // the same controller. See `KeyedHarnessGeneration`.
 //

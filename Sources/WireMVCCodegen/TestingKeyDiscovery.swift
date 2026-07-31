@@ -5,7 +5,7 @@ import SwiftSyntax
 // metatype form `@BindType(Slot.self, Mock.self)` and the keyed form `@BindType(Slot.primary, Mock.self)`,
 // where `Slot.primary` is a `BindingKey<Slot>` (mirroring `@Provides(key)` / `@Replaces(key)`). This reads
 // them and derives the same `_<Key>Doubles` field name swift-wire's WireGen does, so the generated
-// `withBindValues(<field>:)` and doubles construction line up with WireGen's struct. The two sides must agree
+// the doubles field names line up with WireGen's struct. The two sides must agree
 // on those names blind, so both restate the identical `identifierName(forType:key:)` rule.
 //
 // The keyed form's field name needs the slot *type* (`identifierName` uses it), which the attribute doesn't
@@ -24,7 +24,7 @@ public struct TestingBindSubstitution: Sendable, Equatable {
     /// by-type name (`noteBackend`) or the keyed name (`prefsBackendKeyedPrefsKeysPrimary`).
     public let fieldName: String
     /// The concrete mock type the slot binds to (`"MockNoteBackend"`) — the doubles field's type and the
-    /// generated `withBindValues` parameter's type.
+    /// generated doubles field's type.
     public let mockType: String
 
     public init(fieldName: String, mockType: String) {
@@ -67,7 +67,7 @@ public struct KeyedScopeEntry: Sendable, Equatable {
     public let doublesStoreName: String
     public let keyReference: String
     /// The subject whose doubles this route's entry takes — names the store and the 500 message, so a test
-    /// that forgets `withBindValues` is told which controller it missed rather than which key.
+    /// that forgets to supply doubles is told which controller it missed rather than which key.
     public let subject: String
 
     public init(
@@ -291,7 +291,7 @@ func strippingAny(_ type: String) -> String {
 // MARK: - WireGen doubles-field naming (replicated to agree blind)
 
 /// The `_<Key>Doubles` field name for a slot — a verbatim replica of WireGen's `identifierName(forType:key:)`
-/// so the generated `withBindValues`/doubles construction matches WireGen's struct. By-type:
+/// so the generated doubles field names match WireGen's struct. By-type:
 /// `lowerCamel(sanitize(type))` (`NoteBackend` → `noteBackend`). Keyed: that, plus a `Keyed` sentinel and the
 /// upper-camel sanitised key (`(PrefsBackend, "PrefsKeys.primary")` → `prefsBackendKeyedPrefsKeysPrimary`).
 func wireGenIdentifierName(forType type: String, key: String?) -> String {

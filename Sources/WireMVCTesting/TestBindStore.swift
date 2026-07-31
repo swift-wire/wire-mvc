@@ -30,7 +30,7 @@ public struct CorrelationID: Sendable, Hashable {
 
 /// The per-key doubles store: a `Mutex`-guarded map from a request's ``CorrelationID`` to the concrete
 /// `Doubles` the test supplied for it. A framework generic instantiated per `TestingKey` as a generated
-/// static (the generated `_<Key>Doubles` is `Sendable`), so `withBindValues` and the request dispatch share
+/// static (the generated `_<Key>Doubles` is `Sendable`), so the supplying call and the dispatch share
 /// the exact stored type — the dispatch reads it back concretely and hands it straight to the scope-entry.
 public final class TestBindStore<Doubles: Sendable>: Sendable {
     private let slots = Mutex<[CorrelationID: Doubles]>([:])
