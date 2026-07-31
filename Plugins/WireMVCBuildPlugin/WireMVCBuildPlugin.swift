@@ -65,10 +65,23 @@ struct WireMVCBuildPlugin: BuildToolPlugin {
 
         let allInputFiles = swiftSources + dependencyGroups.flatMap(\.sources)
 
+        // Test-graph variants (`TestingKey` + `@BindType`) are emitted only for a **test** target. A variant
+        // rewrites the key's slots to read from test-supplied doubles, so emitting one for a production
+        // target would compile the variant graph — and every mock type it names — into the shipping binary.
+        // Without this flag WireGen refuses any `TestingKey` it finds, which is what keeps one out of
+        // production sources.
+        //
+        // Gated on the target's own kind, not on `testEntry` below: `testEntry` asks "does this target link
+        // WireMVCTesting", which an *executable* can also answer yes to, and that is exactly the case the
+        // gate exists to catch. The two signals agree for a real test target, and this matches the signal
+        // swift-wire's own WireBuildPlugin uses, so a consumer sees the same rule whichever plugin it applies.
+        let testingVariants = sourceModule.kind == .test ? ["--testing-variants"] : []
+
         // WireGen: graph + key checks + contributor-proxy structs. Sources grouped by module — the
         // consumer first (`--module`), then each Wire-aware dependency (`--module` / `--external-module`).
         var wireGenArguments =
-            [graphURL.path, keyChecksURL.path, "--module", sourceModule.moduleName]
+            [graphURL.path, keyChecksURL.path] + testingVariants
+            + ["--module", sourceModule.moduleName]
             + swiftSources.map(\.path)
         for group in dependencyGroups {
             let flag = group.isExternal ? "--external-module" : "--module"
@@ -90,12 +103,20 @@ struct WireMVCBuildPlugin: BuildToolPlugin {
         // (`WireMVCTestingNIOHTTPServer` for `NIOHTTPServer`) in one of its own sources. Conformance lookup
         // is module-wide, not file-scoped, so the import need not be in the generated file and the plugin
         // has nothing to discover.
+        //
+        // Sources are passed in `--module`-attributed groups (the same shape WireGen takes) so the keyed
+        // harness can reconstruct the served `TestingKey`'s `#fileID` — `Module/File.swift` — and assert that
+        // a suite passes the key this target actually serves. `--import` stays orthogonal: it names modules
+        // the *generated* code must import, which is not the same set.
         let testEntry = dependsOnWireMVCTesting(target)
-        let routeGenArguments =
+        var routeGenArguments =
             [routesURL.path]
             + (testEntry ? ["--test-entry"] : [])
             + dependencyGroups.flatMap { ["--import", $0.module] }
-            + allInputFiles.map(\.path)
+            + ["--module", sourceModule.moduleName] + swiftSources.map(\.path)
+        for group in dependencyGroups {
+            routeGenArguments += ["--module", group.module] + group.sources.map(\.path)
+        }
 
         return [
             .buildCommand(

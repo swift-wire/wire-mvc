@@ -8,7 +8,12 @@ import WireMVCCodegen
 // WireGen (which emits the structs) — the two tools, one module, the field-name handshake. Until the A3
 // cutover wires it into a build, it stands alone (spike-23 proved the two-tool orchestration).
 //
-// CLI: WireMVCRouteGen <output-path> [--test-entry] [--import <Module>]... <source-files...>
+// CLI: WireMVCRouteGen <output-path> [--test-entry] [--import <Module>]... [--module <Name>] <source-files...>
+//
+// `--module <Name>` attributes the source paths that follow it to that module, until the next `--module`.
+// Paths passed with no preceding `--module` carry no attribution, so the older flat form still works. The
+// keyed harness is the only reader: it reconstructs the served `TestingKey`'s `#fileID` (`Module/File.swift`)
+// to assert that a suite passes the key this target actually serves.
 //
 // `--test-entry` marks a test consumer (one depending on the `WireMVCTesting` product): the generated
 // `@WireMVCBootstrap` entry becomes the `.wiremvc(_:)` suite-trait factory (plus `import WireMVCTesting` and
@@ -35,6 +40,11 @@ let outputPath = arguments[1]
 var testEntry = false
 var extraImports: [String] = []
 var sourcePaths: [String] = []
+// Path → owning module, for the source paths that followed a `--module <Name>`. Only the keyed harness reads
+// it (to reconstruct the served `TestingKey`'s `#fileID`); paths passed with no preceding `--module` are
+// simply absent, which is why the flat form still works.
+var sourceModules: [String: String] = [:]
+var currentModule: String?
 let remaining = Array(arguments.dropFirst(2))
 var index = remaining.startIndex
 while index < remaining.endIndex {
@@ -50,8 +60,17 @@ while index < remaining.endIndex {
         }
         extraImports.append(remaining[next])
         index = next
+    case "--module":
+        let next = remaining.index(after: index)
+        guard next < remaining.endIndex else {
+            FileHandle.standardError.write(Data("error: --module requires a module name\n".utf8))
+            exit(1)
+        }
+        currentModule = remaining[next]
+        index = next
     default:
         sourcePaths.append(argument)
+        if let currentModule { sourceModules[argument] = currentModule }
     }
     index = remaining.index(after: index)
 }
@@ -66,7 +85,12 @@ for path in sourcePaths {
     }
 }
 
-let result = generateRouteContributors(files: files, testEntry: testEntry, extraImports: extraImports)
+let result = generateRouteContributors(
+    files: files,
+    testEntry: testEntry,
+    extraImports: extraImports,
+    sourceModules: sourceModules
+)
 
 if !result.diagnostics.isEmpty {
     for diagnostic in result.diagnostics {

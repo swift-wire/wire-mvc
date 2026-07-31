@@ -141,10 +141,15 @@ public let contributorProxyScopeEntryAccessor = "_wireEnterScope"
 /// target re-composing the app), so the extensions can name the app's `package`/`public` controllers,
 /// response types, and factories. The generated factory names no concrete server, so nothing else has to be
 /// imported for it: whatever bound a transport needs is discharged where the test writes its mode.
+/// `sourceModules` maps a source path to the module it belongs to, when the caller knows it. Only the keyed
+/// harness reads it, to reconstruct the served `TestingKey`'s `#fileID` for its identity assertion; a path
+/// absent from the map simply yields no assertion. Empty by default, so a caller that doesn't care (every
+/// test in this package) is unaffected.
 public func generateRouteContributors(
     files: [(path: String, source: String)],
     testEntry: Bool = false,
-    extraImports: [String] = []
+    extraImports: [String] = [],
+    sourceModules: [String: String] = [:]
 ) -> (source: String, diagnostics: [LocatedRouteDiagnostic]) {
     // Parse every source once, then collect (in one pass) the imports, `@Factory` template keys, bootstrap
     // declarations, and the first bootstrap's global error tier + `@NotFound` fallback — a controller in one
@@ -170,7 +175,8 @@ public func generateRouteContributors(
     // `WireMVCTesting` (`testEntry`) — the sole context the keyed factory + doubles-aware dispatch belong in.
     // One key per target: a second is an error, since only one factory is emitted for it to be served by.
     let harness: (key: DiscoveredTestingKey?, diagnostics: [LocatedRouteDiagnostic]) =
-        testEntry ? discoverTestingKeys(in: parsed) : (key: nil, diagnostics: [])
+        testEntry
+        ? discoverTestingKeys(in: parsed, sourceModules: sourceModules) : (key: nil, diagnostics: [])
     let harnessKey = harness.key
     located.append(contentsOf: harness.diagnostics)
 

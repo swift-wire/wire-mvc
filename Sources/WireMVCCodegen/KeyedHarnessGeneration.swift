@@ -174,7 +174,8 @@ func renderBootstrapKeyedTestEntry(
             notFoundRegistration: notFoundRegistration,
             factoryKeys: factoryKeys,
             bootstrapCall: "Wire.\(variantBootstrapMethodName(variantName: key.variantName))()",
-            extraRegistrations: variantRegistrations
+            extraRegistrations: variantRegistrations,
+            prologue: keyIdentityAssertion(for: key)
         ))
         }
         """
@@ -183,3 +184,32 @@ func renderBootstrapKeyedTestEntry(
 
 /// The keyed factory's local holding a subject's built variant proxy, which its routes are registered from.
 private func variantProxyLocalName(subject: String) -> String { "wireMVCVariantProxy_" + subject }
+
+/// The generated check that the `TestingKey` a suite passes is the one this factory was built for.
+///
+/// A single-key harness binds one variant graph, so the `key` argument is otherwise documentation — a suite
+/// passing a *different* key would be served this variant regardless. Within a target that can't happen
+/// (a second `TestingKey` in the composed sources is rejected by ``discoverTestingKeys(in:sourceModules:)``),
+/// but a key imported from a module whose sources were never composed is invisible to that rule and would
+/// otherwise be silently ignored — the "mysteriously wrong mock" the single-key rule exists to prevent.
+///
+/// `TestingKey`'s `init` captures its own `#fileID`/`#line` by defaulting, precisely so a generator can
+/// reconstruct the same value; both come from one source in one build, so they cannot drift. Emitted only
+/// when the declaring file's module is known — otherwise `#fileID` would be a guess, and a wrong guess would
+/// fail every suite.
+///
+/// A `precondition` rather than a diagnostic: the mismatch is only knowable with the value in hand, at suite
+/// entry, and serving the wrong graph is worse than trapping.
+func keyIdentityAssertion(for key: DiscoveredTestingKey) -> String {
+    guard let fileID = key.declarationFileID else { return "" }
+    let message =
+        "@Suite(.wiremvc(…)) was passed a TestingKey this target does not serve. This target's harness is "
+        + "built for '\(key.keyReference)' (\(fileID):\(key.declarationLine)); serving a different key's "
+        + "substitutions would need its own variant graph, which only the target declaring it emits. Pass "
+        + "\(key.keyReference), or move the suite to the target that declares the key you meant."
+    // Emitted as ONE line, ending in a newline so the factory's next statement starts cleanly. The suite
+    // factory interpolates this immediately before `try await …`, and `BasicFormat` re-indents only the
+    // first line of an interpolated block — a multi-line prologue there leaves the statements after it
+    // skewed. One line has no continuation to skew.
+    return "precondition(key == TestingKey(fileID: \"\(fileID)\", line: \(key.declarationLine)), \"\(message)\")\n"
+}

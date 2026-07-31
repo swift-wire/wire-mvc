@@ -135,6 +135,61 @@ private struct OKHandler: HTTPServerRequestHandler {
     }
 }
 
+/// The backstop behind the keyed dispatch's emission gating: doubles resolve only while a suite is serving.
+/// The generated preamble guards on ``WireMVCTesting/harnessIsActive``, so these pin the state machine it
+/// reads — a process not running a suite must never report active, and overlapping suites must not clear
+/// each other's mark.
+///
+/// Asserted on a *fresh* ``HarnessActivity`` rather than the process-global one: this target's other suites
+/// call `runSuite`, which holds the global mark, and they run in parallel — so absolute assertions on
+/// `WireMVCTesting.harnessIsActive` would be flaky by construction. The global is one instance of this
+/// mechanism; `theGlobalMarkIsHeldInsideWithActiveHarness` covers the wiring.
+@Suite struct HarnessActivityTests {
+    @Test func inactiveUntilABodyIsHeld() {
+        #expect(HarnessActivity().isActive == false)
+    }
+
+    @Test func activeOnlyForTheDurationOfTheBody() async throws {
+        let activity = HarnessActivity()
+        try await activity.withActive {
+            #expect(activity.isActive)
+        }
+        #expect(activity.isActive == false)
+    }
+
+    /// Swift Testing runs suites in parallel, so two can overlap. The inner one exiting must not clear the
+    /// outer one's mark — that would leave a still-serving suite unable to resolve its own doubles.
+    @Test func overlappingHoldsEachKeepTheMark() async throws {
+        let activity = HarnessActivity()
+        try await activity.withActive {
+            try await activity.withActive {
+                #expect(activity.isActive)
+            }
+            #expect(activity.isActive)  // the inner exit must not clear the outer hold
+        }
+        #expect(activity.isActive == false)
+    }
+
+    /// A suite that throws still clears its hold — balanced in a `defer`, so a failing suite can't leave the
+    /// process permanently marked active (which would keep the dispatch resolving doubles afterwards).
+    @Test func aThrowingBodyStillClearsItsHold() async {
+        struct Boom: Error {}
+        let activity = HarnessActivity()
+        await #expect(throws: Boom.self) {
+            try await activity.withActive { throw Boom() }
+        }
+        #expect(activity.isActive == false)
+    }
+
+    /// The global is wired to the mechanism — race-free because it only ever asserts `true` *inside* a hold,
+    /// which a concurrently-running suite cannot falsify.
+    @Test func theGlobalMarkIsHeldInsideWithActiveHarness() async throws {
+        try await WireMVCTesting.withActiveHarness {
+            #expect(WireMVCTesting.harnessIsActive)
+        }
+    }
+}
+
 @Suite struct TestClientHeaderTests {
     /// The loopback transport's half of the stamping rule: the header is present exactly when the *client*
     /// carries an id, not when the call happens to sit inside a closure.
