@@ -201,6 +201,20 @@ public macro Middleware(_ key: FactoryKey) =
 public macro ErrorResponse<E: Error>(_ type: E.Type, _ status: HTTPResponse.Status) =
     #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
 
+/// The body-returning form — `@ErrorResponse(E.self, .notFound, { e in Problem(…) })`. The closure's
+/// value is encoded as the JSON body of a response with that status.
+///
+/// It is the pair form's counterpart: `(E.self, .status)` answers with a status alone, which is all a
+/// response carrying no body can say. Which of the two is right is not always the author's choice — an
+/// adapter that reads an OpenAPI document knows whether that status declares a body, and can require the
+/// matching form.
+@attached(peer)
+public macro ErrorResponse<E: Error, Body: Encodable>(
+    _ type: E.Type,
+    _ status: HTTPResponse.Status,
+    _ body: (E) throws -> Body
+) = #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
+
 /// The inline-closure form — `@ErrorResponse({ (e: E) in … })`. `E` (including `Swift.Error` for the
 /// catch-all) is the matched type, read from the closure's annotated parameter.
 @attached(peer)
