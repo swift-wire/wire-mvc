@@ -29,6 +29,19 @@ struct RouteBlockGenerator {
     /// binding-error built-in. Empty for the `@Controller` macro path (which has no whole-graph view of
     /// the Bootstrap); populated by `WireMVCRouteGen`, which reads the Bootstrap once.
     let globalErrorMappings: [ErrorMapping]
+    /// The controller-scope `@Coding(T.self)` type, if it declares one. A route's own `@Coding` beats it,
+    /// and the app's — passed into the witness as `wireMVCAppCoding` — is what both fall back to.
+    var controllerCoding: String?
+    /// The route currently being rendered, if it declares its own `@Coding`.
+    var routeCoding: String?
+
+    /// Which coding settings this route encodes and decodes with: route, then controller, then the app's,
+    /// which the composition root resolved and passed in. Innermost wins, as `@Middleware` and
+    /// `@ErrorResponse` do.
+    var codingExpression: String {
+        guard let source = routeCoding ?? controllerCoding else { return "wireMVCAppCoding" }
+        return "self.\(dependencyPropertyName(forType: source)).wireMVCCoding"
+    }
     /// Set for a `@Scoped(seed:)` controller (the seed type): its routes construct the controller fresh
     /// per request from the proxy's `_wireEnterScope` thunk, rather than calling the held `_wireSubject`.
     /// `nil` for an app-scoped (`@Singleton`) controller. Set at the start of `routeBlocks`.
@@ -136,9 +149,11 @@ struct RouteBlockGenerator {
         let controllerMiddleware = middlewareConstructions(from: controller.attributes)
         // Controller-scope `@ErrorResponse` covers every route, consulted after each route's own.
         let controllerErrorMappings = errorMappings(from: controller.attributes, scopeLabel: "controller")
+        controllerCoding = codingSource(from: controller.attributes)
         var blocks: [String] = []
         for function in controller.functions {
             guard let verb = verb(from: function.attributes) else { continue }  // no verb → helper, skip
+            routeCoding = codingSource(from: function.attributes)
             if let block = routeBlock(
                 function: function,
                 verb: verb,
@@ -568,7 +583,9 @@ extension RouteBlockGenerator {
     ) -> String {
         let type = param.type.trimmedDescription
         let bodyArgument = hasBody ? "requestBody" : "nil"
-        let args = "name: \"\(name)\", request: request, pathParameters: pathParameters, body: \(bodyArgument)"
+        let args =
+            "name: \"\(name)\", request: request, pathParameters: pathParameters, body: \(bodyArgument), "
+            + "coding: \(codingExpression)"
         if type.hasSuffix("?") {
             let underlying = String(type.dropLast())
             return "try await \(binding.wrapper)<\(underlying)>.bindOptional(\(args))"
@@ -591,7 +608,7 @@ extension RouteBlockGenerator {
                 diagnostics.append(RouteCodegenDiagnostic(.jsonResponseOnVoid(route), at: function.name))
                 return nil
             }
-            return "wireMVCOutcome = try WireMVCResponse.json(\(call), status: \(status))"
+            return "wireMVCOutcome = try WireMVCResponse.json(\(call), status: \(status), coding: \(codingExpression))"
         }
         if let status = responseStatus(from: attributes) {
             guard !returnsValue else {
@@ -753,6 +770,17 @@ public struct ErrorMapping {
 }
 
 extension RouteBlockGenerator {
+    /// The `@Coding(T.self)` source named at one scope, if any.
+    func codingSource(from attributes: AttributeListSyntax) -> String? {
+        for case let .attribute(attr) in attributes where attr.attributeName.trimmedDescription == "Coding" {
+            guard let arguments = attr.arguments?.as(LabeledExprListSyntax.self), let first = arguments.first
+            else { continue }
+            let written = first.expression.trimmedDescription
+            return written.hasSuffix(".self") ? String(written.dropLast(".self".count)) : written
+        }
+        return nil
+    }
+
     /// Read the `@ErrorResponse` entries on one scope's attributes (controller or route), in source
     /// order, resolving a static-method reference against the controller declaration. Appends the
     /// duplicate-type and catch-all-ordering diagnostics.

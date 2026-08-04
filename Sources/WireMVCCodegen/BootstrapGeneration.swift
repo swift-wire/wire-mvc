@@ -67,6 +67,15 @@ func bootstrapBuildLines(
 ) -> String {
     let property = graphBindingPropertyName(bootstrap.name)
     let proxyProperty = graphBindingPropertyName(globalMiddlewareProxyTypeName(bootstrap.name))
+    // The app-wide tier. `@Coding` on the Bootstrap is lifted onto the same keyless proxy the global
+    // `@Middleware` factories are, so the composition root can read it — and unlike middleware, which
+    // wraps the finished router once, coding has to be handed *inward* to every witness, because it is
+    // consumed at binding and encoding sites inside each route.
+    let appCoding =
+        RouteBlockGenerator(subjectAccessor: "", factoryKeys: [], globalErrorMappings: [])
+        .codingSource(from: bootstrap.attributes)
+        .map { "\(proxyProperty).\(dependencyPropertyName(forType: $0)).wireMVCCoding" }
+        ?? "WireMVCCoding.default"
     let mountIntrospection = introspectionMount(
         bootstrap: bootstrap,
         factoryKeys: factoryKeys,
@@ -91,7 +100,7 @@ func bootstrapBuildLines(
         let bootstrap = graph.\(property)
         \(transport.serverLine(bootstrap: bootstrap))
         var builder = bootstrap.createRouteBuilder(for: server)
-        let wireMVCServices = try WireMVC.apply(graph, to: &builder)
+        let wireMVCServices = try WireMVC.apply(graph, to: &builder, coding: \(appCoding))
         \(registrations)
         let handler = builder.finalize()
         let wireMVCServed = graph.\(proxyProperty).wrapGlobalMiddleware(handler)

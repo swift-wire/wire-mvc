@@ -42,7 +42,8 @@ public enum WireMVC {
     @discardableResult
     public static func apply<Builder: HTTPServerRouteBuilder>(
         _ graph: some WireMVCComposable,
-        to builder: inout Builder
+        to builder: inout Builder,
+        coding: WireMVCCoding = .default
     ) throws -> [any Service]
     where
         Builder.RequestContext: ~Copyable,
@@ -51,7 +52,7 @@ public enum WireMVC {
         Builder.ResponseSender.Writer: ~Copyable
     {
         for contributor in graph.routeContributors {
-            try contributor.registerWireRoutes(on: &builder)
+            try contributor.registerWireRoutes(on: &builder, coding: coding)
         }
         return graph.services
     }

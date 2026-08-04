@@ -159,7 +159,7 @@ func renderBootstrapKeyedTestEntry(
         let local = variantProxyLocalName(subject: subject)
         return """
             let \(local) = Wire.\(facade)(wireGraph: graph)
-            try \(local).registerWireRoutes(on: &builder)
+            try \(local).registerWireRoutes(on: &builder, coding: wireMVCAppCoding)
             """
     }
     .joined(separator: "\n")

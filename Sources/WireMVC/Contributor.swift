@@ -13,7 +13,17 @@ public import Wire
 /// `Sendable` because a controller is an app-scoped singleton whose route handlers run
 /// concurrently per request.
 public protocol RouteContributor: Sendable {
-    func registerWireRoutes<Builder: HTTPServerRouteBuilder>(on builder: inout Builder) throws
+    /// - Parameter coding: the app-wide coding settings, resolved at the composition root and passed
+    ///   inward. A contributor uses them unless its own `@Coding` overrides them.
+    ///
+    ///   They are passed rather than injected because they are consumed at *leaf* sites — a
+    ///   `RequestBound.bind`, a `WireMVCOutcome.json` — inside each route. Global middleware avoids this
+    ///   by wrapping the finished router once, which works only because middleware composes as a
+    ///   function of the request; coding has no such property, so it has to travel inward.
+    func registerWireRoutes<Builder: HTTPServerRouteBuilder>(
+        on builder: inout Builder,
+        coding: WireMVCCoding
+    ) throws
     where
         Builder.RequestContext: ~Copyable,
         Builder.Reader: ~Copyable,

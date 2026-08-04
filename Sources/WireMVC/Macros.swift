@@ -33,6 +33,26 @@ public let wireMVCMiddlewareAlias = WireAdapterAnnotationV1(
     capability: .injectsFromGraph
 )
 
+/// `@Coding(X.self)` names a `CodingSource` binding whose settings this scope's routes encode and decode
+/// with — dates, and JSON options.
+///
+/// Three scopes, innermost winning: the `@WireMVCBootstrap` type sets the app's, a controller overrides it
+/// for its routes, a route for itself. The same tiering `@Middleware` and `@ErrorResponse` use, for the
+/// same reason: a policy is usually app-wide and occasionally not.
+///
+/// It reaches the generated witness through `.injectsFromGraph`, exactly as a `@Middleware(T.self)` does —
+/// the proxy gains a `_wire<T>` field and the witness reads it. That is what lets the settings come from
+/// the graph while the code that needs them (`RequestBound.bind`, `WireMVCOutcome.json`) is static.
+@attached(peer)
+public macro Coding<Source: CodingSource>(_ source: Source.Type) =
+    #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
+
+/// `@Coding` is lifted by the same capability `@Middleware` uses.
+public let wireMVCCodingAlias = WireAdapterAnnotationV1(
+    annotation: "Coding",
+    capability: .injectsFromGraph
+)
+
 /// Marks a controller: each `@Get`/`@Post`/… route is registered onto a `some HTTPServerRouteBuilder`
 /// under the optional path prefix. `@Singleton @Controller("/users")` is all an app-scoped controller
 /// needs. A **marker** (Phase A) — it expands to nothing; the route-contributor proxy is generated in
