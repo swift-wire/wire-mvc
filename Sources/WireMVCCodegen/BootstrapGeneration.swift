@@ -71,11 +71,7 @@ func bootstrapBuildLines(
     // `@Middleware` factories are, so the composition root can read it — and unlike middleware, which
     // wraps the finished router once, coding has to be handed *inward* to every witness, because it is
     // consumed at binding and encoding sites inside each route.
-    let appCoding =
-        RouteBlockGenerator(subjectAccessor: "", factoryKeys: [], globalErrorMappings: [])
-        .codingSource(from: bootstrap.attributes)
-        .map { "\(proxyProperty).\(dependencyPropertyName(forType: $0)).wireMVCCoding" }
-        ?? "WireMVCCoding.default"
+    let appCoding = bootstrapAppCodingExpression(bootstrap: bootstrap)
     let mountIntrospection = introspectionMount(
         bootstrap: bootstrap,
         factoryKeys: factoryKeys,
@@ -465,4 +461,19 @@ private final class BootstrapFinder: SyntaxVisitor {
         guard hasBootstrap, let bootstrap = ControllerDeclaration(declaration) else { return }
         declarations.append(bootstrap)
     }
+}
+
+/// The app-wide coding the composition root resolves and hands to every contributor.
+///
+/// `@Coding` on the Bootstrap is lifted onto the same keyless proxy the global `@Middleware` factories
+/// are, so the entry can read it there. Unlike middleware — which wraps the finished router once — coding
+/// is consumed inside each route, so it has to be passed inward rather than wrapped around. Shared with
+/// the keyed harness, which registers its variant proxies from the same entry.
+func bootstrapAppCodingExpression(bootstrap: ControllerDeclaration) -> String {
+    let proxyProperty = graphBindingPropertyName(globalMiddlewareProxyTypeName(bootstrap.name))
+    guard
+        let source = RouteBlockGenerator(subjectAccessor: "", factoryKeys: [], globalErrorMappings: [])
+            .codingSource(from: bootstrap.attributes)
+    else { return "WireMVCCoding.default" }
+    return "\(proxyProperty).\(dependencyPropertyName(forType: source)).wireMVCCoding"
 }

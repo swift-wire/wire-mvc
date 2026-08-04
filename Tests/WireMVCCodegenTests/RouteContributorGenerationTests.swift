@@ -1421,7 +1421,7 @@ struct RouteContributorGenerationTests {
         )
         #expect(
             rendered.source.contains(
-                "try wireMVCVariantProxy_NotesController.registerWireRoutes(on: &builder, coding: wireMVCAppCoding)"
+                "try wireMVCVariantProxy_NotesController.registerWireRoutes(on: &builder, coding: WireMVCCoding.default)"
             )
         )
     }
@@ -1523,7 +1523,7 @@ struct RouteContributorGenerationTests {
         #expect(rendered.source.contains("Wire.bootstrapBinds_mock_PingControllerContributor(wireGraph: graph)"))
         #expect(
             rendered.source.contains(
-                "try wireMVCVariantProxy_PingController.registerWireRoutes(on: &builder, coding: wireMVCAppCoding)"
+                "try wireMVCVariantProxy_PingController.registerWireRoutes(on: &builder, coding: WireMVCCoding.default)"
             )
         )
         // The app-scoped `HealthController` is never keyed — no per-request scope entry to vary.
