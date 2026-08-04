@@ -55,5 +55,11 @@ struct WireMVCCodingTests {
         let configured = WireMVCCoding(json: .init(sortsKeys: true, escapesSlashes: false))
         let tuned = String(decoding: try configured.encoder().encode(Pair()), as: UTF8.self)
         #expect(tuned == #"{"a":1,"b":"/x"}"#)
+        #expect(!tuned.contains("\n"), "compact unless asked otherwise")
+
+        let pretty = WireMVCCoding(json: .init(sortsKeys: true, escapesSlashes: false, prettyPrints: true))
+        let indented = String(decoding: try pretty.encoder().encode(Pair()), as: UTF8.self)
+        #expect(indented.contains("\n"))
+        #expect(indented.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "\n", with: "") == tuned)
     }
 }

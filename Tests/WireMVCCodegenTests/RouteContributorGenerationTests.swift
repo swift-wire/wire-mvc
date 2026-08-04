@@ -191,6 +191,36 @@ struct RouteContributorGenerationTests {
         )
     }
 
+    /// A bootstrap that declares `@Coding` reads it *off the graph*, like every other injected binding.
+    ///
+    /// The entry above covers the fallback, which is a literal and so cannot expose the mistake this
+    /// guards: a proxy property emitted without its `graph.` receiver parses as a static member on the
+    /// proxy type and only fails when something compiles it. Since this test asserts rendered text too, it
+    /// is the fixture app that really closes the gap — this keeps the shape from drifting back.
+    @Test func bootstrapEntryReadsDeclaredCodingOffTheGraph() {
+        let decl = controller(
+            """
+            @Singleton
+            @WireMVCBootstrap
+            @Coding(AppCoding.self)
+            struct AppBootstrap {
+                func createServer() throws -> NIOHTTPServer { fatalError() }
+            }
+            """
+        )
+        let entry = renderBootstrapEntry(
+            bootstrap: decl,
+            notFoundRegistration: renderNotFoundRegistration(bootstrap: decl).registration,
+            factoryKeys: []
+        )
+        #expect(
+            entry.contains(
+                "coding: graph._WireGlobalMiddleware_AppBootstrap._wireAppCoding.wireMVCCoding"
+            )
+        )
+        #expect(!entry.contains("WireMVCCoding.default"), "a declared source replaces the fallback")
+    }
+
     /// The generated `.wiremvc(_:)` suite-trait factory: a `SuiteTrait` extension whose `WireMVCSuiteTrait`
     /// closure inlines ONE build (graph → server → builder → apply → registrations → finalize →
     /// `wrapGlobalMiddleware`) and hands the opaque handler to `WireMVCTesting.runSuite`. It is generic over
