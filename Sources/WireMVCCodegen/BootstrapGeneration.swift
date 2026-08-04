@@ -475,5 +475,9 @@ func bootstrapAppCodingExpression(bootstrap: ControllerDeclaration) -> String {
         let source = RouteBlockGenerator(subjectAccessor: "", factoryKeys: [], globalErrorMappings: [])
             .codingSource(from: bootstrap.attributes)
     else { return "WireMVCCoding.default" }
-    return "\(proxyProperty).\(dependencyPropertyName(forType: source)).wireMVCCoding"
+    // `graph.` matters: `proxyProperty` names a *property of the graph*, and both call sites run in the
+    // generated entry where `graph` is the local the bootstrap produced. Emitted bare it parses fine and
+    // reads as a static member on the proxy type, which is the shape of error that survives a test
+    // asserting the rendered text and only fails once an app compiles it.
+    return "graph.\(proxyProperty).\(dependencyPropertyName(forType: source)).wireMVCCoding"
 }

@@ -44,10 +44,14 @@ public struct JSONCoding: Sendable {
     /// Whether `/` is written as `\/`. Foundation escapes it by default, which surprises people reading
     /// a URL out of a response body.
     public var escapesSlashes: Bool
+    /// Whitespace and indentation in the output. Off by default: it costs bytes on every response, and a
+    /// client that wants to read one can pretty-print it locally.
+    public var prettyPrints: Bool
 
-    public init(sortsKeys: Bool = false, escapesSlashes: Bool = true) {
+    public init(sortsKeys: Bool = false, escapesSlashes: Bool = true, prettyPrints: Bool = false) {
         self.sortsKeys = sortsKeys
         self.escapesSlashes = escapesSlashes
+        self.prettyPrints = prettyPrints
     }
 }
 
@@ -76,6 +80,7 @@ extension WireMVCCoding {
         var formatting: JSONEncoder.OutputFormatting = []
         if json.sortsKeys { formatting.insert(.sortedKeys) }
         if !json.escapesSlashes { formatting.insert(.withoutEscapingSlashes) }
+        if json.prettyPrints { formatting.insert(.prettyPrinted) }
         encoder.outputFormatting = formatting
         let dates = dates
         encoder.dateEncodingStrategy = .custom { date, encoder in
