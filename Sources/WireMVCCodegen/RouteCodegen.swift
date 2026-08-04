@@ -731,6 +731,7 @@ let routeBindingWrappers: Set<String> = ["Path", "Query", "JSONBody", "Header"]
 private enum ErrorResponder {
     case status(String)  // a status expression, e.g. ".notFound"
     case call(String)  // a callable expression: "({ (e: T) in … })"
+    case statusWithBody(status: String, call: String)  // `(E.self, .status, { e in body })`
 }
 
 /// One `@ErrorResponse` entry: the error type it matches, whether that type is the `Swift.Error`
@@ -743,7 +744,12 @@ public struct ErrorMapping {
     let errorType: String
     let isCatchAll: Bool
     fileprivate let responder: ErrorResponder
-    var isThrowing: Bool { if case .call = responder { return true } else { return false } }
+    var isThrowing: Bool {
+        switch responder {
+        case .call, .statusWithBody: return true  // the closure, and encoding its value, can both throw
+        case .status: return false
+        }
+    }
 }
 
 extension RouteBlockGenerator {
@@ -778,6 +784,26 @@ extension RouteBlockGenerator {
     private mutating func errorMapping(from attr: AttributeSyntax) -> ErrorMapping? {
         guard let arguments = attr.arguments?.as(LabeledExprListSyntax.self), let first = arguments.first
         else { return nil }
+        // Form (2): `(E.self, .status, { e in body })`. Checked before form (1), which would otherwise
+        // match on argument count and silently drop the closure.
+        if arguments.count == 3, let status = arguments.dropFirst().first,
+            let last = arguments.dropFirst(2).first
+        {
+            let typeExpr = first.expression.trimmedDescription
+            guard typeExpr.hasSuffix(".self"), let closure = last.expression.as(ClosureExprSyntax.self) else {
+                diagnostics.append(RouteCodegenDiagnostic(.errorResponseUnresolvedMapping(typeExpr), at: attr))
+                return nil
+            }
+            let errorType = String(typeExpr.dropLast(".self".count))
+            return ErrorMapping(
+                errorType: errorType,
+                isCatchAll: isCatchAllErrorType(errorType),
+                responder: .statusWithBody(
+                    status: status.expression.trimmedDescription,
+                    call: "(\(closure.trimmedDescription))"
+                )
+            )
+        }
         // Form (1): `(E.self, .status)`.
         if arguments.count >= 2, let status = arguments.dropFirst().first {
             let typeExpr = first.expression.trimmedDescription
@@ -874,6 +900,10 @@ extension RouteBlockGenerator {
             return terminal
                 ? "wireMVCRespondAny(to: wireMVCError, \(callable))"
                 : "wireMVCRespond(to: wireMVCError, \(callable))"
+        case .statusWithBody(let status, let callable):
+            return terminal
+                ? "wireMVCRespondAny(to: wireMVCError, status: \(status), \(callable))"
+                : "wireMVCRespond(to: wireMVCError, as: \(mapping.errorType).self, status: \(status), \(callable))"
         }
     }
 }

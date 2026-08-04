@@ -13,11 +13,16 @@ import WireMVC
 @Middleware(RequestLogMiddlewareKeys.factory)  // controller-scope, generic dep-free
 @Middleware(SessionMiddlewareKeys.factory)  // controller-scope, generic-with-deps (factory-lifted by key)
 @Middleware(AuditMiddlewareKeys.factory)  // controller-scope, generic-with-deps, non-canonical parameter order
-// controller-scope @ErrorResponse: a thrown UserStore.NotFound → 404 + JSON body. An inline
-// typed-parameter closure — folded into the generated terminal's `catch`, called when a route throws
-// `UserStore.NotFound` (e.g. `getUser`'s `try store.find(id)` for an unknown id, which returned 500
-// before M5.4E).
-@ErrorResponse({ (_: UserStore.NotFound) in try .json(APIError(message: "user not found"), status: .notFound) })
+// controller-scope @ErrorResponse: a thrown UserStore.NotFound → 404 + JSON body. The three-argument
+// form — matched type, status, and a closure producing the body — folded into the generated terminal's
+// `catch` and called when a route throws `UserStore.NotFound` (e.g. `getUser`'s `try store.find(id)` for
+// an unknown id, which returned 500 before M5.4E).
+//
+// The closure form spells the same thing as `try .json(value, status:)`; this says it declaratively, with
+// the status where a reader looks for it. It also gives an adapter that reads a schema somewhere to check
+// the body against — see wire-open-api, which requires this form exactly when its document says the
+// status carries one.
+@ErrorResponse(UserStore.NotFound.self, .notFound, { _ in APIError(message: "user not found") })
 struct UsersController: Sendable {
     @Inject var store: UserStore
 

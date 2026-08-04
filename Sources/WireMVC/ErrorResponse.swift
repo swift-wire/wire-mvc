@@ -26,3 +26,31 @@ public func wireMVCRespondAny(
 ) throws -> WireMVCOutcome {
     try respond(error)
 }
+
+/// The body-returning form — `@ErrorResponse(E.self, .notFound, { e in Problem(…) })`.
+///
+/// The pair form answers with a status and nothing else, which is all a response *without* a body can
+/// carry. This one exists for the response that documents a body: the closure produces the value, and the
+/// status says which response it belongs to. Both are needed because only the document knows which is
+/// legal — a spec-driven adapter can then require the form that matches what it declares.
+///
+/// The matched type is passed explicitly rather than inferred: the closure's parameter is often written
+/// without an annotation, and `E` has to be pinned for the cast.
+public func wireMVCRespond<E: Error, Body: Encodable>(
+    to error: any Error,
+    as type: E.Type,
+    status: HTTPResponse.Status,
+    _ body: (E) throws -> Body
+) throws -> WireMVCOutcome? {
+    guard let typed = error as? E else { return nil }
+    return try .json(body(typed), status: status)
+}
+
+/// The catch-all's body-returning form: always matches, so it yields a non-optional outcome.
+public func wireMVCRespondAny<Body: Encodable>(
+    to error: any Error,
+    status: HTTPResponse.Status,
+    _ body: (any Error) throws -> Body
+) throws -> WireMVCOutcome {
+    try .json(body(error), status: status)
+}
