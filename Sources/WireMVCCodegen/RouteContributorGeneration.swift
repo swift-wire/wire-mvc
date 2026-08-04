@@ -13,7 +13,10 @@ public import SwiftSyntax
 /// requirements that don't propagate across the generic boundary. Shared so the macro's struct member
 /// and the tool's extension member spell it identically.
 private let witnessSignature = """
-    registerWireRoutes<Builder: HTTPServerRouteBuilder>(on builder: inout Builder) throws
+    registerWireRoutes<Builder: HTTPServerRouteBuilder>(
+        on builder: inout Builder,
+        coding wireMVCAppCoding: WireMVCCoding
+    ) throws
     where
         Builder.RequestContext: ~Copyable,
         Builder.Reader: ~Copyable,

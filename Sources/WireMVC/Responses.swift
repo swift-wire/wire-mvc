@@ -23,9 +23,10 @@ public enum WireMVCOutcome: Sendable {
     /// returns one directly.
     public static func json<T: Encodable>(
         _ value: T,
-        status: HTTPResponse.Status = .ok
+        status: HTTPResponse.Status = .ok,
+        coding: WireMVCCoding = .default
     ) throws -> WireMVCOutcome {
-        let data = try JSONEncoder().encode(value)
+        let data = try coding.encoder().encode(value)
         return .body([UInt8](data), status)
     }
 
@@ -51,8 +52,9 @@ public enum WireMVCResponse {
     /// `@JSONResponse[(status:)]` — encode an `Encodable` return as a JSON body.
     public static func json<T: Encodable>(
         _ value: T,
-        status: HTTPResponse.Status
+        status: HTTPResponse.Status,
+        coding: WireMVCCoding = .default
     ) throws -> WireMVCOutcome {
-        try WireMVCOutcome.json(value, status: status)
+        try WireMVCOutcome.json(value, status: status, coding: coding)
     }
 }

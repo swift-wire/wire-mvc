@@ -154,12 +154,16 @@ func renderBootstrapKeyedTestEntry(
 ) -> String {
     // Build each variant proxy from the variant graph and register its routes — before `finalize()`, so they
     // join the router. `WireMVC.apply` already registered the surviving non-scoped controllers.
+    //
+    // These run in the entry, not in a witness, so the app-wide coding is the expression the composition
+    // root resolved — `wireMVCAppCoding` is a witness's parameter and is not in scope here.
+    let appCoding = bootstrapAppCodingExpression(bootstrap: bootstrap)
     let variantRegistrations = subjects.map { subject in
         let facade = variantFacadeMethodName(variantName: key.variantName, subject: subject)
         let local = variantProxyLocalName(subject: subject)
         return """
             let \(local) = Wire.\(facade)(wireGraph: graph)
-            try \(local).registerWireRoutes(on: &builder)
+            try \(local).registerWireRoutes(on: &builder, coding: \(appCoding))
             """
     }
     .joined(separator: "\n")

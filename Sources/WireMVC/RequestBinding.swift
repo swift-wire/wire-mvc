@@ -30,6 +30,24 @@ public protocol RequestBound {
 }
 
 extension RequestBound {
+    /// The coding-aware entry point the generated witness calls.
+    ///
+    /// A defaulted extension method rather than a new protocol requirement: `RequestBound` is public and
+    /// documented as user-extensible, so adding a requirement would break every conformance outside this
+    /// package. A binding that does not care about coding — a path or header value — inherits this and
+    /// ignores it; the ones that do decode a body override it.
+    public static func bind(
+        name: String,
+        request: HTTPRequest,
+        pathParameters: [String: Substring],
+        body: [UInt8]?,
+        coding: WireMVCCoding
+    ) async throws -> Value {
+        try await bind(name: name, request: request, pathParameters: pathParameters, body: body)
+    }
+}
+
+extension RequestBound {
     /// Like `bind`, but returns `nil` when the value is simply absent (a missing path/query/header),
     /// while still throwing on a type mismatch. Backs optional (`T?`) and defaulted (`= expr`)
     /// handler parameters.
@@ -37,10 +55,17 @@ extension RequestBound {
         name: String,
         request: HTTPRequest,
         pathParameters: [String: Substring],
-        body: [UInt8]?
+        body: [UInt8]?,
+        coding: WireMVCCoding = .default
     ) async throws -> Value? {
         do {
-            return try await bind(name: name, request: request, pathParameters: pathParameters, body: body)
+            return try await bind(
+                name: name,
+                request: request,
+                pathParameters: pathParameters,
+                body: body,
+                coding: coding
+            )
         } catch let error as WireMVCBindingError where error.isAbsence {
             return nil
         }
@@ -249,9 +274,28 @@ extension JSONBody: RequestBound where T: Decodable {
         if let contentType, !contentType.hasPrefix("application/json") {
             throw WireMVCBindingError.unsupportedMediaType  // 415
         }
+        return try Self.decode(body: body, coding: .default)
+    }
+
+    /// The coding-aware form: `@JSONBody` is the binding that actually reads settings.
+    public static func bind(
+        name: String,
+        request: HTTPRequest,
+        pathParameters: [String: Substring],
+        body: [UInt8]?,
+        coding: WireMVCCoding
+    ) async throws -> T {
+        let contentType = request.headerFields[.contentType]
+        if let contentType, !contentType.hasPrefix("application/json") {
+            throw WireMVCBindingError.unsupportedMediaType  // 415
+        }
+        return try decode(body: body, coding: coding)
+    }
+
+    private static func decode(body: [UInt8]?, coding: WireMVCCoding) throws -> T {
         guard let body else { throw WireMVCBindingError.malformedBody }  // 422
         do {
-            return try JSONDecoder().decode(T.self, from: Data(body))
+            return try coding.decoder().decode(T.self, from: Data(body))
         } catch {
             throw WireMVCBindingError.malformedBody  // 422
         }

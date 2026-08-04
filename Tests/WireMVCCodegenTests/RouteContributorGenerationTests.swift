@@ -44,6 +44,64 @@ struct RouteContributorGenerationTests {
 
     // MARK: - Golden extensions, per route shape
 
+    /// The three tiers, innermost winning. The app's arrives as a parameter; a controller's and a
+    /// route's are bindings lifted onto the proxy, so they are read from it — which is why coding had to
+    /// travel inward rather than wrap the router as global middleware does.
+    @Test func codingTiersResolveInnermostFirst() throws {
+        let source = """
+            @Singleton
+            @Controller("/todos")
+            @Coding(ControllerCoding.self)
+            struct Todos {
+                @Get("/{id}") @JSONResponse
+                func get(@Path id: String) async throws -> Todo { Todo() }
+
+                @Get("/{id}/raw") @JSONResponse
+                @Coding(RouteCoding.self)
+                func raw(@Path id: String) async throws -> Todo { Todo() }
+            }
+            """
+        let rendered = renderRouteContributorExtension(
+            controller: controller(source),
+            pathPrefix: "/todos",
+            factoryKeys: []
+        )
+        // Per route, not per file: asserting only that both expressions appear somewhere would pass with
+        // the two swapped, or with both on one route.
+        let blocks = rendered.source.components(separatedBy: "builder.register(")
+        let inherits = try #require(blocks.first { $0.contains(#"path: "/todos/{id}")"#) })
+        let overrides = try #require(blocks.first { $0.contains(#"path: "/todos/{id}/raw")"#) })
+
+        // The route that declares none uses the controller's, and only that.
+        #expect(inherits.contains("coding: self._wireControllerCoding.wireMVCCoding"))
+        #expect(!inherits.contains("_wireRouteCoding"))
+        #expect(!inherits.contains("coding: wireMVCAppCoding"))
+
+        // The route that declares its own uses it, and the controller's does not leak in.
+        #expect(overrides.contains("coding: self._wireRouteCoding.wireMVCCoding"))
+        #expect(!overrides.contains("_wireControllerCoding"))
+    }
+
+    /// With no `@Coding` at any inner scope, every route falls back to what the composition root passed —
+    /// the third tier, and the one a witness cannot read from its own proxy.
+    @Test func routesWithoutCodingUseTheAppTier() throws {
+        let source = """
+            @Singleton
+            @Controller("/todos")
+            struct Todos {
+                @Get("/{id}") @JSONResponse
+                func get(@Path id: String) async throws -> Todo { Todo() }
+            }
+            """
+        let rendered = renderRouteContributorExtension(
+            controller: controller(source),
+            pathPrefix: "/todos",
+            factoryKeys: []
+        )
+        #expect(rendered.source.contains("coding: wireMVCAppCoding"))
+        #expect(!rendered.source.contains(".wireMVCCoding"))
+    }
+
     @Test func plainJSONRouteWithPathBinding() {
         let source = """
             @Controller("/todos")
@@ -64,7 +122,10 @@ struct RouteContributorGenerationTests {
         #expect(
             rendered.source == """
                 extension _WireRouteContributor_Todos: RouteContributor {
-                    func registerWireRoutes<Builder: HTTPServerRouteBuilder>(on builder: inout Builder) throws
+                    func registerWireRoutes<Builder: HTTPServerRouteBuilder>(
+                        on builder: inout Builder,
+                        coding wireMVCAppCoding: WireMVCCoding
+                    ) throws
                     where
                         Builder.RequestContext: ~Copyable,
                         Builder.Reader: ~Copyable,
@@ -74,8 +135,8 @@ struct RouteContributorGenerationTests {
                         builder.register(method: .get, path: "/todos/{id}") { request, _, pathParameters, _, responseSender in
                             let wireMVCOutcome: WireMVCOutcome
                             do {
-                                let id = try await Path<String>.bind(name: "id", request: request, pathParameters: pathParameters, body: nil)
-                                wireMVCOutcome = try WireMVCResponse.json(try await self._wireSubject.get(id: id), status: .ok)
+                                let id = try await Path<String>.bind(name: "id", request: request, pathParameters: pathParameters, body: nil, coding: wireMVCAppCoding)
+                                wireMVCOutcome = try WireMVCResponse.json(try await self._wireSubject.get(id: id), status: .ok, coding: wireMVCAppCoding)
                             } catch let wireMVCError {
                                 wireMVCOutcome = (
                                     (wireMVCError as? WireMVCBindingError).map {
@@ -117,7 +178,7 @@ struct RouteContributorGenerationTests {
                         let bootstrap = graph.appBootstrap
                         let server = try bootstrap.createServer()
                         var builder = bootstrap.createRouteBuilder(for: server)
-                        let wireMVCServices = try WireMVC.apply(graph, to: &builder)
+                        let wireMVCServices = try WireMVC.apply(graph, to: &builder, coding: WireMVCCoding.default)
                         builder.registerNotFound { _, _, _, _, responseSender in
                             try await responseSender.sendAndFinish(HTTPResponse(status: .notFound))
                         }
@@ -168,7 +229,7 @@ struct RouteContributorGenerationTests {
                                 let bootstrap = graph.appBootstrap
                                 let server = mode.makeTestServer()
                                 var builder = bootstrap.createRouteBuilder(for: server)
-                                let wireMVCServices = try WireMVC.apply(graph, to: &builder)
+                                let wireMVCServices = try WireMVC.apply(graph, to: &builder, coding: WireMVCCoding.default)
                                 builder.registerNotFound { _, _, _, _, responseSender in
                                     try await responseSender.sendAndFinish(HTTPResponse(status: .notFound))
                                 }
@@ -570,7 +631,10 @@ struct RouteContributorGenerationTests {
         #expect(
             rendered.source == """
                 extension _WireRouteContributor_C: RouteContributor {
-                    func registerWireRoutes<Builder: HTTPServerRouteBuilder>(on builder: inout Builder) throws
+                    func registerWireRoutes<Builder: HTTPServerRouteBuilder>(
+                        on builder: inout Builder,
+                        coding wireMVCAppCoding: WireMVCCoding
+                    ) throws
                     where
                         Builder.RequestContext: ~Copyable,
                         Builder.Reader: ~Copyable,
@@ -630,7 +694,10 @@ struct RouteContributorGenerationTests {
         #expect(
             rendered.source == """
                 extension _WireRouteContributor_Search: RouteContributor {
-                    func registerWireRoutes<Builder: HTTPServerRouteBuilder>(on builder: inout Builder) throws
+                    func registerWireRoutes<Builder: HTTPServerRouteBuilder>(
+                        on builder: inout Builder,
+                        coding wireMVCAppCoding: WireMVCCoding
+                    ) throws
                     where
                         Builder.RequestContext: ~Copyable,
                         Builder.Reader: ~Copyable,
@@ -641,12 +708,12 @@ struct RouteContributorGenerationTests {
                             let wireMVCOutcome: WireMVCOutcome
                             do {
                                 let requestBody = try await WireMVCRequest.collectBody(reader)
-                                let scope = try await Path<String>.bind(name: "scope", request: request, pathParameters: pathParameters, body: requestBody)
-                                let query = try await Query<String>.bind(name: "q", request: request, pathParameters: pathParameters, body: requestBody)
-                                let limit = try await Query<Int>.bindOptional(name: "limit", request: request, pathParameters: pathParameters, body: requestBody)
-                                let trace = try await Header<String>.bindOptional(name: "X-Trace", request: request, pathParameters: pathParameters, body: requestBody) ?? "none"
-                                let filter = try await JSONBody<Filter>.bind(name: "filter", request: request, pathParameters: pathParameters, body: requestBody)
-                                wireMVCOutcome = try WireMVCResponse.json(try await self._wireSubject.run(scope: scope, query: query, limit: limit, trace: trace, filter: filter), status: .created)
+                                let scope = try await Path<String>.bind(name: "scope", request: request, pathParameters: pathParameters, body: requestBody, coding: wireMVCAppCoding)
+                                let query = try await Query<String>.bind(name: "q", request: request, pathParameters: pathParameters, body: requestBody, coding: wireMVCAppCoding)
+                                let limit = try await Query<Int>.bindOptional(name: "limit", request: request, pathParameters: pathParameters, body: requestBody, coding: wireMVCAppCoding)
+                                let trace = try await Header<String>.bindOptional(name: "X-Trace", request: request, pathParameters: pathParameters, body: requestBody, coding: wireMVCAppCoding) ?? "none"
+                                let filter = try await JSONBody<Filter>.bind(name: "filter", request: request, pathParameters: pathParameters, body: requestBody, coding: wireMVCAppCoding)
+                                wireMVCOutcome = try WireMVCResponse.json(try await self._wireSubject.run(scope: scope, query: query, limit: limit, trace: trace, filter: filter), status: .created, coding: wireMVCAppCoding)
                             } catch let wireMVCError {
                                 wireMVCOutcome = (
                                     (wireMVCError as? WireMVCBindingError).map {
@@ -1383,7 +1450,9 @@ struct RouteContributorGenerationTests {
             )
         )
         #expect(
-            rendered.source.contains("try wireMVCVariantProxy_NotesController.registerWireRoutes(on: &builder)")
+            rendered.source.contains(
+                "try wireMVCVariantProxy_NotesController.registerWireRoutes(on: &builder, coding: WireMVCCoding.default)"
+            )
         )
     }
 
@@ -1483,7 +1552,9 @@ struct RouteContributorGenerationTests {
         )
         #expect(rendered.source.contains("Wire.bootstrapBinds_mock_PingControllerContributor(wireGraph: graph)"))
         #expect(
-            rendered.source.contains("try wireMVCVariantProxy_PingController.registerWireRoutes(on: &builder)")
+            rendered.source.contains(
+                "try wireMVCVariantProxy_PingController.registerWireRoutes(on: &builder, coding: WireMVCCoding.default)"
+            )
         )
         // The app-scoped `HealthController` is never keyed — no per-request scope entry to vary.
         #expect(!rendered.source.contains("_Binds_mock_WireRouteContributor_HealthController"))
