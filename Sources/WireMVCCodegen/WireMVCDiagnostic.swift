@@ -22,6 +22,7 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
     case notFoundNotRaw(String)
     case globalMiddlewareUnsupportedArgument(String)
     case multipleTestingKeys(String, first: String)
+    case redundantCodingOverride(String, scope: String)
 
     public var message: String {
         switch self {
@@ -55,6 +56,8 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
             "@NotFound handler '\(name)' must be @RawRoute — the fallback writes the response directly (no matched route to decode/encode against). Add @RawRoute and take the response sender."
         case .multipleTestingKeys(let reference, let first):
             "the keyed test harness serves one TestingKey per target, and '\(first)' is already this target's key — a suite passing '\(reference)' would be served '\(first)''s variant graph instead, silently. Move '\(reference)' to its own test target, or fold its @BindType markers into '\(first)'. (Serving several variants from one target is deferred — see swift-wire's PendingIssues/11.)"
+        case .redundantCodingOverride(let reference, let scope):
+            "@Coding(\(reference)) on this \(scope) names the binding the enclosing scope already selected, so it overrides nothing. Name a different binding — a BindingKey<WireMVCCoding> distinguishes several codings of the same type — or drop the annotation."
         case .globalMiddlewareUnsupportedArgument(let reference):
             "global @Middleware on a @WireMVCBootstrap root must be factory-form (@Middleware(Key), a generic-over-box @Factory @MiddlewareFactory) — a by-type or keyed-binding middleware ('\(reference)') is concrete over a fixed box and can't compose in the global chain (the router is fixed on its box type). Write it generic (factory-form), or scope it to a @Controller."
         }
@@ -81,6 +84,7 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
         case .notFoundNotRaw: id = "notFoundNotRaw"
         case .globalMiddlewareUnsupportedArgument: id = "globalMiddlewareUnsupportedArgument"
         case .multipleTestingKeys: id = "multipleTestingKeys"
+        case .redundantCodingOverride: id = "redundantCodingOverride"
         }
         return MessageID(domain: "WireMVC", id: id)
     }

@@ -100,12 +100,3 @@ extension WireMVCCoding {
         return decoder
     }
 }
-
-/// A binding that supplies coding settings.
-///
-/// The annotation names a *binding*, not a literal, for the same reason `@Middleware` does: settings that
-/// come from configuration or differ per environment are graph concerns, and an attribute argument cannot
-/// hold a date transcoder anyway.
-public protocol CodingSource: Sendable {
-    var wireMVCCoding: WireMVCCoding { get }
-}

@@ -39,8 +39,8 @@ struct RouteBlockGenerator {
     /// which the composition root resolved and passed in. Innermost wins, as `@Middleware` and
     /// `@ErrorResponse` do.
     var codingExpression: String {
-        guard let source = routeCoding ?? controllerCoding else { return "wireMVCAppCoding" }
-        return "self.\(dependencyPropertyName(forType: source)).wireMVCCoding"
+        guard let reference = routeCoding ?? controllerCoding else { return "wireMVCAppCoding" }
+        return "self.\(codingProxyField(for: reference))"
     }
     /// Set for a `@Scoped(seed:)` controller (the seed type): its routes construct the controller fresh
     /// per request from the proxy's `_wireEnterScope` thunk, rather than calling the held `_wireSubject`.
@@ -149,11 +149,28 @@ struct RouteBlockGenerator {
         let controllerMiddleware = middlewareConstructions(from: controller.attributes)
         // Controller-scope `@ErrorResponse` covers every route, consulted after each route's own.
         let controllerErrorMappings = errorMappings(from: controller.attributes, scopeLabel: "controller")
-        controllerCoding = codingSource(from: controller.attributes)
+        controllerCoding = codingKey(from: controller.attributes)?.reference
         var blocks: [String] = []
         for function in controller.functions {
             guard let verb = verb(from: function.attributes) else { continue }  // no verb → helper, skip
-            routeCoding = codingSource(from: function.attributes)
+            // An override naming the binding the controller already selected resolves to the same value,
+            // so it changes nothing. Diagnosed rather than ignored: the author asked for different settings
+            // on this route and would otherwise get the enclosing scope's silently. `WireMVCCoding.self` is
+            // the form that invites it — there is only one spelling of the unkeyed binding.
+            //
+            // Route-versus-controller only. A controller repeating the *app* tier is the same mistake but
+            // is not visible here: the app's coding is a witness parameter the composition root passes in,
+            // so this codegen never sees which binding it came from.
+            let route = codingKey(from: function.attributes)
+            if let route, route.reference == controllerCoding {
+                diagnostics.append(
+                    RouteCodegenDiagnostic(
+                        .redundantCodingOverride(route.reference, scope: "route"),
+                        at: route.node
+                    )
+                )
+            }
+            routeCoding = route?.reference
             if let block = routeBlock(
                 function: function,
                 verb: verb,
@@ -771,12 +788,11 @@ public struct ErrorMapping {
 
 extension RouteBlockGenerator {
     /// The `@Coding(T.self)` source named at one scope, if any.
-    func codingSource(from attributes: AttributeListSyntax) -> String? {
+    func codingKey(from attributes: AttributeListSyntax) -> (reference: String, node: ExprSyntax)? {
         for case let .attribute(attr) in attributes where attr.attributeName.trimmedDescription == "Coding" {
             guard let arguments = attr.arguments?.as(LabeledExprListSyntax.self), let first = arguments.first
             else { continue }
-            let written = first.expression.trimmedDescription
-            return written.hasSuffix(".self") ? String(written.dropLast(".self".count)) : written
+            return (first.expression.trimmedDescription, first.expression)
         }
         return nil
     }
@@ -962,3 +978,13 @@ public func dependencyPropertyName(forType type: String) -> String {
 /// a `@Factory` template) — `_wire` + the sanitised key, matching swift-wire's keyed adapter-dependency
 /// field name.
 public func dependencyPropertyName(forKey key: String) -> String { "_wire" + sanitizedKeyFragment(key) }
+
+/// The proxy field a `@Coding(...)` argument is read through — the same two-way dispatch
+/// `middlewareConstructions` does, because it is the same `.injectsFromGraph` pass on the other side.
+/// `WireMVCCoding.self` selects the unkeyed binding by type; anything else is a `BindingKey` reference and
+/// selects the binding it keys.
+public func codingProxyField(for reference: String) -> String {
+    reference.hasSuffix(".self")
+        ? dependencyPropertyName(forType: String(reference.dropLast(".self".count)))
+        : dependencyPropertyName(forKey: reference)
+}

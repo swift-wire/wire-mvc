@@ -51,13 +51,13 @@ struct RouteContributorGenerationTests {
         let source = """
             @Singleton
             @Controller("/todos")
-            @Coding(ControllerCoding.self)
+            @Coding(WireMVCCoding.controller)
             struct Todos {
                 @Get("/{id}") @JSONResponse
                 func get(@Path id: String) async throws -> Todo { Todo() }
 
                 @Get("/{id}/raw") @JSONResponse
-                @Coding(RouteCoding.self)
+                @Coding(WireMVCCoding.route)
                 func raw(@Path id: String) async throws -> Todo { Todo() }
             }
             """
@@ -73,13 +73,90 @@ struct RouteContributorGenerationTests {
         let overrides = try #require(blocks.first { $0.contains(#"path: "/todos/{id}/raw")"#) })
 
         // The route that declares none uses the controller's, and only that.
-        #expect(inherits.contains("coding: self._wireControllerCoding.wireMVCCoding"))
-        #expect(!inherits.contains("_wireRouteCoding"))
+        #expect(inherits.contains("coding: self._wireWireMVCCoding_controller"))
+        #expect(!inherits.contains("_wireWireMVCCoding_route"))
         #expect(!inherits.contains("coding: wireMVCAppCoding"))
 
         // The route that declares its own uses it, and the controller's does not leak in.
-        #expect(overrides.contains("coding: self._wireRouteCoding.wireMVCCoding"))
-        #expect(!overrides.contains("_wireControllerCoding"))
+        #expect(overrides.contains("coding: self._wireWireMVCCoding_route"))
+        #expect(!overrides.contains("_wireWireMVCCoding_controller"))
+    }
+
+    /// `@Coding(WireMVCCoding.self)` selects the unkeyed binding by type — the form for an app with one
+    /// coding, where there is nothing to tell apart and so no name to invent. Same dispatch a by-type
+    /// `@Middleware` gets, and the proxy field the plugin lifts is named the same way.
+    @Test func codingSelectsTheUnkeyedBindingByType() throws {
+        let rendered = renderRouteContributorExtension(
+            controller: controller(
+                """
+                @Singleton
+                @Controller("/todos")
+                @Coding(WireMVCCoding.self)
+                struct Todos {
+                    @Get("/{id}") @JSONResponse
+                    func get(@Path id: String) async throws -> Todo { Todo() }
+                }
+                """
+            ),
+            pathPrefix: "/todos",
+            factoryKeys: []
+        )
+        #expect(rendered.source.contains("coding: self._wireWireMVCCoding"))
+        // The by-type field, not the keyed one: a key reference would sanitise its dots to underscores.
+        #expect(!rendered.source.contains("_wireWireMVCCoding_"))
+        #expect(!rendered.source.contains("coding: wireMVCAppCoding"))
+        #expect(rendered.diagnostics.isEmpty)
+    }
+
+    /// Naming the same binding at two nested scopes overrides nothing — it resolves to one value either
+    /// way. Diagnosed rather than ignored, because the author asked for different settings on that route
+    /// and would otherwise get the enclosing scope's silently. The by-type form is what invites it: there
+    /// is only one spelling of the unkeyed binding.
+    @Test func repeatingOneCodingAcrossScopesIsDiagnosed() throws {
+        let rendered = renderRouteContributorExtension(
+            controller: controller(
+                """
+                @Singleton
+                @Controller("/todos")
+                @Coding(WireMVCCoding.self)
+                struct Todos {
+                    @Get("/{id}") @JSONResponse
+                    @Coding(WireMVCCoding.self)
+                    func get(@Path id: String) async throws -> Todo { Todo() }
+                }
+                """
+            ),
+            pathPrefix: "/todos",
+            factoryKeys: []
+        )
+        #expect(
+            rendered.diagnostics.contains {
+                if case .redundantCodingOverride = $0.message { return true } else { return false }
+            }
+        )
+    }
+
+    /// A route overriding with a *different* binding is the case the tiering exists for, so it must not
+    /// trip the diagnostic above.
+    @Test func overridingWithADifferentBindingIsNotDiagnosed() throws {
+        let rendered = renderRouteContributorExtension(
+            controller: controller(
+                """
+                @Singleton
+                @Controller("/todos")
+                @Coding(WireMVCCoding.self)
+                struct Todos {
+                    @Get("/{id}") @JSONResponse
+                    @Coding(WireMVCCoding.reports)
+                    func get(@Path id: String) async throws -> Todo { Todo() }
+                }
+                """
+            ),
+            pathPrefix: "/todos",
+            factoryKeys: []
+        )
+        #expect(rendered.diagnostics.isEmpty)
+        #expect(rendered.source.contains("coding: self._wireWireMVCCoding_reports"))
     }
 
     /// With no `@Coding` at any inner scope, every route falls back to what the composition root passed —
@@ -99,7 +176,7 @@ struct RouteContributorGenerationTests {
             factoryKeys: []
         )
         #expect(rendered.source.contains("coding: wireMVCAppCoding"))
-        #expect(!rendered.source.contains(".wireMVCCoding"))
+        #expect(!rendered.source.contains("_wireWireMVCCoding"))
     }
 
     @Test func plainJSONRouteWithPathBinding() {
@@ -202,7 +279,7 @@ struct RouteContributorGenerationTests {
             """
             @Singleton
             @WireMVCBootstrap
-            @Coding(AppCoding.self)
+            @Coding(WireMVCCoding.app)
             struct AppBootstrap {
                 func createServer() throws -> NIOHTTPServer { fatalError() }
             }
@@ -215,7 +292,7 @@ struct RouteContributorGenerationTests {
         )
         #expect(
             entry.contains(
-                "coding: graph._WireGlobalMiddleware_AppBootstrap._wireAppCoding.wireMVCCoding"
+                "coding: graph._WireGlobalMiddleware_AppBootstrap._wireWireMVCCoding_app"
             )
         )
         #expect(!entry.contains("WireMVCCoding.default"), "a declared source replaces the fallback")
