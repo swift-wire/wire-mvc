@@ -33,18 +33,31 @@ public let wireMVCMiddlewareAlias = WireAdapterAnnotationV1(
     capability: .injectsFromGraph
 )
 
-/// `@Coding(X.self)` names a `CodingSource` binding whose settings this scope's routes encode and decode
-/// with — dates, and JSON options.
+/// `@Coding(key)` names a keyed `WireMVCCoding` binding whose settings this scope's routes encode and
+/// decode with — dates, and JSON options.
+///
+///     extension WireMVCCoding {
+///         static let app = BindingKey<WireMVCCoding>()
+///         static let reports = BindingKey<WireMVCCoding>()
+///     }
+///
+///     @Provides(WireMVCCoding.app) static let appCoding = WireMVCCoding()
 ///
 /// Three scopes, innermost winning: the `@WireMVCBootstrap` type sets the app's, a controller overrides it
 /// for its routes, a route for itself. The same tiering `@Middleware` and `@ErrorResponse` use, for the
 /// same reason: a policy is usually app-wide and occasionally not.
 ///
-/// It reaches the generated witness through `.injectsFromGraph`, exactly as a `@Middleware(T.self)` does —
-/// the proxy gains a `_wire<T>` field and the witness reads it. That is what lets the settings come from
+/// A **key** rather than a wrapper type, because the tiers all select the same type and swift-wire keys
+/// the graph by type: `@Coding(WireMVCCoding.self)` would name one binding at every scope, so the override
+/// could never resolve to anything different. `BindingKey` is what swift-wire already offers for binding
+/// one type several times — the earlier design invented a `CodingSource` protocol to give each tier a
+/// distinct *type* to name, which solved the same problem a second way.
+///
+/// It reaches the generated witness through `.injectsFromGraph`, exactly as a keyed `@Middleware` does —
+/// the proxy gains a `_wire<key>` field and the witness reads it. That is what lets the settings come from
 /// the graph while the code that needs them (`RequestBound.bind`, `WireMVCOutcome.json`) is static.
 @attached(peer)
-public macro Coding<Source: CodingSource>(_ source: Source.Type) =
+public macro Coding(_ key: BindingKey<WireMVCCoding>) =
     #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
 
 /// `@Coding` is lifted by the same capability `@Middleware` uses.

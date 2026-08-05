@@ -472,12 +472,12 @@ private final class BootstrapFinder: SyntaxVisitor {
 func bootstrapAppCodingExpression(bootstrap: ControllerDeclaration) -> String {
     let proxyProperty = graphBindingPropertyName(globalMiddlewareProxyTypeName(bootstrap.name))
     guard
-        let source = RouteBlockGenerator(subjectAccessor: "", factoryKeys: [], globalErrorMappings: [])
-            .codingSource(from: bootstrap.attributes)
+        let key = RouteBlockGenerator(subjectAccessor: "", factoryKeys: [], globalErrorMappings: [])
+            .codingKey(from: bootstrap.attributes)
     else { return "WireMVCCoding.default" }
     // `graph.` matters: `proxyProperty` names a *property of the graph*, and both call sites run in the
     // generated entry where `graph` is the local the bootstrap produced. Emitted bare it parses fine and
     // reads as a static member on the proxy type, which is the shape of error that survives a test
     // asserting the rendered text and only fails once an app compiles it.
-    return "graph.\(proxyProperty).\(dependencyPropertyName(forType: source)).wireMVCCoding"
+    return "graph.\(proxyProperty).\(dependencyPropertyName(forKey: key))"
 }

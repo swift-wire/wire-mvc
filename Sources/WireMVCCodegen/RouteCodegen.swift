@@ -39,8 +39,8 @@ struct RouteBlockGenerator {
     /// which the composition root resolved and passed in. Innermost wins, as `@Middleware` and
     /// `@ErrorResponse` do.
     var codingExpression: String {
-        guard let source = routeCoding ?? controllerCoding else { return "wireMVCAppCoding" }
-        return "self.\(dependencyPropertyName(forType: source)).wireMVCCoding"
+        guard let key = routeCoding ?? controllerCoding else { return "wireMVCAppCoding" }
+        return "self.\(dependencyPropertyName(forKey: key))"
     }
     /// Set for a `@Scoped(seed:)` controller (the seed type): its routes construct the controller fresh
     /// per request from the proxy's `_wireEnterScope` thunk, rather than calling the held `_wireSubject`.
@@ -149,11 +149,11 @@ struct RouteBlockGenerator {
         let controllerMiddleware = middlewareConstructions(from: controller.attributes)
         // Controller-scope `@ErrorResponse` covers every route, consulted after each route's own.
         let controllerErrorMappings = errorMappings(from: controller.attributes, scopeLabel: "controller")
-        controllerCoding = codingSource(from: controller.attributes)
+        controllerCoding = codingKey(from: controller.attributes)
         var blocks: [String] = []
         for function in controller.functions {
             guard let verb = verb(from: function.attributes) else { continue }  // no verb → helper, skip
-            routeCoding = codingSource(from: function.attributes)
+            routeCoding = codingKey(from: function.attributes)
             if let block = routeBlock(
                 function: function,
                 verb: verb,
@@ -771,12 +771,11 @@ public struct ErrorMapping {
 
 extension RouteBlockGenerator {
     /// The `@Coding(T.self)` source named at one scope, if any.
-    func codingSource(from attributes: AttributeListSyntax) -> String? {
+    func codingKey(from attributes: AttributeListSyntax) -> String? {
         for case let .attribute(attr) in attributes where attr.attributeName.trimmedDescription == "Coding" {
             guard let arguments = attr.arguments?.as(LabeledExprListSyntax.self), let first = arguments.first
             else { continue }
-            let written = first.expression.trimmedDescription
-            return written.hasSuffix(".self") ? String(written.dropLast(".self".count)) : written
+            return first.expression.trimmedDescription
         }
         return nil
     }

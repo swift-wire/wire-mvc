@@ -51,13 +51,13 @@ struct RouteContributorGenerationTests {
         let source = """
             @Singleton
             @Controller("/todos")
-            @Coding(ControllerCoding.self)
+            @Coding(WireMVCCoding.controller)
             struct Todos {
                 @Get("/{id}") @JSONResponse
                 func get(@Path id: String) async throws -> Todo { Todo() }
 
                 @Get("/{id}/raw") @JSONResponse
-                @Coding(RouteCoding.self)
+                @Coding(WireMVCCoding.route)
                 func raw(@Path id: String) async throws -> Todo { Todo() }
             }
             """
@@ -73,13 +73,13 @@ struct RouteContributorGenerationTests {
         let overrides = try #require(blocks.first { $0.contains(#"path: "/todos/{id}/raw")"#) })
 
         // The route that declares none uses the controller's, and only that.
-        #expect(inherits.contains("coding: self._wireControllerCoding.wireMVCCoding"))
-        #expect(!inherits.contains("_wireRouteCoding"))
+        #expect(inherits.contains("coding: self._wireWireMVCCoding_controller"))
+        #expect(!inherits.contains("_wireWireMVCCoding_route"))
         #expect(!inherits.contains("coding: wireMVCAppCoding"))
 
         // The route that declares its own uses it, and the controller's does not leak in.
-        #expect(overrides.contains("coding: self._wireRouteCoding.wireMVCCoding"))
-        #expect(!overrides.contains("_wireControllerCoding"))
+        #expect(overrides.contains("coding: self._wireWireMVCCoding_route"))
+        #expect(!overrides.contains("_wireWireMVCCoding_controller"))
     }
 
     /// With no `@Coding` at any inner scope, every route falls back to what the composition root passed —
@@ -99,7 +99,7 @@ struct RouteContributorGenerationTests {
             factoryKeys: []
         )
         #expect(rendered.source.contains("coding: wireMVCAppCoding"))
-        #expect(!rendered.source.contains(".wireMVCCoding"))
+        #expect(!rendered.source.contains("_wireWireMVCCoding"))
     }
 
     @Test func plainJSONRouteWithPathBinding() {
@@ -202,7 +202,7 @@ struct RouteContributorGenerationTests {
             """
             @Singleton
             @WireMVCBootstrap
-            @Coding(AppCoding.self)
+            @Coding(WireMVCCoding.app)
             struct AppBootstrap {
                 func createServer() throws -> NIOHTTPServer { fatalError() }
             }
@@ -215,7 +215,7 @@ struct RouteContributorGenerationTests {
         )
         #expect(
             entry.contains(
-                "coding: graph._WireGlobalMiddleware_AppBootstrap._wireAppCoding.wireMVCCoding"
+                "coding: graph._WireGlobalMiddleware_AppBootstrap._wireWireMVCCoding_app"
             )
         )
         #expect(!entry.contains("WireMVCCoding.default"), "a declared source replaces the fallback")
