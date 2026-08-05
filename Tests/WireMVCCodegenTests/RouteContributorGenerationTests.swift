@@ -82,6 +82,83 @@ struct RouteContributorGenerationTests {
         #expect(!overrides.contains("_wireWireMVCCoding_controller"))
     }
 
+    /// `@Coding(WireMVCCoding.self)` selects the unkeyed binding by type — the form for an app with one
+    /// coding, where there is nothing to tell apart and so no name to invent. Same dispatch a by-type
+    /// `@Middleware` gets, and the proxy field the plugin lifts is named the same way.
+    @Test func codingSelectsTheUnkeyedBindingByType() throws {
+        let rendered = renderRouteContributorExtension(
+            controller: controller(
+                """
+                @Singleton
+                @Controller("/todos")
+                @Coding(WireMVCCoding.self)
+                struct Todos {
+                    @Get("/{id}") @JSONResponse
+                    func get(@Path id: String) async throws -> Todo { Todo() }
+                }
+                """
+            ),
+            pathPrefix: "/todos",
+            factoryKeys: []
+        )
+        #expect(rendered.source.contains("coding: self._wireWireMVCCoding"))
+        // The by-type field, not the keyed one: a key reference would sanitise its dots to underscores.
+        #expect(!rendered.source.contains("_wireWireMVCCoding_"))
+        #expect(!rendered.source.contains("coding: wireMVCAppCoding"))
+        #expect(rendered.diagnostics.isEmpty)
+    }
+
+    /// Naming the same binding at two nested scopes overrides nothing — it resolves to one value either
+    /// way. Diagnosed rather than ignored, because the author asked for different settings on that route
+    /// and would otherwise get the enclosing scope's silently. The by-type form is what invites it: there
+    /// is only one spelling of the unkeyed binding.
+    @Test func repeatingOneCodingAcrossScopesIsDiagnosed() throws {
+        let rendered = renderRouteContributorExtension(
+            controller: controller(
+                """
+                @Singleton
+                @Controller("/todos")
+                @Coding(WireMVCCoding.self)
+                struct Todos {
+                    @Get("/{id}") @JSONResponse
+                    @Coding(WireMVCCoding.self)
+                    func get(@Path id: String) async throws -> Todo { Todo() }
+                }
+                """
+            ),
+            pathPrefix: "/todos",
+            factoryKeys: []
+        )
+        #expect(
+            rendered.diagnostics.contains {
+                if case .redundantCodingOverride = $0.message { return true } else { return false }
+            }
+        )
+    }
+
+    /// A route overriding with a *different* binding is the case the tiering exists for, so it must not
+    /// trip the diagnostic above.
+    @Test func overridingWithADifferentBindingIsNotDiagnosed() throws {
+        let rendered = renderRouteContributorExtension(
+            controller: controller(
+                """
+                @Singleton
+                @Controller("/todos")
+                @Coding(WireMVCCoding.self)
+                struct Todos {
+                    @Get("/{id}") @JSONResponse
+                    @Coding(WireMVCCoding.reports)
+                    func get(@Path id: String) async throws -> Todo { Todo() }
+                }
+                """
+            ),
+            pathPrefix: "/todos",
+            factoryKeys: []
+        )
+        #expect(rendered.diagnostics.isEmpty)
+        #expect(rendered.source.contains("coding: self._wireWireMVCCoding_reports"))
+    }
+
     /// With no `@Coding` at any inner scope, every route falls back to what the composition root passed —
     /// the third tier, and the one a witness cannot read from its own proxy.
     @Test func routesWithoutCodingUseTheAppTier() throws {

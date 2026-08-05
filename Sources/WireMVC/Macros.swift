@@ -60,6 +60,21 @@ public let wireMVCMiddlewareAlias = WireAdapterAnnotationV1(
 public macro Coding(_ key: BindingKey<WireMVCCoding>) =
     #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
 
+/// `@Coding(WireMVCCoding.self)` names the app's *unkeyed* `WireMVCCoding` binding.
+///
+///     @Provides let coding = WireMVCCoding(json: .init(sortsKeys: true))
+///     @WireMVCBootstrap @Coding(WireMVCCoding.self) struct AppBootstrap { … }
+///
+/// The form for an app with one coding, which is most of them: there is nothing to tell apart, so there
+/// is no name to invent. Both forms exist for the same reason `@Middleware` has both — a key earns its
+/// keep only once a second binding of the type exists.
+///
+/// Naming this one at two nested scopes overrides nothing, since it selects the same binding either way.
+/// That is diagnosed rather than silently ignored.
+@attached(peer)
+public macro Coding(_ type: WireMVCCoding.Type) =
+    #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
+
 /// `@Coding` is lifted by the same capability `@Middleware` uses.
 public let wireMVCCodingAlias = WireAdapterAnnotationV1(
     annotation: "Coding",
