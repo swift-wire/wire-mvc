@@ -1,9 +1,11 @@
 # Controller-scoped testing — a design note
 
-> **Status:** the **typed client half is built** (2026-07-30) — see "What was built" below. The
-> per-controller *bind values* half is not. Originally an idea note, written for revisiting after Phase 5 of
-> `../TestingArchitecture.md`. Related: swift-wire's `PendingIssues/11` (one `TestingKey` per target), which
-> this would partly obviate.
+> **Status:** **both halves are built** — the typed client (2026-07-30, #55–#57) and the per-controller bind
+> values (2026-07-31, swift-wire #240–#241 + wire-mvc #60–#64). What remains is recorded in swift-wire's
+> `PendingIssues/12` (typed failure cases) and `13` (a `@Header` coverage gap).
+>
+> Originally an idea note, written for revisiting after Phase 5 of `../TestingArchitecture.md`. Related:
+> swift-wire's `PendingIssues/11` (one `TestingKey` per target), which this would partly obviate.
 >
 > **Corrected 2026-07-31.** The first draft misread how swift-wire carries its doubles sets, and the three
 > claims that followed from it are fixed below: the accumulation it asked to keep un-merged was already
@@ -50,15 +52,17 @@ for any request a test wants to malform deliberately.
 
 ## The two problems
 
-**Doubles are over-specified.** `withBindValues` takes every `@BindType` slot the `TestingKey` declares,
+*Both are fixed; this section states the starting point the design was reasoning from.*
+
+**Doubles were over-specified.** `withBindValues` took every `@BindType` slot the `TestingKey` declared,
 all required, on every request — even for a route that consumes none of them. In `WireMVCBootstrapExample`,
 `/ping` injects nothing mocked, yet a request to it must still be wrapped in
 `withBindValues(noteBackend:prefsBackendKeyedPrefsKeysPrimary:)`; `mockIgnoringRouteWithoutDoublesIs500`
-asserts that as the decided behaviour. The granularity is wrong: what a request needs is what *its route's
+asserted that as the decided behaviour. The granularity was wrong: what a request needs is what *its route's
 scope* consumes, not what the key happens to declare.
 
-**The client is stringly-typed.** `TestClient.current.get("/notes/x")` re-states a path the codegen already
-knows, decodes a response type the codegen already knows, and can't be checked against either. Renaming a
+**The client was stringly-typed.** `TestClient.current.get("/notes/x")` re-stated a path the codegen already
+knew, decoded a response type the codegen already knew, and couldn't be checked against either. Renaming a
 route, changing a `@Path` parameter's type, or altering a `@JSONResponse` body silently breaks tests at
 runtime instead of at compile time — in a framework whose whole premise is that route shape is derived, not
 hand-maintained.
@@ -69,7 +73,7 @@ One generated entry point per controller, supplying exactly that controller's do
 for exactly its routes:
 
 ```swift
-try await withBindValues(NotesControllerDoubles(noteBackend: mock)) { notes in
+try await withClient(supplying: NotesControllerDoubles(noteBackend: mock)) { notes in
     let note = try await notes.fetchNote(id: "x")     // GET /notes/{id} -> Note
     #expect(note.value == "stamped:mock:x")
 }
@@ -149,10 +153,10 @@ list, and wire-mvc needs to know only the type's **name**. Which is precisely th
 that already works. The call site becomes:
 
 ```swift
-try await withBindValues(NotesControllerDoubles(noteBackend: mock)) { notes in … }
+try await withClient(supplying: NotesControllerDoubles(noteBackend: mock)) { notes in … }
 ```
 
-with wire-mvc emitting a generic pass-through (it already has one — `WireMVCTesting.withBindValues(_:in:_:)`
+with wire-mvc emitting a generic pass-through (it already has one — `WireMVCTesting.withClient(supplying:in:)`
 is generic over the doubles type) and a per-subject `TestBindStore<NotesControllerDoubles>` named by
 convention. The dispatch knows which subject it is, because it is emitted on that subject's variant witness.
 
@@ -160,7 +164,7 @@ So the choice is about ergonomics, not capability:
 
 | | Call site | What wire-mvc must derive |
 |---|---|---|
-| swift-wire emits the struct | `withBindValues(NotesControllerDoubles(noteBackend: mock))` | the type name only — convention |
+| swift-wire emits the struct | `withClient(supplying: NotesControllerDoubles(noteBackend: mock))` | the type name only — convention |
 | wire-mvc emits the wrapper | `withNotesControllerBindValues(noteBackend: mock)` | the full field list — needs the graph |
 
 The first is the cheaper build and keeps the tools' split clean: swift-wire owns anything graph-derived,
@@ -182,16 +186,18 @@ exists to keep. Recorded as option 1 in swift-wire's `PendingIssues/11`.
 
 ## Open questions
 
-- **Non-2xx responses.** A method returning `Note` has to decide what a 400 or a middleware short-circuit
-  means. Tests assert on those constantly (`globalErrorTierMapsToBadRequest`, `notFoundFallbackServes`,
-  `missingDoublesIsExplicit500`). Probably: throw a generated per-route error carrying status + body, with
-  the `@ErrorResponse` tiers naming the expected cases — and keep the raw client reachable for everything
-  else.
-- **Routes with no typed shape.** `@RawRoute` (streaming, SSE, the `@NotFound` fallback) has no derivable
-  signature. Those stay on the raw client.
-- **Cross-controller flows.** The Docker CRUD suite creates through one controller and reads through
-  another. A per-controller client can't express that alone, so `TestClient.current` must remain
-  first-class rather than becoming a fallback nobody maintains.
+- **Non-2xx responses.** *Still open — swift-wire's `PendingIssues/12`.* A method returning `Note` throws
+  `WireMVCRouteError` for any non-2xx, carrying status, body and the request line. That is one type for every
+  route, so a route's **declared** `@ErrorResponse` tiers stay untyped and a test asserting one compares a raw
+  status code. The sketch remains: a generated per-route error naming the declared cases, with the untyped
+  error kept for what a route doesn't declare.
+- ~~**Routes with no typed shape.**~~ **Answered.** A `@RawRoute` gets a *shim* rather than nothing (#56): its
+  payload stays untyped, but its request line is derived, so renaming it is still a compile error. Only
+  `@NotFound` gets no surface — an unmatched path isn't addressable as a route — and `withClient { }` covers it.
+- ~~**Cross-controller flows.**~~ **Answered.** A flow spanning two controllers nests one `withClient(supplying:)`
+  per controller, and each client carries its own correlation id, so an outer controller's client keeps working
+  inside the inner block (`crossControllerFlowDrivesBothClients`). The premise that `TestClient.current` must
+  stay first-class is obsolete: it no longer exists (#62). The untyped escape hatch is `withClient { }`.
 - ~~**Middleware-consumed doubles.**~~ **Answered.** A route-scoped `@Middleware` factory that injects a
   mocked slot is folded into the *subject's* set by swift-wire on both paths, so a BFS from the controller
   root is not the whole story — but the missing piece is already attributed per subject, not something
@@ -203,8 +209,10 @@ exists to keep. Recorded as option 1 in swift-wire's `PendingIssues/11`.
   per-controller set is the reachable-from-subject intersection **union** that proxy's factory-transform
   fields. Note those fields currently land only in the variant-wide struct; per-controller doubles is what
   would consume them per subject.
-- **Keyless suites.** Bind values only exist under a keyed suite; a typed client arguably shouldn't. Or it
-  could be offered keylessly too, as pure route-shape sugar over the real graph.
+- ~~**Keyless suites.**~~ **Answered** in favour of offering it keylessly: `withClient(for:)` hands a keyless
+  suite the same typed client, as pure route-shape sugar over the real graph, while `withClient(supplying:)`
+  is the keyed form that also binds doubles. `ReplaceTests` — a `@Replaces` suite with no `TestingKey` — is
+  the case that settled it, being the typed client's first consumer.
 
 ## Where to start
 
@@ -233,12 +241,12 @@ The pieces this would touch, so a fresh reading doesn't have to rediscover them.
   `@JSONResponse`/`@ResponseStatus` mode, and the `@ErrorResponse` tiers (which give the declared failure
   statuses).
 - `WireMVCCodegen/KeyedHarnessGeneration.swift` — `renderKeyedHarnessStatics` emits today's per-key
-  `TestBindStore` + `withBindValues`; this is what a per-controller entry point replaces.
+  `TestBindStore` + `withBindValues`; a per-controller entry point replaced it.
 - `WireMVCCodegen/RouteCodegen.swift`'s `scopeEntryPreamble` — where a request's doubles are correlated off
   the `X-WireMVC-Test-Binds` header and where the missing-doubles 500 is written. A per-route check lands
   here.
-- `WireMVCTesting/TestBindStore.swift` — `WireMVCTesting.withBindValues(_:in:_:)` is already generic over the
-  doubles type, so it needs no change if swift-wire emits the struct.
+- `WireMVCTesting/TestBindStore.swift` — `WireMVCTesting.withClient(supplying:in:)` is generic over the
+  doubles type, so it needed no change once swift-wire emitted the struct.
 
 **Sequencing note.** The typed client needed nothing from swift-wire, so it landed first and independently of
 the doubles question (#55–#57) — it was also the half that pays off in every suite, keyed or not. What remains

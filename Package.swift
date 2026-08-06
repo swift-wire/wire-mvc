@@ -274,6 +274,20 @@ let package = Package(
             dependencies: ["WireMVC"],
             swiftSettings: proposalSettings
         ),
+        // `WireMVCOutcome` — the value every typed route sends. Hand-writes a recording
+        // `HTTPResponseSender` over the proposal's associated types (as `WireMVCTestingTests` does for the
+        // reader side), so the send path is asserted without a server or the testing harness.
+        .testTarget(
+            name: "WireMVCResponsesTests",
+            dependencies: [
+                "WireMVC",
+                .product(name: "HTTPAPIs", package: "swift-http-api-proposal"),
+                .product(name: "HTTPTypes", package: "swift-http-types"),
+                .product(name: "AsyncStreaming", package: "swift-async-algorithms"),
+                .product(name: "BasicContainers", package: "swift-collections"),
+            ],
+            swiftSettings: proposalSettings
+        ),
         .testTarget(
             name: "WireMVCRouterTests",
             dependencies: [
