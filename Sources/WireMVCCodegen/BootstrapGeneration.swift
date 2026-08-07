@@ -400,9 +400,17 @@ func middlewareFactoryConstructions(
 func renderNotFoundRegistration(
     bootstrap: ControllerDeclaration
 ) -> (registration: String, diagnostics: [RouteCodegenDiagnostic]) {
+    // Binds the context and resolves, like every other route: a global `@Middleware` contributing a header
+    // must reach the 404 too, and this is the fallback *most* apps get — the authored `@NotFound` is the
+    // exception, not the default. Writing the head bare here would drop the contributions on exactly the
+    // path nobody declared and therefore nobody thinks to check.
     let synth404 = """
-        builder.registerNotFound { _, _, _, _, responseSender in
-        try await responseSender.sendAndFinish(HTTPResponse(status: .notFound))
+        builder.registerNotFound { _, requestContext, _, _, responseSender in
+        let \(responseHeaderDrainLocal) = requestContext.responseHeaders
+        try await WireMVCOutcome.status(
+        .notFound,
+        headerFields: WireMVCResponseHeaders.resolved(middleware: try await \(responseHeaderDrainLocal).drain())
+        ).send(on: responseSender)
         }
         """
     guard let notFound = bootstrap.functions.first(where: hasNotFoundAttribute) else {
