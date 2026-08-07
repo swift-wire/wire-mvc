@@ -5,6 +5,7 @@ import HTTPTypes
 import ServiceLifecycle
 import Synchronization
 import Testing
+import WireMVC
 
 @testable import WireMVCTesting
 
@@ -30,14 +31,16 @@ private final class RecordingService: Service, Sendable {
 }
 
 /// Answers 200 to anything — the suite is about services, not routing.
+/// Serves under the courier, like every real WireMVC handler: `runSuite` serves on a
+/// `WireMVCContextServer`, so the handler it is given sees `WireMVCContext<…>` as its context.
 private struct OKHandler: HTTPServerRequestHandler {
-    typealias RequestContext = InProcessRequestContext
+    typealias RequestContext = WireMVCContext<InProcessRequestContext>
     typealias Reader = InProcessReader
     typealias ResponseSender = InProcessResponseSender
 
     func handle(
         request: HTTPRequest,
-        requestContext: consuming InProcessRequestContext,
+        requestContext: consuming WireMVCContext<InProcessRequestContext>,
         reader: consuming sending InProcessReader,
         responseSender: consuming sending InProcessResponseSender
     ) async throws {
@@ -53,7 +56,7 @@ private struct OKHandler: HTTPServerRequestHandler {
         let mode = WireMVCTestMode.inProcess
         try await WireMVCTesting.runSuite(
             mode,
-            on: mode.makeTestServer(),
+            on: WireMVCContextServer(mode.makeTestServer()),
             handler: OKHandler(),
             services: [service]
         ) {
@@ -70,7 +73,7 @@ private struct OKHandler: HTTPServerRequestHandler {
         let mode = WireMVCTestMode.inProcess
         try await WireMVCTesting.runSuite(
             mode,
-            on: mode.makeTestServer(),
+            on: WireMVCContextServer(mode.makeTestServer()),
             handler: OKHandler(),
             services: [service],
             servicePolicy: .run

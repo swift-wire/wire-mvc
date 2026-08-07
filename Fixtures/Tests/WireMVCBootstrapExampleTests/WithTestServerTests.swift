@@ -88,3 +88,39 @@ struct ResponseHeaderOverTheWireTests {
         }
     }
 }
+
+// The global tier reaching responses it could not reach before. `AccessLog` is the app's global
+// `@Middleware`; it contributes `x-served-by` on the way in, and the courier carries that registry from the
+// front layer down to whatever writes the response.
+@Suite(.wiremvc(.swiftHttpServer))
+struct GlobalMiddlewareHeaderTests {
+    /// A route with **no `@Middleware` of its own** — the case that matters, because it is most routes.
+    /// Its terminal drains the registry the front layer created, so the global contribution lands.
+    @Test func globalContributionReachesARouteWithNoMiddleware() async throws {
+        try await withClient { client in
+            let response = try await client.get("/hello/cached/Ada")
+            #expect(response.status == 200)
+            #expect(response.head?.headerFields[.init("x-served-by")!] == "wire-mvc")
+        }
+    }
+
+    /// A `@RawRoute` writes its own head, so there is no outcome to inject into — its sender is wrapped
+    /// instead. Without that, a global header would vanish on every raw route.
+    @Test func globalContributionReachesARawRoute() async throws {
+        try await withClient { client in
+            let response = try await client.get("/hello/raw/Ada")
+            #expect(response.status == 200)
+            #expect(response.head?.headerFields[.init("x-served-by")!] == "wire-mvc")
+        }
+    }
+
+    /// The `@NotFound` fallback must be `@RawRoute`, so before the sender wrapper it was the one response
+    /// that could never carry a global header — exactly where CORS or a security header is wanted.
+    @Test func globalContributionReachesTheNotFoundFallback() async throws {
+        try await withClient { client in
+            let response = try await client.get("/no/such/route")
+            #expect(response.status == 404)
+            #expect(response.head?.headerFields[.init("x-served-by")!] == "wire-mvc")
+        }
+    }
+}

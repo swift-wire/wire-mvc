@@ -5,6 +5,7 @@ import HTTPAPIs
 import HTTPTypes
 import Synchronization
 import Testing
+import WireMVC
 
 @testable import WireMVCTesting
 
@@ -15,13 +16,13 @@ import Testing
 /// Echoes the resolved request line so a test can assert what reached the route, and answers a non-2xx for
 /// paths that ask for one.
 private struct RouteEchoHandler: HTTPServerRequestHandler {
-    typealias RequestContext = InProcessRequestContext
+    typealias RequestContext = WireMVCContext<InProcessRequestContext>
     typealias Reader = InProcessReader
     typealias ResponseSender = InProcessResponseSender
 
     func handle(
         request: HTTPRequest,
-        requestContext: consuming InProcessRequestContext,
+        requestContext: consuming WireMVCContext<InProcessRequestContext>,
         reader: consuming sending InProcessReader,
         responseSender: consuming sending InProcessResponseSender
     ) async throws {
@@ -57,7 +58,7 @@ private final class WriteProgress: Sendable {
 
 /// Streams three chunks, counting the writes it has completed so a reader can observe how far ahead it got.
 private struct ChunkedHandler: HTTPServerRequestHandler {
-    typealias RequestContext = InProcessRequestContext
+    typealias RequestContext = WireMVCContext<InProcessRequestContext>
     typealias Reader = InProcessReader
     typealias ResponseSender = InProcessResponseSender
 
@@ -65,7 +66,7 @@ private struct ChunkedHandler: HTTPServerRequestHandler {
 
     func handle(
         request: HTTPRequest,
-        requestContext: consuming InProcessRequestContext,
+        requestContext: consuming WireMVCContext<InProcessRequestContext>,
         reader: consuming sending InProcessReader,
         responseSender: consuming sending InProcessResponseSender
     ) async throws {
@@ -114,7 +115,12 @@ private struct ChunkedHandler: HTTPServerRequestHandler {
     /// The resolved line is what actually reaches the route, not just what the helper computed.
     @Test func theResolvedPathReachesTheRoute() async throws {
         let mode = WireMVCTestMode.inProcess
-        try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: RouteEchoHandler(), services: []) {
+        try await WireMVCTesting.runSuite(
+            mode,
+            on: WireMVCContextServer(mode.makeTestServer()),
+            handler: RouteEchoHandler(),
+            services: []
+        ) {
             let response = try await TestClient.forSuite.routeResponse(
                 method: "GET",
                 path: "/notes/{id}",
@@ -129,7 +135,12 @@ private struct ChunkedHandler: HTTPServerRequestHandler {
     /// methods return a decoded value, so this is where a failure surfaces.
     @Test func nonSuccessThrowsWithStatusAndBody() async throws {
         let mode = WireMVCTestMode.inProcess
-        try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: RouteEchoHandler(), services: []) {
+        try await WireMVCTesting.runSuite(
+            mode,
+            on: WireMVCContextServer(mode.makeTestServer()),
+            handler: RouteEchoHandler(),
+            services: []
+        ) {
             let error = try await #require(throws: WireMVCRouteError.self) {
                 try await TestClient.forSuite.routeResponse(method: "GET", path: "/fail")
             }
@@ -145,7 +156,12 @@ private struct ChunkedHandler: HTTPServerRequestHandler {
     /// would lose it.
     @Test func theRawFormHandsOverTheHeadAndReader() async throws {
         let mode = WireMVCTestMode.inProcess
-        try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: RouteEchoHandler(), services: []) {
+        try await WireMVCTesting.runSuite(
+            mode,
+            on: WireMVCContextServer(mode.makeTestServer()),
+            handler: RouteEchoHandler(),
+            services: []
+        ) {
             let text = try await TestClient.forSuite.performRawRoute(method: "GET", path: "/fail") {
                 response,
                 reader in
@@ -162,7 +178,12 @@ private struct ChunkedHandler: HTTPServerRequestHandler {
     /// since neither transport is incremental yet, but expressed in the shape that survives that change.
     @Test func aStreamedRequestBodyReachesTheRoute() async throws {
         let mode = WireMVCTestMode.inProcess
-        try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: RouteEchoHandler(), services: []) {
+        try await WireMVCTesting.runSuite(
+            mode,
+            on: WireMVCContextServer(mode.makeTestServer()),
+            handler: RouteEchoHandler(),
+            services: []
+        ) {
             let echoed = try await TestClient.forSuite.performRawRoute(
                 method: "POST",
                 path: "/echo-body",
@@ -189,7 +210,12 @@ private struct ChunkedHandler: HTTPServerRequestHandler {
         let progress = WriteProgress()
         let handler = ChunkedHandler(progress: progress)
         let mode = WireMVCTestMode.inProcess
-        try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: handler, services: []) {
+        try await WireMVCTesting.runSuite(
+            mode,
+            on: WireMVCContextServer(mode.makeTestServer()),
+            handler: handler,
+            services: []
+        ) {
             let all = try await TestClient.forSuite.performRawRoute(method: "GET", path: "/chunks") {
                 response,
                 reader in
@@ -224,7 +250,12 @@ private struct ChunkedHandler: HTTPServerRequestHandler {
     @Test func jsonBodyIsEncodedAndSent() async throws {
         struct Payload: Codable { let note: String }
         let mode = WireMVCTestMode.inProcess
-        try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: RouteEchoHandler(), services: []) {
+        try await WireMVCTesting.runSuite(
+            mode,
+            on: WireMVCContextServer(mode.makeTestServer()),
+            handler: RouteEchoHandler(),
+            services: []
+        ) {
             let response = try await TestClient.forSuite.routeResponse(
                 method: "POST",
                 path: "/notes",

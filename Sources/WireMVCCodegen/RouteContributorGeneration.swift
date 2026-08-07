@@ -18,7 +18,7 @@ private let witnessSignature = """
         coding wireMVCAppCoding: WireMVCCoding
     ) throws
     where
-        Builder.RequestContext: ~Copyable,
+        Builder.RequestContext: ~Copyable & ResponseHeaderCarrying,
         Builder.Reader: ~Copyable,
         Builder.ResponseSender: ~Copyable,
         Builder.ResponseSender.Writer: ~Copyable

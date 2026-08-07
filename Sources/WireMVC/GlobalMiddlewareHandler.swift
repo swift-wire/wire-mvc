@@ -30,7 +30,10 @@ where
     Inner.ResponseSender: ~Copyable,
     Inner.ResponseSender.Writer: ~Copyable,
     Chain.Input == RequestResponseMiddlewareBox<Inner.RequestContext, Inner.Reader, Inner.ResponseSender>,
-    Chain.NextInput == Chain.Input
+    Chain.NextInput == Chain.Input,
+    // The front layer's box must carry the *same* registry the routes below will drain, so it reads it off
+    // the context rather than making one. Stated as a capability so this stays generic over the context.
+    Inner.RequestContext: ResponseHeaderCarrying
 {
     let inner: Inner
     let chain: Chain
@@ -46,17 +49,16 @@ where
         reader: consuming sending Inner.Reader,
         responseSender: consuming sending Inner.ResponseSender
     ) async throws {
+        let registry = requestContext.responseHeaders
         let box = RequestResponseMiddlewareBox<Inner.RequestContext, Inner.Reader, Inner.ResponseSender>
             .pending(
                 request: request,
                 requestContext: requestContext,
                 reader: reader,
                 responseSender: responseSender,
-                // The front layer's own box. Its registry is *not* the one a route's terminal drains — the
-                // route builds a fresh box inside `inner.handle` — so a global middleware contributing a
-                // header reaches only a response this layer writes itself. See the note in
-                // Notes/WireMVCDesign.md; wiring the two together is follow-up work.
-                responseHeaders: ResponseHeaderRegistry()
+                // The courier's registry, not a fresh one — this is what makes a global middleware's
+                // contribution reach a route's terminal, which builds its own box further down.
+                responseHeaders: registry
             )
         try await chain.intercept(input: box) { finalBox in
             try await finalBox.withPendingContents { request, requestContext, reader, responseSender in

@@ -4,6 +4,7 @@ import Foundation
 import HTTPAPIs
 import HTTPTypes
 import Testing
+import WireMVC
 
 @testable import WireMVCTesting
 
@@ -17,13 +18,13 @@ import Testing
 /// Echoes the request body, its method/path, and any header the request asked to be reflected. `/stream`
 /// takes the raw path (`send` then incremental writes); everything else takes the one-shot path.
 private struct EchoHandler: HTTPServerRequestHandler {
-    typealias RequestContext = InProcessRequestContext
+    typealias RequestContext = WireMVCContext<InProcessRequestContext>
     typealias Reader = InProcessReader
     typealias ResponseSender = InProcessResponseSender
 
     func handle(
         request: HTTPRequest,
-        requestContext: consuming InProcessRequestContext,
+        requestContext: consuming WireMVCContext<InProcessRequestContext>,
         reader: consuming sending InProcessReader,
         responseSender: consuming sending InProcessResponseSender
     ) async throws {
@@ -59,13 +60,13 @@ private struct EchoHandler: HTTPServerRequestHandler {
 /// A handler that returns without ever responding — the one case with no wire analogue, since live the
 /// server aborts the connection instead.
 private struct SilentHandler: HTTPServerRequestHandler {
-    typealias RequestContext = InProcessRequestContext
+    typealias RequestContext = WireMVCContext<InProcessRequestContext>
     typealias Reader = InProcessReader
     typealias ResponseSender = InProcessResponseSender
 
     func handle(
         request: HTTPRequest,
-        requestContext: consuming InProcessRequestContext,
+        requestContext: consuming WireMVCContext<InProcessRequestContext>,
         reader: consuming sending InProcessReader,
         responseSender: consuming sending InProcessResponseSender
     ) async throws {}
@@ -80,7 +81,12 @@ private struct SilentHandler: HTTPServerRequestHandler {
     /// reaches it with its method and path intact.
     @Test func driverBindsClientAndRoutesMethodAndPath() async throws {
         let mode = WireMVCTestMode.inProcess
-        try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: EchoHandler(), services: []) {
+        try await WireMVCTesting.runSuite(
+            mode,
+            on: WireMVCContextServer(mode.makeTestServer()),
+            handler: EchoHandler(),
+            services: []
+        ) {
             let get = try await TestClient.forSuite.get("/hello")
             #expect(get.status == 200)
             #expect(get.bodyText == "GET /hello|")
@@ -96,7 +102,12 @@ private struct SilentHandler: HTTPServerRequestHandler {
     /// never exercises — and the `Content-Type` the client sets arrives as a header field.
     @Test func requestBodyAndHeadersReachTheHandler() async throws {
         let mode = WireMVCTestMode.inProcess
-        try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: EchoHandler(), services: []) {
+        try await WireMVCTesting.runSuite(
+            mode,
+            on: WireMVCContextServer(mode.makeTestServer()),
+            handler: EchoHandler(),
+            services: []
+        ) {
             let response = try await TestClient.forSuite.post(
                 "/notes",
                 json: Payload(note: "hi"),
@@ -112,7 +123,12 @@ private struct SilentHandler: HTTPServerRequestHandler {
     /// whole concatenation — the route logic is covered, its streaming *behaviour* is not.
     @Test func streamedWritesAccumulateIntoOneBody() async throws {
         let mode = WireMVCTestMode.inProcess
-        try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: EchoHandler(), services: []) {
+        try await WireMVCTesting.runSuite(
+            mode,
+            on: WireMVCContextServer(mode.makeTestServer()),
+            handler: EchoHandler(),
+            services: []
+        ) {
             let response = try await TestClient.forSuite.get("/stream")
             #expect(response.status == 202)
             #expect(response.bodyText == "onetwothree")
@@ -123,7 +139,12 @@ private struct SilentHandler: HTTPServerRequestHandler {
     /// inventing a plausible 500.
     @Test func handlerThatNeverRespondsIsDistinguishable() async throws {
         let mode = WireMVCTestMode.inProcess
-        try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: SilentHandler(), services: []) {
+        try await WireMVCTesting.runSuite(
+            mode,
+            on: WireMVCContextServer(mode.makeTestServer()),
+            handler: SilentHandler(),
+            services: []
+        ) {
             let response = try await TestClient.forSuite.get("/anything")
             #expect(response.status == -1)
             #expect(response.body.isEmpty)

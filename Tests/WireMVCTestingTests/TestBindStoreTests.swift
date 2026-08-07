@@ -3,6 +3,7 @@ import HTTPAPIs
 import HTTPTypes
 import Synchronization
 import Testing
+import WireMVC
 
 @testable import WireMVCTesting
 
@@ -19,13 +20,13 @@ private struct Doubles: Sendable, Equatable {
 /// A minimal handler for the suites these tests stand up — `withClient(supplying:)` hands out a client, so
 /// it needs a running suite to take one from.
 private struct OKHandler: HTTPServerRequestHandler {
-    typealias RequestContext = InProcessRequestContext
+    typealias RequestContext = WireMVCContext<InProcessRequestContext>
     typealias Reader = InProcessReader
     typealias ResponseSender = InProcessResponseSender
 
     func handle(
         request: HTTPRequest,
-        requestContext: consuming InProcessRequestContext,
+        requestContext: consuming WireMVCContext<InProcessRequestContext>,
         reader: consuming sending InProcessReader,
         responseSender: consuming sending InProcessResponseSender
     ) async throws {
@@ -56,7 +57,12 @@ private struct OKHandler: HTTPServerRequestHandler {
         let store = TestBindStore<Doubles>()
         let mode = WireMVCTestMode.inProcess
         let observed = Mutex<CorrelationID?>(nil)
-        try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: OKHandler(), services: []) {
+        try await WireMVCTesting.runSuite(
+            mode,
+            on: WireMVCContextServer(mode.makeTestServer()),
+            handler: OKHandler(),
+            services: []
+        ) {
             let id = try await WireMVCTesting.withClient(supplying: Doubles(value: 3), in: store) { client in
                 let id = try #require(client.boundCorrelationID)
                 // The double is in the store under the client's id for the duration of the closure.
@@ -77,7 +83,12 @@ private struct OKHandler: HTTPServerRequestHandler {
         let captured = Mutex<CorrelationID?>(nil)
         let mode = WireMVCTestMode.inProcess
 
-        try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: OKHandler(), services: []) {
+        try await WireMVCTesting.runSuite(
+            mode,
+            on: WireMVCContextServer(mode.makeTestServer()),
+            handler: OKHandler(),
+            services: []
+        ) {
             await #expect(throws: MarkerError.self) {
                 try await WireMVCTesting.withClient(supplying: Doubles(value: 9), in: store) { client in
                     captured.withLock { $0 = client.boundCorrelationID }
@@ -97,7 +108,12 @@ private struct OKHandler: HTTPServerRequestHandler {
         let mode = WireMVCTestMode.inProcess
         let results = Mutex<[(CorrelationID, Doubles?)]>([])
 
-        try await WireMVCTesting.runSuite(mode, on: mode.makeTestServer(), handler: OKHandler(), services: []) {
+        try await WireMVCTesting.runSuite(
+            mode,
+            on: WireMVCContextServer(mode.makeTestServer()),
+            handler: OKHandler(),
+            services: []
+        ) {
             async let first = WireMVCTesting.withClient(supplying: Doubles(value: 100), in: store) {
                 (client: TestClient) -> (CorrelationID, Doubles?) in
                 let id = try #require(client.boundCorrelationID)
