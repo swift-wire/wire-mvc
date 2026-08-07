@@ -173,6 +173,14 @@ public struct TestClient: Sendable {
         var request = URLRequest(url: URL(string: "http://\(host):\(port)\(path)")!)
         request.httpMethod = method
         request.httpBody = body
+        // The caller's headers are authoritative. `URLSession.shared` otherwise manages cookies through the
+        // process-wide `HTTPCookieStorage`: it stores every `Set-Cookie` a route sends and then *replaces* a
+        // manually-set `Cookie` header with whatever it has stored for that host. A suite that logs in twice
+        // therefore sends the second login's cookie on a request that explicitly carries the first, and the
+        // route answers as the wrong user — silently, and only on the platform whose Foundation does the
+        // rewriting, which is why this reproduced on Linux CI and not on macOS. Any cookie-based test is
+        // untestable without this.
+        request.httpShouldHandleCookies = false
         for (name, value) in headers {
             request.setValue(value, forHTTPHeaderField: name)
         }

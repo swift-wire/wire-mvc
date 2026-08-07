@@ -209,6 +209,25 @@ private struct OKHandler: HTTPServerRequestHandler {
 @Suite struct TestClientHeaderTests {
     /// The loopback transport's half of the stamping rule: the header is present exactly when the *client*
     /// carries an id, not when the call happens to sit inside a closure.
+    /// The caller's headers are authoritative — `URLSession` must not manage cookies for us.
+    ///
+    /// With this on, the shared `HTTPCookieStorage` accumulates every `Set-Cookie` a route sends and then
+    /// *replaces* an explicitly-set `Cookie` header with whatever it has stored. A suite that logs in twice
+    /// then sends the second session's cookie on a request that explicitly carries the first, and the route
+    /// answers as the wrong user — with no error, and only on the platform whose Foundation rewrites it.
+    /// It made a cookie-based session example fail on Linux CI while passing on macOS.
+    @Test func doesNotLetURLSessionManageCookies() {
+        let client = TestClient(host: "127.0.0.1", port: 8080)
+        let request = client.makeRequest(
+            "GET",
+            "/me",
+            body: nil,
+            headers: ["Cookie": "session=first"]
+        )
+        #expect(request.httpShouldHandleCookies == false)
+        #expect(request.value(forHTTPHeaderField: "Cookie") == "session=first")
+    }
+
     @Test func stampsHeaderWhenTheClientCarriesAnID() {
         let unbound = TestClient(host: "127.0.0.1", port: 8080)
         #expect(
