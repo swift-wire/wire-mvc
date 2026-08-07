@@ -196,3 +196,35 @@ package struct CartController: Sendable {
     @JSONResponse
     package func cart(@Path id: String) -> Note { Note(value: cart.registry.tag) }
 }
+
+/// A **seedless** `@TestScopable` controller with a **parameterless** route — the shape that regressed.
+///
+/// Its variant witness needs `request` to correlate the suite's per-request doubles, but nothing else about
+/// this route does: there is no `@Path`/`@Query`/`@JSONBody` to bind, and no `@Scoped(seed:)` whose entry
+/// would need the request as a seed. Both of the conditions that used to decide whether the register closure
+/// bound `request` were therefore false, and the emitted preamble referenced a name that was not in scope.
+///
+/// It is app-`@Singleton` (not `@Scoped(seed:)`) on purpose: `@TestScopable` is what rebuilds it per request
+/// under a keyed suite, and that is the path with no seed. Kept here rather than in a test target so the
+/// *production* witness is emitted too, and the keyed suite adds the variant on top.
+@TestScopable
+@Singleton
+@Controller("/registry")
+package struct RegistryController: Sendable {
+    @Inject var registry: AccountRegistry
+
+    @Get
+    @JSONResponse
+    package func tag() -> Note {
+        Note(value: registry.tag)
+    }
+
+    /// The sibling shape: the same seedless keyed witness, but a route that *does* bind — a `@JSONBody`, so
+    /// `reader` is bound for the body collect and `pathParameters` for the bind call. Pins that the variant
+    /// preamble coexists with both rather than only with the no-binding case above.
+    @Post("/tag")
+    @JSONResponse
+    package func retag(@JSONBody note: Note) -> Note {
+        Note(value: "\(registry.tag):\(note.value)")
+    }
+}
