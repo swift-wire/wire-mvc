@@ -15,6 +15,9 @@ import WireMVC
 @Controller("/hello")
 package struct HelloController<G: Greeter> {
     @Inject let greeter: G
+    /// The same binding `StampMiddleware` injects — how the handler's result reaches a middleware that
+    /// contributes a header after the handler has run.
+    @Inject let greetingLog: GreetingLog
 
     @Get("/{name}")
     @JSONResponse
@@ -61,7 +64,9 @@ package struct HelloController<G: Greeter> {
     @ResponseHeader(.init("x-stamp")!, "route")
     @ResponseHeader(.cacheControl, "no-store")
     package func stamped(@Path name: String) -> Greeting {
-        StampKeys.lastGreeted = name
+        // Written to the graph-injected store, which the middleware reads at drain — the handler and the
+        // middleware meet through the graph, not through a global.
+        greetingLog.record(name, for: name)
         return Greeting(message: greeter.greet(name))
     }
 
