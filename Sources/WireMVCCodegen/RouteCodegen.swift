@@ -59,6 +59,13 @@ struct RouteBlockGenerator {
     var doublesThreadedFactoryKeys: Set<String> = []
     private(set) var diagnostics: [RouteCodegenDiagnostic] = []
 
+    /// Record a route-shape diagnostic. The array keeps its `private(set)` setter and this is the one way
+    /// in, so the response half (ResponseCodegen.swift) can report without the storage becoming writable
+    /// module-wide.
+    mutating func record(_ diagnostic: RouteCodegenDiagnostic) {
+        diagnostics.append(diagnostic)
+    }
+
     /// The expression the witness calls the controller through — a per-request `wireMVCController` local for a
     /// scoped controller *or any variant witness* (which reconstructs the subject per request), else the held
     /// subject field (`self._wireSubject`) for a production app-`@Singleton` controller.
@@ -149,6 +156,8 @@ struct RouteBlockGenerator {
         let controllerMiddleware = middlewareConstructions(from: controller.attributes)
         // Controller-scope `@ErrorResponse` covers every route, consulted after each route's own.
         let controllerErrorMappings = errorMappings(from: controller.attributes, scopeLabel: "controller")
+        // Controller-scope `@ResponseHeader` constants cover every route; a route naming the same field wins.
+        let controllerResponseHeaders = responseHeaderEntries(from: controller.attributes, scopeLabel: "controller")
         controllerCoding = codingKey(from: controller.attributes)?.reference
         var blocks: [String] = []
         for function in controller.functions {
@@ -176,7 +185,8 @@ struct RouteBlockGenerator {
                 verb: verb,
                 prefix: pathPrefix,
                 controllerMiddleware: controllerMiddleware,
-                controllerErrorMappings: controllerErrorMappings
+                controllerErrorMappings: controllerErrorMappings,
+                controllerResponseHeaders: controllerResponseHeaders
             ) {
                 blocks.append(block)
             }
@@ -189,19 +199,33 @@ struct RouteBlockGenerator {
         verb: Verb,
         prefix: String,
         controllerMiddleware: [String],
-        controllerErrorMappings: [ErrorMapping]
+        controllerErrorMappings: [ErrorMapping],
+        controllerResponseHeaders: [ResponseHeaderEntry]
     ) -> String? {
         let path = joinPath(prefix, verb.path ?? "")
         let middleware = controllerMiddleware + middlewareConstructions(from: function.attributes)
         if hasRawRoute(function) {
+            // A raw handler writes its own response, so it has no outcome for these to land in. Silently
+            // ignoring them would look like they applied.
+            let raw = responseHeaderEntries(from: function.attributes, scopeLabel: "route")
+            if !raw.isEmpty || !controllerResponseHeaders.isEmpty {
+                diagnostics.append(
+                    RouteCodegenDiagnostic(.responseHeaderOnRawRoute(function.name.text), at: function.name)
+                )
+            }
             return rawRouteBlock(function: function, verb: verb, path: path, middleware: middleware)
         }
+        // Tier order is application order: controller entries first, the route's after, so the route's
+        // `.set` replaces and its `.append` adds. Nothing is filtered out here.
+        let staticHeaders =
+            controllerResponseHeaders + responseHeaderEntries(from: function.attributes, scopeLabel: "route")
         let hasBody = routeHasBody(function)
         guard let (binds, callArgs) = parameterBindings(of: function, path: path, hasBody: hasBody)
         else { return nil }
         let hasBinds = !binds.isEmpty
         let call = "try await \(subjectExpression).\(function.name.text)(\(callArgs.joined(separator: ", ")))"
-        guard let response = responseComputation(from: function, call: call) else { return nil }
+        guard let response = responseComputation(from: function, call: call, staticHeaders: staticHeaders)
+        else { return nil }
         // Route-scope `@ErrorResponse` is consulted before the controller's (route overrides controller);
         // the Bootstrap's global tier is the default, consulted last (M5.5 Phase 3).
         let errorMappings =
@@ -613,39 +637,6 @@ extension RouteBlockGenerator {
         return "try await \(binding.wrapper)<\(type)>.bind(\(args))"
     }
 
-    /// The statement that assigns `wireMVCOutcome`: a JSON body (`@JSONResponse`) or a bare status
-    /// (`@ResponseStatus`, after calling the handler for its effect). One response annotation is
-    /// required.
-    fileprivate mutating func responseComputation(from function: FunctionDeclSyntax, call: String) -> String? {
-        let attributes = function.attributes
-        let route = function.name.text
-        let returnsValue = functionReturnsValue(function)
-        if let status = jsonResponseStatus(from: attributes) {
-            guard returnsValue else {
-                diagnostics.append(RouteCodegenDiagnostic(.jsonResponseOnVoid(route), at: function.name))
-                return nil
-            }
-            return "wireMVCOutcome = try WireMVCResponse.json(\(call), status: \(status), coding: \(codingExpression))"
-        }
-        if let status = responseStatus(from: attributes) {
-            guard !returnsValue else {
-                diagnostics.append(RouteCodegenDiagnostic(.responseStatusOnValue(route), at: function.name))
-                return nil
-            }
-            return "\(call)\nwireMVCOutcome = .status(\(status))"
-        }
-        diagnostics.append(RouteCodegenDiagnostic(.missingResponseAnnotation(route), at: function.name))
-        return nil
-    }
-
-    /// Whether the handler returns a non-`Void` value — drives the `@JSONResponse`/`@ResponseStatus`
-    /// vs. signature check. No return clause, or `Void`/`()`, is treated as Void.
-    private func functionReturnsValue(_ function: FunctionDeclSyntax) -> Bool {
-        guard let returnType = function.signature.returnClause?.type else { return false }
-        let text = returnType.trimmedDescription
-        return text != "Void" && text != "()"
-    }
-
     /// The registration closure body. Compute the outcome — collecting the body first when a
     /// `@JSONBody` is present, mapping a `WireMVCBindingError` to its status — then send it once.
     ///
@@ -694,6 +685,9 @@ extension RouteBlockGenerator {
     }
 }
 
+// The response half — `responseComputation`, the response-tuple shape, and `@ResponseHeader` — lives in
+// ResponseCodegen.swift.
+
 // MARK: - Attribute reading
 
 extension RouteBlockGenerator {
@@ -729,24 +723,8 @@ extension RouteBlockGenerator {
 
     /// The `@JSONResponse` status expression (verbatim), `.ok` if present without a status, or `nil`
     /// if there's no `@JSONResponse`.
-    private func jsonResponseStatus(from attributes: AttributeListSyntax) -> String? {
-        for case let .attribute(attr) in attributes where attr.attributeName.trimmedDescription == "JSONResponse" {
-            guard case let .argumentList(list) = attr.arguments else { return ".ok" }
-            let statusArg = list.first { $0.label?.text == "status" }
-            return statusArg?.expression.trimmedDescription ?? ".ok"
-        }
-        return nil
-    }
-
+    /// that appends or defers is exactly what a repeatable field wants, so it passes.
     /// The `@ResponseStatus(_)` status expression (verbatim), or `nil` if absent.
-    private func responseStatus(from attributes: AttributeListSyntax) -> String? {
-        for case let .attribute(attr) in attributes where attr.attributeName.trimmedDescription == "ResponseStatus" {
-            guard case let .argumentList(list) = attr.arguments, let first = list.first else { continue }
-            return first.expression.trimmedDescription
-        }
-        return nil
-    }
-
     /// Join a controller prefix and a verb subpath into one `{name}`-template path.
     private func joinPath(_ prefix: String, _ sub: String) -> String {
         routeJoinPath(prefix, sub)
@@ -756,6 +734,13 @@ extension RouteBlockGenerator {
 /// The binding-wrapper attribute names a handler parameter can carry. File-scope (not a stored property)
 /// so the generator's methods can live in extensions.
 let routeBindingWrappers: Set<String> = ["Path", "Query", "JSONBody", "Header"]
+
+/// The labels a route's **response tuple** return may carry, in canonical order. A handler returns either
+/// its body alone or a labelled tuple naming what it wants to say about the response alongside it:
+/// `-> (status: HTTPResponse.Status, headers: HTTPFields, body: Document)`, or any suffix-subset of that
+/// ending in `body`.
+///
+/// Keyed on **labels**, not element type spellings. A syntactic macro can only compare type text, so
 
 // MARK: - Error response codegen (`@ErrorResponse`)
 

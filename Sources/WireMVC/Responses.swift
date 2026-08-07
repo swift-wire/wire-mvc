@@ -102,6 +102,108 @@ public struct WireMVCOutcome: Sendable {
     }
 }
 
+/// What a contributor does to a field it names. The vocabulary is the ecosystem's, not an invention here:
+/// Go's `Header.Set`/`Add`, the Rust `http` crate's `insert`/`append`, tower-http's
+/// `SetResponseHeaderLayer::overriding`/`appending`/`if_not_present`. Every one of them exists because
+/// `Set-Cookie` cannot be folded, and every header contributor eventually needs the distinction.
+public enum ResponseHeaderVerb: Sendable {
+    /// Replace every value this field already has.
+    case set
+    /// Add a value, keeping the ones already there — a **separate field line**, never a folded value.
+    case append
+    /// Set only if the field is absent, so a contributor further in wins.
+    case setIfAbsent
+}
+
+/// One contribution to the response's header fields. The case *is* the verb.
+public enum ResponseHeaderContribution: Sendable {
+    case set(HTTPField.Name, String)
+    case append(HTTPField.Name, String)
+    case setIfAbsent(HTTPField.Name, String)
+
+    var name: HTTPField.Name {
+        switch self {
+        case let .set(name, _), let .append(name, _), let .setIfAbsent(name, _): name
+        }
+    }
+
+    var value: String {
+        switch self {
+        case let .set(_, value), let .append(_, value), let .setIfAbsent(_, value): value
+        }
+    }
+
+    var verb: ResponseHeaderVerb {
+        switch self {
+        case .set: .set
+        case .append: .append
+        case .setIfAbsent: .setIfAbsent
+        }
+    }
+}
+
+/// Resolves a response's header fields from every contributor, applied in one defined order:
+///
+///     controller @ResponseHeader → route @ResponseHeader → handler return → middleware (outer last)
+///
+/// Annotations and middleware share this vocabulary deliberately. They differ in *when* their value is
+/// produced (a compile-time constant versus something computed per request, possibly after the handler
+/// ran) and in *reach* (written on what it affects versus applying to routes that never name it) — but
+/// not in how contributions combine, so giving them different merge rules would have been an
+/// inconsistency rather than a design.
+///
+/// **Never folds.** Every write goes through `HTTPFields`' multi-value subscript, so repeated fields stay
+/// separate field lines. Folding would be legal for list-valued fields (RFC 9110 §5.3 makes the two forms
+/// semantically identical) but is forbidden for `Set-Cookie` (RFC 6265 §3) and required-against by HTTP/2
+/// (RFC 9113 §8.2.3), so staying multi-line is correct everywhere with no per-field knowledge. A caller
+/// who wants one folded line writes the combined value with `.set`.
+///
+/// Using `HTTPFields`' *single*-value subscript anywhere in here would silently fold every field and break
+/// `Set-Cookie` with no other visible symptom. That is the one invariant this type has.
+public enum WireMVCResponseHeaders {
+    /// The route's fields: its `@ResponseHeader` constants in tier order, then anything the handler
+    /// returned in its response tuple.
+    public static func resolved(
+        statics: [ResponseHeaderContribution] = [],
+        returned: HTTPFields = [:]
+    ) -> HTTPFields {
+        var fields = HTTPFields()
+        for contribution in statics {
+            apply(contribution, to: &fields)
+        }
+        return applying(returned: returned, to: fields)
+    }
+
+    /// Apply one contribution.
+    public static func apply(_ contribution: ResponseHeaderContribution, to fields: inout HTTPFields) {
+        let name = contribution.name
+        switch contribution.verb {
+        case .set: fields[values: name] = [contribution.value]
+        case .append: fields[values: name].append(contribution.value)
+        case .setIfAbsent: if fields[values: name].isEmpty { fields[values: name] = [contribution.value] }
+        }
+    }
+
+    /// Apply a handler-returned field list, which carries no verbs — a whole list replacing per name.
+    ///
+    /// Replacement is per *name*, not per value: the first occurrence of a name clears what was there, and
+    /// later occurrences of that same name accumulate. So a handler returning two `Set-Cookie`s replaces
+    /// the inherited set with both of its own rather than only the last.
+    public static func applying(returned: HTTPFields, to base: HTTPFields) -> HTTPFields {
+        guard !returned.isEmpty else { return base }
+        var result = base
+        var replaced: Set<HTTPField.Name> = []
+        for field in returned {
+            if replaced.insert(field.name).inserted {
+                result[values: field.name] = [field.value]
+            } else {
+                result[values: field.name].append(field.value)
+            }
+        }
+        return result
+    }
+}
+
 /// Response encoding the generated witness calls. `@JSONResponse` routes go through `json`;
 /// `@ResponseStatus` routes build `.status` inline in the witness.
 public enum WireMVCResponse {

@@ -249,7 +249,13 @@ func clientRoutes(of controller: ControllerDeclaration, pathPrefix: String) -> [
 
         // Exactly one response annotation is required, and the witness diagnoses a mismatch; here the
         // annotation just picks whether the method returns a value.
-        let returnType = function.signature.returnClause?.type.trimmedDescription
+        //
+        // A **labelled response tuple** is projected down to its `body` element: what crosses the wire is
+        // the encoded body, so that is what the client decodes. A tuple with no `body` (the bodiless
+        // `(status:headers:)` redirect shape) has nothing to decode and reads as no value at all.
+        let declaredReturn = function.signature.returnClause?.type
+        let projection = responseTupleProjection(of: declaredReturn)
+        let returnType = projection.isResponseTuple ? projection.body : declaredReturn?.trimmedDescription
         let returnsValue = returnType != nil && returnType != "Void" && returnType != "()"
         if hasAttribute("JSONResponse", on: function.attributes) {
             guard returnsValue else { return nil }
@@ -268,6 +274,26 @@ func clientRoutes(of controller: ControllerDeclaration, pathPrefix: String) -> [
             isRaw: false
         )
     }
+
+}
+
+/// Whether the return clause is a labelled response tuple and, if so, the type of its `body` element.
+///
+/// The two answers have to travel together. A `(status:headers:)` redirect *is* a response tuple with no
+/// body, and only knowing both facts distinguishes it from a handler genuinely returning a tuple payload —
+/// which is what decides whether the client method decodes a value, returns nothing, or (getting it wrong)
+/// disappears entirely because a bodiless tuple looked like a returned value to `@ResponseStatus`.
+///
+/// Deliberately permissive where `RouteCodegen` is strict: it recognises the shape and leaves everything
+/// else alone. The route codegen owns diagnosing a malformed response tuple; duplicating that judgement
+/// here would mean two places to keep in agreement, over a declaration the witness has already rejected.
+private func responseTupleProjection(of type: TypeSyntax?) -> (isResponseTuple: Bool, body: String?) {
+    guard let tuple = type?.as(TupleTypeSyntax.self) else { return (false, nil) }
+    let labels = tuple.elements.compactMap { $0.firstName?.text }
+    let known = [responseTupleStatusLabel, responseTupleHeadersLabel, responseTupleBodyLabel]
+    guard labels.contains(where: known.contains) else { return (false, nil) }
+    let body = tuple.elements.first { $0.firstName?.text == responseTupleBodyLabel }?.type.trimmedDescription
+    return (true, body)
 }
 
 /// A path placeholder's Swift parameter name — `user-id` becomes `userId`. Deliberately *not*

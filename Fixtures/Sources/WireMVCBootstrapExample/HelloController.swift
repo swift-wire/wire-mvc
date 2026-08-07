@@ -36,6 +36,39 @@ package struct HelloController<G: Greeter> {
         try await responseSender.sendAndFinish(HTTPResponse(status: .ok), buffer: &body)
     }
 
+    // Response headers, both sources at once: a route-scope constant, and a computed field returned in a
+    // labelled response tuple that also picks the status. The constant is `.append`ed so the two `Vary`
+    // values stay separate field lines rather than folding.
+    @Get("/etag/{name}")
+    @JSONResponse
+    @ResponseHeader(.vary, "Accept-Encoding")
+    @ResponseHeader(.vary, "Origin", .append)
+    @ResponseHeader(.cacheControl, "no-store")
+    package func etagged(
+        @Path name: String
+    ) -> (status: HTTPResponse.Status, headers: HTTPFields, body: Greeting) {
+        let greeting = Greeting(message: greeter.greet(name))
+        return (.created, [.eTag: "\"\(name.count)\""], greeting)
+    }
+
+    // Constants with a plain body return — the statics-only path. Worth a fixture of its own: it is the
+    // one shape that shares no code with the tuple path, and it shipped broken until a golden test caught
+    // it (the contribution array was passed straight to `headerFields:`, which takes `HTTPFields`).
+    @Get("/cached/{name}")
+    @JSONResponse
+    @ResponseHeader(.cacheControl, "public, max-age=60")
+    package func cached(@Path name: String) -> Greeting {
+        Greeting(message: greeter.greet(name))
+    }
+
+    // The bodiless tuple — a computed redirect, which is the shape 12 of the hummingbird-examples redirect
+    // sites need. `@ResponseStatus` declares the default; the returned status overrides it.
+    @Get("/moved/{name}")
+    @ResponseStatus(.found)
+    package func moved(@Path name: String) -> (status: HTTPResponse.Status, headers: HTTPFields) {
+        (.found, [.location: "/hello/\(name)"])
+    }
+
     // M5.5 Phase 3: this controller declares no `@ErrorResponse`, so `TenantMissing` is unmapped here.
     // The `@WireMVCBootstrap` composition root's global `@ErrorResponse(TenantMissing.self, .badRequest)`
     // is the default tier folded into this route's terminal — so `GET /hello/tenant` returns 400.

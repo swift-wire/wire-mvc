@@ -23,6 +23,9 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
     case globalMiddlewareUnsupportedArgument(String)
     case multipleTestingKeys(String, first: String)
     case redundantCodingOverride(String, scope: String)
+    case responseTupleInvalidLabels(String, labels: String)
+    case responseHeaderDuplicateField(field: String, scope: String)
+    case responseHeaderOnRawRoute(String)
 
     public var message: String {
         switch self {
@@ -58,6 +61,12 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
             "the keyed test harness serves one TestingKey per target, and '\(first)' is already this target's key — a suite passing '\(reference)' would be served '\(first)''s variant graph instead, silently. Move '\(reference)' to its own test target, or fold its @BindType markers into '\(first)'. (Serving several variants from one target is deferred — see swift-wire's PendingIssues/11.)"
         case .redundantCodingOverride(let reference, let scope):
             "@Coding(\(reference)) on this \(scope) names the binding the enclosing scope already selected, so it overrides nothing. Name a different binding — a BindingKey<WireMVCCoding> distinguishes several codings of the same type — or drop the annotation."
+        case .responseTupleInvalidLabels(let route, let labels):
+            "the response tuple returned by '\(route)' is labelled (\(labels)), which is not a response shape — write one of (headers:body:), (status:body:), (status:headers:body:), or (status:headers:) for a bodiless response. Returning a payload that is genuinely a tuple? Leave its elements unlabelled and it stays the body."
+        case .responseHeaderDuplicateField(let field, let scope):
+            "@ResponseHeader sets '\(field)' more than once at \(scope) scope, so which value was meant is undecidable. To *add* a value to a field that legitimately repeats (Set-Cookie, Vary), pass the verb: @ResponseHeader(\(field), \"…\", .append). To replace, keep one entry (a route entry already overrides a controller entry for the same field)."
+        case .responseHeaderOnRawRoute(let route):
+            "@ResponseHeader does not apply to the @RawRoute handler '\(route)' — a raw handler writes its own response head, so nothing here could set the field for it. Set it on the HTTPResponse the handler sends."
         case .globalMiddlewareUnsupportedArgument(let reference):
             "global @Middleware on a @WireMVCBootstrap root must be factory-form (@Middleware(Key), a generic-over-box @Factory @MiddlewareFactory) — a by-type or keyed-binding middleware ('\(reference)') is concrete over a fixed box and can't compose in the global chain (the router is fixed on its box type). Write it generic (factory-form), or scope it to a @Controller."
         }
@@ -85,6 +94,9 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
         case .globalMiddlewareUnsupportedArgument: id = "globalMiddlewareUnsupportedArgument"
         case .multipleTestingKeys: id = "multipleTestingKeys"
         case .redundantCodingOverride: id = "redundantCodingOverride"
+        case .responseTupleInvalidLabels: id = "responseTupleInvalidLabels"
+        case .responseHeaderDuplicateField: id = "responseHeaderDuplicateField"
+        case .responseHeaderOnRawRoute: id = "responseHeaderOnRawRoute"
         }
         return MessageID(domain: "WireMVC", id: id)
     }
