@@ -288,7 +288,7 @@ private func renderRegisterIntrospection(access: String, constructions: [String]
         Builder.ResponseSender.Writer: ~Copyable
     {
         builder.register(method: .get, path: path) { request, requestContext, _, reader, responseSender in
-            let wireMVCBaseBox = RequestResponseMiddlewareBox.pending(request: request, requestContext: requestContext, reader: reader, responseSender: responseSender)
+            let wireMVCBaseBox = RequestResponseMiddlewareBox.pending(request: request, requestContext: requestContext, reader: reader, responseSender: responseSender, responseHeaders: ResponseHeaderRegistry())
             let wireMVCChain = wireCompose {
             \(constructions.joined(separator: "\n"))
             }

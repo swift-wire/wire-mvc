@@ -51,7 +51,12 @@ where
                 request: request,
                 requestContext: requestContext,
                 reader: reader,
-                responseSender: responseSender
+                responseSender: responseSender,
+                // The front layer's own box. Its registry is *not* the one a route's terminal drains — the
+                // route builds a fresh box inside `inner.handle` — so a global middleware contributing a
+                // header reaches only a response this layer writes itself. See the note in
+                // Notes/WireMVCDesign.md; wiring the two together is follow-up work.
+                responseHeaders: ResponseHeaderRegistry()
             )
         try await chain.intercept(input: box) { finalBox in
             try await finalBox.withPendingContents { request, requestContext, reader, responseSender in

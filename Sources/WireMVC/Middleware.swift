@@ -40,9 +40,10 @@ where
             request: HTTPRequest,
             requestContext: RequestContext,
             reader: WireDisconnected<Reader>,
-            responseSender: WireDisconnected<ResponseSender>
+            responseSender: WireDisconnected<ResponseSender>,
+            responseHeaders: ResponseHeaderRegistry
         )
-        case responded(request: HTTPRequest)
+        case responded(request: HTTPRequest, responseHeaders: ResponseHeaderRegistry)
     }
 
     var storage: Storage
@@ -58,29 +59,44 @@ where
         request: HTTPRequest,
         requestContext: consuming RequestContext,
         reader: consuming sending Reader,
-        responseSender: consuming sending ResponseSender
+        responseSender: consuming sending ResponseSender,
+        responseHeaders: ResponseHeaderRegistry
     ) -> Self {
         Self(
             .pending(
                 request: request,
                 requestContext: requestContext,
                 reader: WireDisconnected(reader),
-                responseSender: WireDisconnected(responseSender)
+                responseSender: WireDisconnected(responseSender),
+                responseHeaders: responseHeaders
             )
         )
     }
 
     /// A middleware has written the response; the sender is consumed. The request is kept for observation.
-    public static func responded(request: HTTPRequest) -> Self {
-        Self(.responded(request: request))
+    public static func responded(request: HTTPRequest, responseHeaders: ResponseHeaderRegistry) -> Self {
+        Self(.responded(request: request, responseHeaders: responseHeaders))
     }
 
     /// A borrowing peek at the request — readable in either state — so a middleware can inspect it
     /// without consuming the box (it still has to pass the box to `next`).
     public var peekedRequest: HTTPRequest {
         switch storage {
-        case .pending(let request, _, _, _): return request
-        case .responded(let request): return request
+        case .pending(let request, _, _, _, _): return request
+        case .responded(let request, _): return request
+        }
+    }
+
+    /// Where a middleware contributes response header fields — see ``ResponseHeaderRegistry``.
+    ///
+    /// Borrowing and available in **both** states, like ``peekedRequest``: a middleware registers on the way
+    /// in, without consuming the box, and the registry survives a gate responding so an always-run observe
+    /// middleware downstream can still contribute. A class, so reaching it borrowing is enough to write to
+    /// it — and so a transforming middleware rebuilding the box threads the same one rather than a copy.
+    public var responseHeaders: ResponseHeaderRegistry {
+        switch storage {
+        case .pending(_, _, _, _, let responseHeaders): return responseHeaders
+        case .responded(_, let responseHeaders): return responseHeaders
         }
     }
 
@@ -95,15 +111,41 @@ where
     /// A middleware "handles" the request: `write` is handed the sender (consuming it) to write the
     /// response, and the box becomes `responded`. If the box is already `responded`, it is returned
     /// unchanged — first-decision-wins, enforced by there being no sender to hand over.
+    /// > Important: this hands over the raw sender, so WireMVC never sees an outcome and **cannot drain the
+    /// > registry** — a middleware responding this way discards every contributed header field. Use it for
+    /// > streaming a response that has no outcome shape; for an ordinary gate (a 401 challenge, a redirect)
+    /// > use ``respondingWith(_:)``, which drains.
     public consuming func responding(
         _ write: nonisolated(nonsending) (consuming ResponseSender) async throws -> Void
     ) async throws -> Self {
         switch consume storage {
-        case .pending(let request, _, _, let responseSender):
+        case .pending(let request, _, _, let responseSender, let responseHeaders):
             try await write(responseSender.take())
-            return .responded(request: request)
-        case .responded(let request):
-            return .responded(request: request)
+            return .responded(request: request, responseHeaders: responseHeaders)
+        case .responded(let request, let responseHeaders):
+            return .responded(request: request, responseHeaders: responseHeaders)
+        }
+    }
+
+    /// The gate's blessed spelling: respond with a ``WireMVCOutcome``, draining the contributed header
+    /// fields into it first.
+    ///
+    /// A gate short-circuits the terminal, so the terminal's drain never runs — without this, every
+    /// middleware-contributed field would vanish on exactly the paths that most want them (a `401` wanting
+    /// its `WWW-Authenticate`, a redirect wanting a session cookie set on the way out). Contributions
+    /// registered by middleware *outside* this one are included; ones further in never ran.
+    public consuming func respondingWith(_ outcome: consuming WireMVCOutcome) async throws -> Self {
+        switch consume storage {
+        case .pending(let request, _, _, let responseSender, let responseHeaders):
+            var resolved = outcome
+            resolved.headerFields = WireMVCResponseHeaders.resolved(
+                returned: resolved.headerFields,
+                middleware: try await responseHeaders.drain()
+            )
+            try await resolved.send(on: responseSender.take())
+            return .responded(request: request, responseHeaders: responseHeaders)
+        case .responded(let request, let responseHeaders):
+            return .responded(request: request, responseHeaders: responseHeaders)
         }
     }
 
@@ -120,7 +162,7 @@ where
             ) async throws -> Void
     ) async throws {
         switch consume storage {
-        case .pending(let request, let requestContext, let reader, let responseSender):
+        case .pending(let request, let requestContext, let reader, let responseSender, _):
             try await handler(request, requestContext, reader.take(), responseSender.take())
         case .responded:
             break
@@ -143,9 +185,9 @@ where
             nonisolated(nonsending) (HTTPRequest) async throws -> Return
     ) async throws -> Return {
         switch consume storage {
-        case .pending(let request, let requestContext, let reader, let responseSender):
+        case .pending(let request, let requestContext, let reader, let responseSender, _):
             return try await pending(request, requestContext, reader.take(), responseSender.take())
-        case .responded(let request):
+        case .responded(let request, _):
             return try await responded(request)
         }
     }

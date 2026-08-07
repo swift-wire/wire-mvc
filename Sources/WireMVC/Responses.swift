@@ -162,16 +162,25 @@ public enum ResponseHeaderContribution: Sendable {
 /// `Set-Cookie` with no other visible symptom. That is the one invariant this type has.
 public enum WireMVCResponseHeaders {
     /// The route's fields: its `@ResponseHeader` constants in tier order, then anything the handler
-    /// returned in its response tuple.
+    /// returned in its response tuple, then what middleware contributed — the full order, in one place.
+    ///
+    /// Middleware last is what lets a policy header set by a wrapping middleware stand; within that tier
+    /// the registry has already ordered them outermost-last (see ``ResponseHeaderRegistry``). A middleware
+    /// that means to defer to the route says so with `.setIfAbsent` rather than by position.
     public static func resolved(
         statics: [ResponseHeaderContribution] = [],
-        returned: HTTPFields = [:]
+        returned: HTTPFields = [:],
+        middleware: [ResponseHeaderContribution] = []
     ) -> HTTPFields {
         var fields = HTTPFields()
         for contribution in statics {
             apply(contribution, to: &fields)
         }
-        return applying(returned: returned, to: fields)
+        fields = applying(returned: returned, to: fields)
+        for contribution in middleware {
+            apply(contribution, to: &fields)
+        }
+        return fields
     }
 
     /// Apply one contribution.

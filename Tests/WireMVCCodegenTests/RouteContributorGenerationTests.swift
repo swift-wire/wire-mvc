@@ -749,16 +749,18 @@ struct RouteContributorGenerationTests {
                         Builder.ResponseSender.Writer: ~Copyable
                     {
                         builder.register(method: .get, path: "/x/y") { request, requestContext, _, reader, responseSender in
-                            let wireMVCBaseBox = RequestResponseMiddlewareBox.pending(request: request, requestContext: requestContext, reader: reader, responseSender: responseSender)
+                            let wireMVCResponseHeaderRegistry = ResponseHeaderRegistry()
+                            let wireMVCBaseBox = RequestResponseMiddlewareBox.pending(request: request, requestContext: requestContext, reader: reader, responseSender: responseSender, responseHeaders: wireMVCResponseHeaderRegistry)
                             let wireMVCChain = wireCompose {
                                 self._wireFactory_Keys_session.create(Builder.RequestContext.self, Builder.Reader.self, Builder.ResponseSender.self)
                             }
                             try await wireMVCChain.intercept(input: wireMVCBaseBox) { wireMVCFinalBox in
-                                try await wireMVCFinalBox.withPendingContents { _, _, _, responseSender in
+                                let wireMVCResponseHeaderDrain = wireMVCFinalBox.responseHeaders
+                                return try await wireMVCFinalBox.withPendingContents { _, _, _, responseSender in
                                 let wireMVCOutcome: WireMVCOutcome
                                 do {
                                     try await self._wireSubject.f()
-                                    wireMVCOutcome = .status(.noContent)
+                                    wireMVCOutcome = .status(.noContent, headerFields: WireMVCResponseHeaders.resolved(middleware: try await wireMVCResponseHeaderDrain.drain()))
                                 } catch {
                                     wireMVCOutcome = WireMVCOutcome.status(.internalServerError)
                                 }

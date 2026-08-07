@@ -51,6 +51,20 @@ package struct HelloController<G: Greeter> {
         return (.created, [.eTag: "\"\(name.count)\""], greeting)
     }
 
+    // Middleware contributing header fields, over a route that also sets its own. Pins the full order:
+    // route constants, then the handler's returned fields, then middleware — so the middleware's
+    // `x-stamp: middleware` beats the route's constant, and its deferred `Set-Cookie` (registered on the
+    // way in, evaluated after the handler ran) appears alongside.
+    @Get("/stamped/{name}")
+    @JSONResponse
+    @Middleware(StampKeys.factory)
+    @ResponseHeader(.init("x-stamp")!, "route")
+    @ResponseHeader(.cacheControl, "no-store")
+    package func stamped(@Path name: String) -> Greeting {
+        StampKeys.lastGreeted = name
+        return Greeting(message: greeter.greet(name))
+    }
+
     // Constants with a plain body return — the statics-only path. Worth a fixture of its own: it is the
     // one shape that shares no code with the tuple path, and it shipped broken until a golden test caught
     // it (the contribution array was passed straight to `headerFields:`, which takes `HTTPFields`).

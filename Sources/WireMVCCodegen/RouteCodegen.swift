@@ -224,7 +224,16 @@ struct RouteBlockGenerator {
         else { return nil }
         let hasBinds = !binds.isEmpty
         let call = "try await \(subjectExpression).\(function.name.text)(\(callArgs.joined(separator: ", ")))"
-        guard let response = responseComputation(from: function, call: call, staticHeaders: staticHeaders)
+        // A fold means a registry exists, so the terminal always resolves — even with no statics and no
+        // returned fields, a middleware may have contributed.
+        let drainsMiddleware = !middleware.isEmpty
+        guard
+            let response = responseComputation(
+                from: function,
+                call: call,
+                staticHeaders: staticHeaders,
+                drainsMiddleware: drainsMiddleware
+            )
         else { return nil }
         // Route-scope `@ErrorResponse` is consulted before the controller's (route overrides controller);
         // the Bootstrap's global tier is the default, consulted last (M5.5 Phase 3).
@@ -250,6 +259,7 @@ struct RouteBlockGenerator {
             contextName: "_",
             parametersName: parametersName,
             readerName: readerName,
+            drainsResponseHeaders: drainsMiddleware,
             terminalBody: closureBody(
                 hasBinds: hasBinds,
                 hasBody: hasBody,
@@ -482,6 +492,7 @@ extension RouteBlockGenerator {
         contextName: String,
         parametersName: String,
         readerName: String,
+        drainsResponseHeaders: Bool = false,
         terminalBody: String
     ) -> String {
         emitRegisterClosure(
@@ -492,6 +503,7 @@ extension RouteBlockGenerator {
             contextName: contextName,
             parametersName: parametersName,
             readerName: readerName,
+            drainsResponseHeaders: drainsResponseHeaders,
             terminalBody: terminalBody
         )
     }
@@ -508,6 +520,7 @@ extension RouteBlockGenerator {
         contextName: String,
         parametersName: String,
         readerName: String,
+        drainsResponseHeaders: Bool = false,
         terminalBody: String
     ) -> String {
         guard !middleware.isEmpty else {
@@ -522,14 +535,19 @@ extension RouteBlockGenerator {
         // `middlewareConstructions`. `hoistedPreamble` (a variant witness whose fold threads doubles) binds
         // `wireMVCDoubles` above the fold so the `create(doubles:)` reads it; it's empty otherwise.
         let fold = middleware.joined(separator: "\n")
+        // The registry is created here, once per request, and threaded through the fold by the box — so a
+        // transforming middleware that rebuilds the box carries the same one (the parameter is required,
+        // which is what makes losing it a compile error rather than a vanished header). The terminal reads
+        // it off the *final* box before `withPendingContents` consumes it.
         return """
             \(registerCall) { request, requestContext, \(parametersName), reader, responseSender in
-                \(hoistedPreamble)let wireMVCBaseBox = RequestResponseMiddlewareBox.pending(request: request, requestContext: requestContext, reader: reader, responseSender: responseSender)
+                \(hoistedPreamble)let \(responseHeaderRegistryLocal) = ResponseHeaderRegistry()
+                let wireMVCBaseBox = RequestResponseMiddlewareBox.pending(request: request, requestContext: requestContext, reader: reader, responseSender: responseSender, responseHeaders: \(responseHeaderRegistryLocal))
                 let wireMVCChain = wireCompose {
             \(fold)
                 }
                 try await wireMVCChain.intercept(input: wireMVCBaseBox) { wireMVCFinalBox in
-                    try await wireMVCFinalBox.withPendingContents { \(requestName), \(contextName), \(readerName), responseSender in
+                    \(drainsResponseHeaders ? "let \(responseHeaderDrainLocal) = wireMVCFinalBox.responseHeaders\n        " : "")return try await wireMVCFinalBox.withPendingContents { \(requestName), \(contextName), \(readerName), responseSender in
                     \(terminalBody)
                     }
                 }
