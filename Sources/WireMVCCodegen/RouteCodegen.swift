@@ -685,9 +685,6 @@ extension RouteBlockGenerator {
     }
 }
 
-// The response half — `responseComputation`, the response-tuple shape, and `@ResponseHeader` — lives in
-// ResponseCodegen.swift.
-
 // MARK: - Attribute reading
 
 extension RouteBlockGenerator {
@@ -740,7 +737,7 @@ let routeBindingWrappers: Set<String> = ["Path", "Query", "JSONBody", "Header"]
 /// `-> (status: HTTPResponse.Status, headers: HTTPFields, body: Document)`, or any suffix-subset of that
 /// ending in `body`.
 ///
-/// Keyed on **labels**, not element type spellings. A syntactic macro can only compare type text, so
+/// Keyed on **labels**, not element type spellings.
 
 // MARK: - Error response codegen (`@ErrorResponse`)
 
