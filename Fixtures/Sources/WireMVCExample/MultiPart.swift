@@ -66,19 +66,24 @@ where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields?, Sender.Wr
         input: consuming Input,
         next: (consuming NextInput) async throws -> Return
     ) async throws -> Return {
-        try await input.withContents(
+        // Read the registry off the box *before* consuming it, and thread the same one into the rebuilt
+        // box. It is a required parameter precisely so this can't be forgotten: a rebuild that dropped it
+        // would discard every header field contributed upstream, silently and only at runtime.
+        let responseHeaders = input.responseHeaders
+        return try await input.withContents(
             pending: { request, requestContext, reader, responseSender in
                 try await next(
                     .pending(
                         request: request,
                         requestContext: requestContext,
                         reader: reader,
-                        responseSender: MultiPartSender(wrapping: responseSender)
+                        responseSender: MultiPartSender(wrapping: responseSender),
+                        responseHeaders: responseHeaders
                     )
                 )
             },
             responded: { request in
-                try await next(.responded(request: request))
+                try await next(.responded(request: request, responseHeaders: responseHeaders))
             }
         )
     }

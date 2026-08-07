@@ -40,3 +40,51 @@ struct WithTestServerTests {
         }
     }
 }
+
+// Response headers over the wire, on the harness-owned server — the only place the whole chain is real:
+// the annotation tiers, the handler's return, and a middleware's registered contributions all resolving
+// into one response head.
+@Suite(.wiremvc(.swiftHttpServer))
+struct ResponseHeaderOverTheWireTests {
+    /// The tier order, end to end. `/hello/stamped` sets `x-stamp: route` as a route constant and
+    /// `StampMiddleware` sets it again — middleware applies last, so the middleware's value is what ships.
+    /// Its `Set-Cookie` is registered on the way *in* and evaluated at drain, after the handler recorded the
+    /// name, which is the thing that cannot be done by mutating a response after `next`.
+    @Test func middlewareContributionsBeatRouteConstantsAndSeeTheHandler() async throws {
+        try await withClient { client in
+            let response = try await client.get("/hello/stamped/Ada")
+            #expect(response.status == 200)
+            let fields = try #require(response.head?.headerFields)
+            #expect(fields[values: .init("x-stamp")!] == ["middleware"], "middleware applies after the route")
+            #expect(fields[values: .cacheControl] == ["no-store"], "a field only the route set survives")
+            #expect(fields[values: .setCookie] == ["greeted=Ada; Path=/"], "the deferred closure saw the handler")
+        }
+    }
+
+    /// A route with constants and no middleware still gets them, and still gets the JSON content type that
+    /// `WireMVCOutcome.json` seeds.
+    @Test func routeConstantsShipWithoutMiddleware() async throws {
+        try await withClient { client in
+            let response = try await client.get("/hello/cached/Ada")
+            let fields = try #require(response.head?.headerFields)
+            #expect(fields[values: .cacheControl] == ["public, max-age=60"])
+            #expect(fields[.contentType] == "application/json")
+        }
+    }
+
+    /// The computed redirect: a bodiless response tuple, no response annotation, `Location` computed by the
+    /// handler. Asserted *through* the redirect rather than on it — `TestClient` is URLSession-backed and
+    /// follows 3xx, so the 302 and its `Location` are not observable here. Landing on the greeting for
+    /// "Ada" is only possible if the handler's computed `Location` was both emitted and correct; the head
+    /// itself is pinned by the codegen golden instead.
+    ///
+    /// The harness not being able to see a redirect is a real gap — a no-follow mode belongs in
+    /// `WireMVCTesting`, since redirects are most of what the blocked web examples do.
+    @Test func bodilessTupleRedirectsToTheComputedLocation() async throws {
+        try await withClient { client in
+            let response = try await client.get("/hello/moved/Ada")
+            #expect(response.status == 200)
+            #expect(response.bodyText.contains("Hello, Ada!"))
+        }
+    }
+}

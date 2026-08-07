@@ -15,6 +15,9 @@ import WireMVC
 @Controller("/hello")
 package struct HelloController<G: Greeter> {
     @Inject let greeter: G
+    /// The same binding `StampMiddleware` injects — how the handler's result reaches a middleware that
+    /// contributes a header after the handler has run.
+    @Inject let greetingLog: GreetingLog
 
     @Get("/{name}")
     @JSONResponse
@@ -49,6 +52,22 @@ package struct HelloController<G: Greeter> {
     ) -> (status: HTTPResponse.Status, headers: HTTPFields, body: Greeting) {
         let greeting = Greeting(message: greeter.greet(name))
         return (.created, [.eTag: "\"\(name.count)\""], greeting)
+    }
+
+    // Middleware contributing header fields, over a route that also sets its own. Pins the full order:
+    // route constants, then the handler's returned fields, then middleware — so the middleware's
+    // `x-stamp: middleware` beats the route's constant, and its deferred `Set-Cookie` (registered on the
+    // way in, evaluated after the handler ran) appears alongside.
+    @Get("/stamped/{name}")
+    @JSONResponse
+    @Middleware(StampKeys.factory)
+    @ResponseHeader(.init("x-stamp")!, "route")
+    @ResponseHeader(.cacheControl, "no-store")
+    package func stamped(@Path name: String) -> Greeting {
+        // Written to the graph-injected store, which the middleware reads at drain — the handler and the
+        // middleware meet through the graph, not through a global.
+        greetingLog.record(name, for: name)
+        return Greeting(message: greeter.greet(name))
     }
 
     // Constants with a plain body return — the statics-only path. Worth a fixture of its own: it is the

@@ -12,7 +12,8 @@ extension RouteBlockGenerator {
     mutating func responseComputation(
         from function: FunctionDeclSyntax,
         call: String,
-        staticHeaders: [ResponseHeaderEntry]
+        staticHeaders: [ResponseHeaderEntry],
+        drainsMiddleware: Bool
     ) -> String? {
         let attributes = function.attributes
         let route = function.name.text
@@ -41,7 +42,7 @@ extension RouteBlockGenerator {
             return """
                 let \(returnLocal) = \(call)
                 wireMVCOutcome = .status(\(returnLocal).\(responseTupleStatusLabel), \
-                headerFields: \(headerExpression(shape: shape, statics: staticsLiteral)))
+                headerFields: \(headerExpression(shape: shape, statics: staticsLiteral, drainsMiddleware: drainsMiddleware)))
                 """
         }
 
@@ -57,21 +58,21 @@ extension RouteBlockGenerator {
                 record(RouteCodegenDiagnostic(.deadResponseStatusArgument(route), at: function.name))
                 return nil
             }
-            // The untouched path: no statics, no tuple — the exact string this emitted before.
-            guard shape.isTuple || staticsLiteral != nil else {
+            // The untouched path: no statics, no tuple, no fold — the exact string this emitted before.
+            guard shape.isTuple || staticsLiteral != nil || drainsMiddleware else {
                 return "wireMVCOutcome = try WireMVCResponse.json(\(call), status: \(annotatedStatus), "
                     + "coding: \(codingExpression))"
             }
             guard shape.isTuple else {
                 return "wireMVCOutcome = try WireMVCResponse.json(\(call), status: \(annotatedStatus), "
-                    + "headerFields: \(headerExpression(shape: shape, statics: staticsLiteral)), "
+                    + "headerFields: \(headerExpression(shape: shape, statics: staticsLiteral, drainsMiddleware: drainsMiddleware)), "
                     + "coding: \(codingExpression))"
             }
             let value = shape.hasStatus ? "\(returnLocal).\(responseTupleStatusLabel)" : annotatedStatus
             return """
                 let \(returnLocal) = \(call)
                 wireMVCOutcome = try WireMVCResponse.json(\(returnLocal).\(responseTupleBodyLabel), \
-                status: \(value), headerFields: \(headerExpression(shape: shape, statics: staticsLiteral)), \
+                status: \(value), headerFields: \(headerExpression(shape: shape, statics: staticsLiteral, drainsMiddleware: drainsMiddleware)), \
                 coding: \(codingExpression))
                 """
         }
@@ -84,9 +85,9 @@ extension RouteBlockGenerator {
                 return nil
             }
             let fields =
-                staticsLiteral.map { _ in
-                    ", headerFields: \(headerExpression(shape: shape, statics: staticsLiteral))"
-                } ?? ""
+                (staticsLiteral != nil || drainsMiddleware)
+                ? ", headerFields: \(headerExpression(shape: shape, statics: staticsLiteral, drainsMiddleware: drainsMiddleware))"
+                : ""
             return "\(call)\nwireMVCOutcome = .status(\(annotatedStatus)\(fields))"
         }
 
@@ -117,9 +118,13 @@ extension RouteBlockGenerator {
     /// The `headerFields:` argument — one `WireMVCResponseHeaders.resolved` call over whichever
     /// contributors this route actually has. Both arguments default, so a route with only one names only
     /// that one.
-    private func headerExpression(shape: ResponseReturnShape, statics: String?) -> String {
+    private func headerExpression(shape: ResponseReturnShape, statics: String?, drainsMiddleware: Bool) -> String {
         let returned = shape.hasHeaders ? "\(returnLocal).\(responseTupleHeadersLabel)" : nil
-        let arguments = [statics.map { "statics: \($0)" }, returned.map { "returned: \($0)" }].compactMap { $0 }
+        let arguments = [
+            statics.map { "statics: \($0)" },
+            returned.map { "returned: \($0)" },
+            drainsMiddleware ? "middleware: try await \(responseHeaderDrainLocal).drain()" : nil,
+        ].compactMap { $0 }
         guard !arguments.isEmpty else { return "[:]" }
         return "WireMVCResponseHeaders.resolved(\(arguments.joined(separator: ", ")))"
     }
@@ -260,6 +265,14 @@ let responseTupleBodyLabel = "body"
 /// The terminal's local holding a response-tuple return, so its elements can be projected more than once.
 /// `wireMVC`-prefixed like every other generated local, so it can't collide with a decoded parameter.
 let returnLocal = "wireMVCReturn"
+
+/// The per-request ``ResponseHeaderRegistry``, created at the fold base and threaded through the box.
+let responseHeaderRegistryLocal = "wireMVCResponseHeaderRegistry"
+
+/// The registry read off the *final* box, before `withPendingContents` consumes it — the terminal drains
+/// this when it builds the outcome. Bound only for a typed terminal with a fold; a raw handler has no
+/// outcome to drain into, and a route with no middleware has no registry at all.
+let responseHeaderDrainLocal = "wireMVCResponseHeaderDrain"
 
 /// One `@ResponseHeader(name, value[, verb])` constant. All three are kept as the **written text**, since
 /// the codegen emits them verbatim into a `ResponseHeaderContribution` literal and never interprets them.
