@@ -61,10 +61,11 @@ package struct HelloController<G: Greeter> {
         Greeting(message: greeter.greet(name))
     }
 
-    // The bodiless tuple — a computed redirect, which is the shape 12 of the hummingbird-examples redirect
-    // sites need. `@ResponseStatus` declares the default; the returned status overrides it.
+    // The bodiless tuple — a computed redirect, the shape 12 of the hummingbird-examples redirect sites
+    // need. **No response annotation**: the return type says both things one would carry — no `body` label
+    // means no body, `status:` means the status is computed — so `@ResponseStatus` here would declare
+    // nothing and is a diagnostic.
     @Get("/moved/{name}")
-    @ResponseStatus(.found)
     package func moved(@Path name: String) -> (status: HTTPResponse.Status, headers: HTTPFields) {
         (.found, [.location: "/hello/\(name)"])
     }

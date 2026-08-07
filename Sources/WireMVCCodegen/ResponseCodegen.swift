@@ -19,9 +19,42 @@ extension RouteBlockGenerator {
         guard let shape = responseReturnShape(of: function, route: route) else { return nil }
         let staticsLiteral = staticHeaders.isEmpty ? nil : responseHeaderLiteral(staticHeaders)
 
+        // A **bodiless response tuple** states its own response mode: no `body` label means no body, and
+        // `status:` means the status is computed. Both facts are in the signature, more explicitly than an
+        // attribute could put them — so this shape takes no response annotation, and one written anyway
+        // would be a declaration carrying no information.
+        //
+        // The rule the design record states ("exactly one response annotation") is kept in substance:
+        // every route states its response mode exactly once, in an annotation *or* in a return type that
+        // says it unambiguously. A `Void` handler with no annotation stays a diagnostic, because there the
+        // status genuinely is unstated — which is the silent-default the rule was written against.
+        if shape.isTuple, !shape.hasBody {
+            if let annotation = responseAnnotationName(on: attributes) {
+                record(
+                    RouteCodegenDiagnostic(
+                        .responseAnnotationOnSelfDescribingReturn(route, annotation: annotation),
+                        at: function.name
+                    )
+                )
+                return nil
+            }
+            return """
+                let \(returnLocal) = \(call)
+                wireMVCOutcome = .status(\(returnLocal).\(responseTupleStatusLabel), \
+                headerFields: \(headerExpression(shape: shape, statics: staticsLiteral)))
+                """
+        }
+
         if let annotatedStatus = jsonResponseStatus(from: attributes) {
             guard shape.hasBody else {
                 record(RouteCodegenDiagnostic(.jsonResponseOnVoid(route), at: function.name))
+                return nil
+            }
+            // A returned status wins, so an annotated one could never be read. Rejecting the argument makes
+            // the dead value unwritable rather than merely diagnosed; the bare `@JSONResponse` is still
+            // required, because it names the codec.
+            if shape.hasStatus, jsonResponseExplicitStatus(from: attributes) != nil {
+                record(RouteCodegenDiagnostic(.deadResponseStatusArgument(route), at: function.name))
                 return nil
             }
             // The untouched path: no statics, no tuple — the exact string this emitted before.
@@ -43,27 +76,41 @@ extension RouteBlockGenerator {
                 """
         }
 
+        // Only `Void` reaches here: a body-carrying tuple is rejected below, and the bodiless one returned
+        // above, so `@ResponseStatus` still means exactly what it always did.
         if let annotatedStatus = responseStatus(from: attributes) {
             guard !shape.hasBody else {
                 record(RouteCodegenDiagnostic(.responseStatusOnValue(route), at: function.name))
                 return nil
             }
-            guard shape.isTuple else {
-                let fields =
-                    staticsLiteral.map { _ in
-                        ", headerFields: \(headerExpression(shape: shape, statics: staticsLiteral))"
-                    } ?? ""
-                return "\(call)\nwireMVCOutcome = .status(\(annotatedStatus)\(fields))"
-            }
-            let value = shape.hasStatus ? "\(returnLocal).\(responseTupleStatusLabel)" : annotatedStatus
-            return """
-                let \(returnLocal) = \(call)
-                wireMVCOutcome = .status(\(value), \
-                headerFields: \(headerExpression(shape: shape, statics: staticsLiteral)))
-                """
+            let fields =
+                staticsLiteral.map { _ in
+                    ", headerFields: \(headerExpression(shape: shape, statics: staticsLiteral))"
+                } ?? ""
+            return "\(call)\nwireMVCOutcome = .status(\(annotatedStatus)\(fields))"
         }
 
         record(RouteCodegenDiagnostic(.missingResponseAnnotation(route), at: function.name))
+        return nil
+    }
+
+    /// The name of whichever response annotation is written on this route, or `nil` if none is.
+    private func responseAnnotationName(on attributes: AttributeListSyntax) -> String? {
+        for case let .attribute(attr) in attributes {
+            let name = attr.attributeName.trimmedDescription
+            if name == "JSONResponse" || name == "ResponseStatus" { return name }
+        }
+        return nil
+    }
+
+    /// The `status:` argument written on `@JSONResponse`, or `nil` for the bare form — as distinct from
+    /// ``jsonResponseStatus(from:)``, which substitutes `.ok` for the bare form and so cannot tell an
+    /// author-written status from the default.
+    private func jsonResponseExplicitStatus(from attributes: AttributeListSyntax) -> String? {
+        for case let .attribute(attr) in attributes where attr.attributeName.trimmedDescription == "JSONResponse" {
+            guard case let .argumentList(list) = attr.arguments else { return nil }
+            return list.first { $0.label?.text == "status" }?.expression.trimmedDescription
+        }
         return nil
     }
 

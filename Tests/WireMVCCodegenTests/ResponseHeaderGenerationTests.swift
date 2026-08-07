@@ -119,13 +119,13 @@ struct ResponseHeaderGenerationTests {
         #expect(emitted.contains("returned: wireMVCReturn.headers"))
     }
 
-    /// The bodiless tuple — the computed-redirect shape. `@ResponseStatus` declares the default and the
-    /// returned status overrides it; there is no body and none is encoded.
-    @Test func bodilessTupleEmitsAStatusOutcome() {
+    /// The bodiless tuple — the computed-redirect shape — carries **no** response annotation: its return
+    /// type states both the mode and that the status is computed.
+    @Test func bodilessTupleEmitsAStatusOutcomeWithNoAnnotation() {
         let source = """
             @Singleton @Controller("/things")
             struct Things {
-                @Get("/moved") @ResponseStatus(.found)
+                @Get("/moved")
                 func moved() async throws -> (status: HTTPResponse.Status, headers: HTTPFields) { fatalError() }
             }
             """
@@ -135,6 +135,55 @@ struct ResponseHeaderGenerationTests {
                     + "headerFields: WireMVCResponseHeaders.resolved(returned: wireMVCReturn.headers))"
             )
         )
+        #expect(diagnostics(source).isEmpty, "the return type is the declaration; no annotation is owed")
+    }
+
+    /// …and writing one anyway is rejected, rather than silently ignored. Before this rule the annotation's
+    /// status was emitted nowhere while looking authoritative in the source.
+    @Test func annotatingASelfDescribingReturnIsDiagnosed() {
+        let messages = diagnostics(
+            """
+            @Singleton @Controller("/things")
+            struct Things {
+                @Get("/moved") @ResponseStatus(.found)
+                func moved() async throws -> (status: HTTPResponse.Status, headers: HTTPFields) { fatalError() }
+            }
+            """
+        )
+        #expect(
+            messages.contains { if case .responseAnnotationOnSelfDescribingReturn = $0 { true } else { false } }
+        )
+    }
+
+    /// A body-carrying tuple still needs `@JSONResponse` — that names the codec — but its `status:`
+    /// argument would never be read, so it is rejected too. The dead value becomes unwritable rather than
+    /// merely diagnosed.
+    @Test func annotatedStatusBesideAReturnedStatusIsDiagnosed() {
+        let messages = diagnostics(
+            """
+            @Singleton @Controller("/things")
+            struct Things {
+                @Post("/") @JSONResponse(status: .created)
+                func make() async throws -> (status: HTTPResponse.Status, body: Thing) { fatalError() }
+            }
+            """
+        )
+        #expect(messages.contains { if case .deadResponseStatusArgument = $0 { true } else { false } })
+    }
+
+    /// The bare `@JSONResponse` beside a returned status is the correct spelling, and emits the returned
+    /// one with no trace of the annotation's implicit `.ok`.
+    @Test func bareJSONResponseBesideAReturnedStatusIsAccepted() {
+        let source = """
+            @Singleton @Controller("/things")
+            struct Things {
+                @Post("/") @JSONResponse
+                func make() async throws -> (status: HTTPResponse.Status, body: Thing) { fatalError() }
+            }
+            """
+        #expect(diagnostics(source).isEmpty)
+        #expect(witness(source).contains("status: wireMVCReturn.status"))
+        #expect(!witness(source).contains("status: .ok"))
     }
 
     /// A `Void` handler still carries its constants — the status-only response that says something.
@@ -195,7 +244,7 @@ struct ResponseHeaderGenerationTests {
         let source = """
             @Singleton @Controller("/things")
             struct Things {
-                @Get("/moved") @ResponseStatus(.found)
+                @Get("/moved")
                 func moved() async throws -> (status: HTTPResponse.Status, headers: HTTPFields) { fatalError() }
             }
             """

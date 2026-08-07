@@ -257,11 +257,15 @@ func clientRoutes(of controller: ControllerDeclaration, pathPrefix: String) -> [
         let projection = responseTupleProjection(of: declaredReturn)
         let returnType = projection.isResponseTuple ? projection.body : declaredReturn?.trimmedDescription
         let returnsValue = returnType != nil && returnType != "Void" && returnType != "()"
+        // A bodiless response tuple carries no annotation — its return type is the declaration — so it has
+        // to be admitted here explicitly. Falling through to `return nil` would drop the route from the
+        // client silently, which is the same failure the tuple projection was added to fix.
+        let selfDescribing = projection.isResponseTuple && projection.body == nil
         if hasAttribute("JSONResponse", on: function.attributes) {
             guard returnsValue else { return nil }
         } else if hasAttribute("ResponseStatus", on: function.attributes) {
             guard !returnsValue else { return nil }
-        } else {
+        } else if !selfDescribing {
             return nil
         }
 

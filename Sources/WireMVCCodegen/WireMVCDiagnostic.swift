@@ -26,6 +26,8 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
     case responseTupleInvalidLabels(String, labels: String)
     case responseHeaderDuplicateField(field: String, scope: String)
     case responseHeaderOnRawRoute(String)
+    case responseAnnotationOnSelfDescribingReturn(String, annotation: String)
+    case deadResponseStatusArgument(String)
 
     public var message: String {
         switch self {
@@ -65,6 +67,10 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
             "the response tuple returned by '\(route)' is labelled (\(labels)), which is not a response shape — write one of (headers:body:), (status:body:), (status:headers:body:), or (status:headers:) for a bodiless response. Returning a payload that is genuinely a tuple? Leave its elements unlabelled and it stays the body."
         case .responseHeaderDuplicateField(let field, let scope):
             "@ResponseHeader sets '\(field)' more than once at \(scope) scope, so which value was meant is undecidable. To *add* a value to a field that legitimately repeats (Set-Cookie, Vary), pass the verb: @ResponseHeader(\(field), \"…\", .append). To replace, keep one entry (a route entry already overrides a controller entry for the same field)."
+        case .responseAnnotationOnSelfDescribingReturn(let route, let annotation):
+            "@\(annotation) on '\(route)' declares nothing the return type does not already say — a (status:headers:) tuple carries no body and computes its own status, so the annotation would be read by nobody and could only go out of date. Remove it. (A route that returns a body still needs @JSONResponse: that names the codec.)"
+        case .deadResponseStatusArgument(let route):
+            "the status on @JSONResponse(status:) for '\(route)' is never used — the response tuple returns a status, and a returned status wins. Drop the argument and keep the bare @JSONResponse, which is what names the codec."
         case .responseHeaderOnRawRoute(let route):
             "@ResponseHeader does not apply to the @RawRoute handler '\(route)' — a raw handler writes its own response head, so nothing here could set the field for it. Set it on the HTTPResponse the handler sends."
         case .globalMiddlewareUnsupportedArgument(let reference):
@@ -97,6 +103,8 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
         case .responseTupleInvalidLabels: id = "responseTupleInvalidLabels"
         case .responseHeaderDuplicateField: id = "responseHeaderDuplicateField"
         case .responseHeaderOnRawRoute: id = "responseHeaderOnRawRoute"
+        case .responseAnnotationOnSelfDescribingReturn: id = "responseAnnotationOnSelfDescribingReturn"
+        case .deadResponseStatusArgument: id = "deadResponseStatusArgument"
         }
         return MessageID(domain: "WireMVC", id: id)
     }
