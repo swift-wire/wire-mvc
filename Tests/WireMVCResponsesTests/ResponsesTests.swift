@@ -161,3 +161,80 @@ struct ResponsesTests {
         #expect(WireMVCOutcome.body([1, 2, 3], .ok).body == [1, 2, 3])
     }
 }
+
+@Suite("Response header resolution")
+struct ResponseHeaderTests {
+    /// Tier order is application order: the controller's entry first, the route's after, so a route `.set`
+    /// replaces it. This is the whole tiering rule — there is no separate override pass.
+    @Test
+    func routeSetReplacesControllerSet() {
+        let fields = WireMVCResponseHeaders.resolved(statics: [
+            .set(.cacheControl, "public, max-age=3600"),  // controller
+            .set(.cacheControl, "no-store"),  // route
+        ])
+        #expect(fields[values: .cacheControl] == ["no-store"])
+    }
+
+    /// `.append` adds a **separate field line** and never folds. The invariant the whole design rests on:
+    /// folding is forbidden for Set-Cookie (RFC 6265 §3) and required against by HTTP/2 (RFC 9113 §8.2.3),
+    /// so nothing here may reach for HTTPFields' single-value setter.
+    @Test
+    func appendKeepsSeparateFieldLines() {
+        let fields = WireMVCResponseHeaders.resolved(statics: [
+            .set(.setCookie, "sid=1"),
+            .append(.setCookie, "consent=yes"),
+        ])
+        #expect(fields[values: .setCookie] == ["sid=1", "consent=yes"])
+        #expect(fields.filter { $0.name == .setCookie }.count == 2, "two field lines, not one folded value")
+    }
+
+    /// `.setIfAbsent` defers when the field is already there, and lands when it isn't.
+    @Test
+    func setIfAbsentDefersToWhatIsAlreadySet() {
+        let taken = WireMVCResponseHeaders.resolved(statics: [
+            .set(.cacheControl, "no-store"),
+            .setIfAbsent(.cacheControl, "public"),
+        ])
+        #expect(taken[values: .cacheControl] == ["no-store"])
+
+        let free = WireMVCResponseHeaders.resolved(statics: [.setIfAbsent(.cacheControl, "public")])
+        #expect(free[values: .cacheControl] == ["public"])
+    }
+
+    /// The handler's returned fields are applied after the constants and replace per *name*.
+    @Test
+    func returnedFieldsBeatStatics() {
+        let fields = WireMVCResponseHeaders.resolved(
+            statics: [.set(.cacheControl, "no-store"), .set(.vary, "Accept-Encoding")],
+            returned: [.cacheControl: "public"]
+        )
+        #expect(fields[values: .cacheControl] == ["public"])
+        #expect(fields[values: .vary] == ["Accept-Encoding"], "a field the handler didn't name survives")
+    }
+
+    /// Replacement from the returned list is per name, not per value — a handler returning two cookies
+    /// replaces the inherited set with *both* of its own, rather than only the last surviving.
+    @Test
+    func returnedRepeatedFieldReplacesAsAWhole() {
+        var returned = HTTPFields()
+        returned[values: .setCookie] = ["a=1", "b=2"]
+        let fields = WireMVCResponseHeaders.resolved(
+            statics: [.set(.setCookie, "inherited=1")],
+            returned: returned
+        )
+        #expect(fields[values: .setCookie] == ["a=1", "b=2"])
+    }
+
+    /// Nothing in the resolve path may use HTTPFields' single-value subscript, whose *getter* joins with
+    /// ", " and does not special-case Set-Cookie — so a folded cookie would read back plausibly while being
+    /// wrong on the wire. Asserted on the field count, which folding would collapse to 1.
+    @Test
+    func resolvingNeverFolds() {
+        let fields = WireMVCResponseHeaders.resolved(statics: [
+            .set(.vary, "Accept-Encoding"),
+            .append(.vary, "Origin"),
+        ])
+        #expect(fields.filter { $0.name == .vary }.count == 2)
+        #expect(fields[.vary] == "Accept-Encoding, Origin", "the joined getter is lossy — read with [values:]")
+    }
+}

@@ -171,6 +171,52 @@ public macro JSONResponse(status: HTTPResponse.Status) =
 public macro ResponseStatus(_ status: HTTPResponse.Status) =
     #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
 
+/// `@ResponseHeader(.cacheControl, "no-store")` — a **constant** header field on this route's successful
+/// response. Repeatable, at two scopes: on the controller it covers every route, on a route it covers that
+/// one, and a route entry beats a controller entry naming the same field. The same tiering `@Middleware`,
+/// `@ErrorResponse` and `@Coding` use, for the same reason — a policy is usually scope-wide and
+/// occasionally not.
+///
+/// It applies to the route's **success** outcome only. An error response is built by the `@ErrorResponse`
+/// mapping that produced it, which carries its own fields (`.status(_:headerFields:)` /
+/// `.json(_:status:headerFields:)`) — a `Cache-Control` chosen for a `200` is rarely right for the `500`
+/// that replaced it, so inheriting it silently would be a worse default than saying nothing.
+///
+/// Constants only, by construction. A **computed** header is returned by the handler instead, in a
+/// labelled response tuple:
+///
+///     @Get("/{id}") @JSONResponse
+///     func document(@Path id: UUID) async throws -> (headers: HTTPFields, body: Document) {
+///         let doc = try await store.document(id)
+///         return ([.eTag: doc.etag], doc)
+///     }
+///
+/// The tuple may name `status`, `headers`, and `body` — any suffix-subset ending in `body` — and a field
+/// it sets beats this annotation, which beats the controller's. Innermost wins, as everywhere else.
+/// Returning the response metadata rather than mutating something handed to the handler is what the typed
+/// prior art does (axum's tuple `IntoResponse`, Spring's `ResponseEntity`, Hummingbird's `EditedResponse`)
+/// and, more locally, what an `@Operation` route already does — the OpenAPI generator's `Output.Ok` carries
+/// `headers` and `body` exactly this way, so both kinds of route answer the question the same way.
+///
+/// The field name is an `HTTPField.Name`, so every standard field is `.location` / `.eTag` /
+/// `.cacheControl`; a non-standard name has no spelling here yet.
+@attached(peer)
+public macro ResponseHeader(_ name: HTTPField.Name, _ value: String) =
+    #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
+
+/// The verb form — `@ResponseHeader(.setCookie, "consent=1", .append)`.
+///
+/// Defaults to `.set`, which is what the tier order implies. `.append` is for a field that legitimately
+/// repeats: it emits a **separate field line** rather than folding into one value, which is what makes it
+/// correct for `Set-Cookie` (RFC 6265 §3 forbids folding that field, and RFC 9113 §8.2.3 requires separate
+/// lines over HTTP/2). `.setIfAbsent` defers to a contributor further in.
+///
+/// The same three verbs a middleware contributes with — one vocabulary, because annotations and middleware
+/// differ in *when* their value exists and in *what they reach*, not in how their contributions combine.
+@attached(peer)
+public macro ResponseHeader(_ name: HTTPField.Name, _ value: String, _ verb: ResponseHeaderVerb) =
+    #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
+
 /// The raw escape hatch: the handler receives the request, matched path parameters, the body reader,
 /// and the response sender verbatim (no param decode, no response encode) and writes the response
 /// itself. Use for streaming/SSE/proxying. The handler is generic over the reader/sender (the builder's
