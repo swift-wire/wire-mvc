@@ -44,9 +44,9 @@ enum BootstrapTransport {
             // `createServer` may throw (building a server configuration conventionally does), so the call
             // is prefixed with `try` when the declaration is `throws`.
             let createServerTry = functionThrows(named: "createServer", in: bootstrap) ? "try " : ""
-            return "let server = \(createServerTry)bootstrap.createServer()"
+            return "let server = WireMVCContextServer(\(createServerTry)bootstrap.createServer())"
         case .suiteMode:
-            return "let server = mode.makeTestServer()"
+            return "let server = WireMVCContextServer(mode.makeTestServer())"
         }
     }
 }
@@ -261,7 +261,7 @@ private func renderWrapGlobalMiddleware(access: String, constructions: [String])
         \(access)func wrapGlobalMiddleware<Handler: HTTPServerRequestHandler>(_ inner: Handler)
         -> some HTTPServerRequestHandler<Handler.RequestContext, Handler.Reader, Handler.ResponseSender>
         where
-            Handler.RequestContext: ~Copyable,
+            Handler.RequestContext: ~Copyable & ResponseHeaderCarrying,
             Handler.Reader: ~Copyable,
             Handler.ResponseSender: ~Copyable,
             Handler.ResponseSender.Writer: ~Copyable
@@ -282,13 +282,14 @@ private func renderRegisterIntrospection(access: String, constructions: [String]
         response: WireMVCOutcome
     )
     where
-        Builder.RequestContext: ~Copyable,
+        Builder.RequestContext: ~Copyable & ResponseHeaderCarrying,
         Builder.Reader: ~Copyable,
         Builder.ResponseSender: ~Copyable,
         Builder.ResponseSender.Writer: ~Copyable
     {
         builder.register(method: .get, path: path) { request, requestContext, _, reader, responseSender in
-            let wireMVCBaseBox = RequestResponseMiddlewareBox.pending(request: request, requestContext: requestContext, reader: reader, responseSender: responseSender, responseHeaders: ResponseHeaderRegistry())
+            let wireMVCResponseHeaderRegistry = requestContext.responseHeaders
+            let wireMVCBaseBox = RequestResponseMiddlewareBox.pending(request: request, requestContext: requestContext.takeBase(), reader: reader, responseSender: responseSender, responseHeaders: wireMVCResponseHeaderRegistry)
             let wireMVCChain = wireCompose {
             \(constructions.joined(separator: "\n"))
             }
@@ -328,7 +329,12 @@ func globalMiddlewareConstructions(
     bootstrap: ControllerDeclaration,
     factoryKeys: Set<String>
 ) -> (constructions: [String], diagnostics: [RouteCodegenDiagnostic]) {
-    middlewareFactoryConstructions(from: bootstrap.attributes, factoryKeys: factoryKeys, boxRole: "Handler")
+    middlewareFactoryConstructions(
+        from: bootstrap.attributes,
+        factoryKeys: factoryKeys,
+        boxRole: "Handler",
+        contextType: "Handler.RequestContext"
+    )
 }
 
 /// Introspection-guard `@Middleware` fold-entries — the `@Middleware` on the `mountIntrospectionAt` method,
@@ -340,7 +346,12 @@ func introspectionGuardConstructions(
     guard let method = bootstrap.functions.first(where: { $0.name.text == "mountIntrospectionAt" }) else {
         return ([], [])
     }
-    return middlewareFactoryConstructions(from: method.attributes, factoryKeys: factoryKeys, boxRole: "Builder")
+    return middlewareFactoryConstructions(
+        from: method.attributes,
+        factoryKeys: factoryKeys,
+        boxRole: "Builder",
+        contextType: "Builder.RequestContext.Base"
+    )
 }
 
 /// Read the `@Middleware` fold-entries from an attribute list. Only the **factory** form (`@Middleware(Key)`,
@@ -350,10 +361,16 @@ func introspectionGuardConstructions(
 /// `Box<Fixed>` middleware that can't compose there, so it is diagnosed
 /// (``WireMVCDiagnostic/globalMiddlewareUnsupportedArgument``). `boxRole` names the generic parameter the
 /// consuming method exposes (`Handler` for `wrapGlobalMiddleware`, `Builder` for `registerIntrospection`).
+///
+/// `contextType` is separate from `boxRole` because the two sites fold over **different** contexts. The
+/// global layer's box is over the courier itself (`Handler.RequestContext`) — it runs above routing, which
+/// is where the courier is still on. The introspection mount is an ordinary registered route, so its box is
+/// over the unwrapped `Builder.RequestContext.Base`, like every other route's.
 func middlewareFactoryConstructions(
     from attributes: AttributeListSyntax,
     factoryKeys: Set<String>,
-    boxRole: String
+    boxRole: String,
+    contextType: String
 ) -> (constructions: [String], diagnostics: [RouteCodegenDiagnostic]) {
     var constructions: [String] = []
     var diagnostics: [RouteCodegenDiagnostic] = []
@@ -366,7 +383,7 @@ func middlewareFactoryConstructions(
         let expression = first.expression.trimmedDescription
         if factoryKeys.contains(expression) {
             constructions.append(
-                "self.\(factoryPropertyName(forKey: expression)).create(\(boxRole).RequestContext.self, \(boxRole).Reader.self, \(boxRole).ResponseSender.self)"
+                "self.\(factoryPropertyName(forKey: expression)).create(\(contextType).self, \(boxRole).Reader.self, \(boxRole).ResponseSender.self)"
             )
         } else {
             diagnostics.append(RouteCodegenDiagnostic(.globalMiddlewareUnsupportedArgument(expression), at: attr))

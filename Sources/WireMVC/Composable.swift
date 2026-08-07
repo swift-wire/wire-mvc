@@ -46,7 +46,7 @@ public enum WireMVC {
         coding: WireMVCCoding = .default
     ) throws -> [any Service]
     where
-        Builder.RequestContext: ~Copyable,
+        Builder.RequestContext: ~Copyable & ResponseHeaderCarrying,
         Builder.Reader: ~Copyable,
         Builder.ResponseSender: ~Copyable,
         Builder.ResponseSender.Writer: ~Copyable
@@ -65,7 +65,7 @@ public enum WireMVC {
         at path: String = "/wiring"
     ) throws
     where
-        Builder.RequestContext: ~Copyable,
+        Builder.RequestContext: ~Copyable & ResponseHeaderCarrying,
         Builder.Reader: ~Copyable,
         Builder.ResponseSender: ~Copyable,
         Builder.ResponseSender.Writer: ~Copyable

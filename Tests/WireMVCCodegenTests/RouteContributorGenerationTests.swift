@@ -204,16 +204,17 @@ struct RouteContributorGenerationTests {
                         coding wireMVCAppCoding: WireMVCCoding
                     ) throws
                     where
-                        Builder.RequestContext: ~Copyable,
+                        Builder.RequestContext: ~Copyable & ResponseHeaderCarrying,
                         Builder.Reader: ~Copyable,
                         Builder.ResponseSender: ~Copyable,
                         Builder.ResponseSender.Writer: ~Copyable
                     {
-                        builder.register(method: .get, path: "/todos/{id}") { request, _, pathParameters, _, responseSender in
+                        builder.register(method: .get, path: "/todos/{id}") { request, requestContext, pathParameters, _, responseSender in
+                            let wireMVCResponseHeaderDrain = requestContext.responseHeaders
                             let wireMVCOutcome: WireMVCOutcome
                             do {
                                 let id = try await Path<String>.bind(name: "id", request: request, pathParameters: pathParameters, body: nil, coding: wireMVCAppCoding)
-                                wireMVCOutcome = try WireMVCResponse.json(try await self._wireSubject.get(id: id), status: .ok, coding: wireMVCAppCoding)
+                                wireMVCOutcome = try WireMVCResponse.json(try await self._wireSubject.get(id: id), status: .ok, headerFields: WireMVCResponseHeaders.resolved(middleware: try await wireMVCResponseHeaderDrain.drain()), coding: wireMVCAppCoding)
                             } catch let wireMVCError {
                                 wireMVCOutcome = (
                                     (wireMVCError as? WireMVCBindingError).map {
@@ -253,7 +254,7 @@ struct RouteContributorGenerationTests {
                     static func main() async throws {
                         let graph = try await Wire.bootstrap()
                         let bootstrap = graph.appBootstrap
-                        let server = try bootstrap.createServer()
+                        let server = WireMVCContextServer(try bootstrap.createServer())
                         var builder = bootstrap.createRouteBuilder(for: server)
                         let wireMVCServices = try WireMVC.apply(graph, to: &builder, coding: WireMVCCoding.default)
                         builder.registerNotFound { _, _, _, _, responseSender in
@@ -334,7 +335,7 @@ struct RouteContributorGenerationTests {
                             try await WireMVCTesting.withEnvironment(environment) {
                                 let graph = try await Wire.bootstrap()
                                 let bootstrap = graph.appBootstrap
-                                let server = mode.makeTestServer()
+                                let server = WireMVCContextServer(mode.makeTestServer())
                                 var builder = bootstrap.createRouteBuilder(for: server)
                                 let wireMVCServices = try WireMVC.apply(graph, to: &builder, coding: WireMVCCoding.default)
                                 builder.registerNotFound { _, _, _, _, responseSender in
@@ -365,7 +366,7 @@ struct RouteContributorGenerationTests {
         let decl = controller(source)
         let entry = renderBootstrapTestEntry(bootstrap: decl, notFoundRegistration: "", factoryKeys: [])
         #expect(!entry.contains("createServer()"))
-        #expect(entry.contains("let server = mode.makeTestServer()"))
+        #expect(entry.contains("let server = WireMVCContextServer(mode.makeTestServer())"))
         // The @main is the one place it is still called.
         #expect(
             renderBootstrapEntry(bootstrap: decl, notFoundRegistration: "", factoryKeys: []).contains("createServer()")
@@ -443,7 +444,7 @@ struct RouteContributorGenerationTests {
         #expect(ext.source.contains("func registerIntrospection<Builder: HTTPServerRouteBuilder>("))
         #expect(
             ext.source.contains(
-                "self._wireFactory_AdminKeys_gate.create(Builder.RequestContext.self, Builder.Reader.self, Builder.ResponseSender.self)"
+                "self._wireFactory_AdminKeys_gate.create(Builder.RequestContext.Base.self, Builder.Reader.self, Builder.ResponseSender.self)"
             )
         )
         #expect(ext.source.contains("try await response.send(on: responseSender)"))
@@ -546,7 +547,7 @@ struct RouteContributorGenerationTests {
             """
         #expect(
             renderBootstrapEntry(bootstrap: controller(source), notFoundRegistration: "", factoryKeys: [])
-                .contains("let server = bootstrap.createServer()")
+                .contains("let server = WireMVCContextServer(bootstrap.createServer())")
         )
     }
 
@@ -662,7 +663,8 @@ struct RouteContributorGenerationTests {
         #expect(rendered.source.contains("builder.registerNotFound"))
         #expect(
             rendered.source.contains(
-                "try await bootstrap.handleNotFound(request: request, responseSender: responseSender)"
+                "try await bootstrap.handleNotFound(request: request, responseSender: "
+                    + "ResponseHeaderApplyingSender(wrapping: responseSender, registry: wireMVCResponseHeaderRegistry))"
             )
         )
     }
@@ -743,16 +745,16 @@ struct RouteContributorGenerationTests {
                         coding wireMVCAppCoding: WireMVCCoding
                     ) throws
                     where
-                        Builder.RequestContext: ~Copyable,
+                        Builder.RequestContext: ~Copyable & ResponseHeaderCarrying,
                         Builder.Reader: ~Copyable,
                         Builder.ResponseSender: ~Copyable,
                         Builder.ResponseSender.Writer: ~Copyable
                     {
                         builder.register(method: .get, path: "/x/y") { request, requestContext, _, reader, responseSender in
-                            let wireMVCResponseHeaderRegistry = ResponseHeaderRegistry()
-                            let wireMVCBaseBox = RequestResponseMiddlewareBox.pending(request: request, requestContext: requestContext, reader: reader, responseSender: responseSender, responseHeaders: wireMVCResponseHeaderRegistry)
+                            let wireMVCResponseHeaderRegistry = requestContext.responseHeaders
+                            let wireMVCBaseBox = RequestResponseMiddlewareBox.pending(request: request, requestContext: requestContext.takeBase(), reader: reader, responseSender: responseSender, responseHeaders: wireMVCResponseHeaderRegistry)
                             let wireMVCChain = wireCompose {
-                                self._wireFactory_Keys_session.create(Builder.RequestContext.self, Builder.Reader.self, Builder.ResponseSender.self)
+                                self._wireFactory_Keys_session.create(Builder.RequestContext.Base.self, Builder.Reader.self, Builder.ResponseSender.self)
                             }
                             try await wireMVCChain.intercept(input: wireMVCBaseBox) { wireMVCFinalBox in
                                 let wireMVCResponseHeaderDrain = wireMVCFinalBox.responseHeaders
@@ -808,12 +810,13 @@ struct RouteContributorGenerationTests {
                         coding wireMVCAppCoding: WireMVCCoding
                     ) throws
                     where
-                        Builder.RequestContext: ~Copyable,
+                        Builder.RequestContext: ~Copyable & ResponseHeaderCarrying,
                         Builder.Reader: ~Copyable,
                         Builder.ResponseSender: ~Copyable,
                         Builder.ResponseSender.Writer: ~Copyable
                     {
-                        builder.register(method: .post, path: "/search/{scope}") { request, _, pathParameters, reader, responseSender in
+                        builder.register(method: .post, path: "/search/{scope}") { request, requestContext, pathParameters, reader, responseSender in
+                            let wireMVCResponseHeaderDrain = requestContext.responseHeaders
                             let wireMVCOutcome: WireMVCOutcome
                             do {
                                 let requestBody = try await WireMVCRequest.collectBody(reader)
@@ -822,7 +825,7 @@ struct RouteContributorGenerationTests {
                                 let limit = try await Query<Int>.bindOptional(name: "limit", request: request, pathParameters: pathParameters, body: requestBody, coding: wireMVCAppCoding)
                                 let trace = try await Header<String>.bindOptional(name: "X-Trace", request: request, pathParameters: pathParameters, body: requestBody, coding: wireMVCAppCoding) ?? "none"
                                 let filter = try await JSONBody<Filter>.bind(name: "filter", request: request, pathParameters: pathParameters, body: requestBody, coding: wireMVCAppCoding)
-                                wireMVCOutcome = try WireMVCResponse.json(try await self._wireSubject.run(scope: scope, query: query, limit: limit, trace: trace, filter: filter), status: .created, coding: wireMVCAppCoding)
+                                wireMVCOutcome = try WireMVCResponse.json(try await self._wireSubject.run(scope: scope, query: query, limit: limit, trace: trace, filter: filter), status: .created, headerFields: WireMVCResponseHeaders.resolved(middleware: try await wireMVCResponseHeaderDrain.drain()), coding: wireMVCAppCoding)
                             } catch let wireMVCError {
                                 wireMVCOutcome = (
                                     (wireMVCError as? WireMVCBindingError).map {
@@ -1172,10 +1175,14 @@ struct RouteContributorGenerationTests {
         #expect(rendered.diagnostics.isEmpty)
         #expect(
             rendered.source.contains(
-                "builder.register(method: .get, path: \"/users/events\") { _, _, _, _, responseSender in"
+                "builder.register(method: .get, path: \"/users/events\") { _, requestContext, _, _, responseSender in"
             )
         )
-        #expect(rendered.source.contains("try await self._wireSubject.events(responseSender: responseSender)"))
+        #expect(
+            rendered.source.contains(
+                "try await self._wireSubject.events(responseSender: ResponseHeaderApplyingSender(wrapping: responseSender, registry: wireMVCResponseHeaderRegistry))"
+            )
+        )
     }
 
     /// `@RawRoute(.responseSender)` binds the parameter to the register closure's `responseSender` by the
@@ -1201,7 +1208,7 @@ struct RouteContributorGenerationTests {
         #expect(rendered.diagnostics.isEmpty)
         #expect(
             rendered.source.contains(
-                "builder.register(method: .post, path: \"/uploads/multipart\") { _, _, _, _, responseSender in"
+                "builder.register(method: .post, path: \"/uploads/multipart\") { _, requestContext, _, _, responseSender in"
             )
         )
         #expect(rendered.source.contains("try await self._wireSubject.upload(responseSender: responseSender)"))
@@ -1230,7 +1237,7 @@ struct RouteContributorGenerationTests {
         // request is used (not `_`) since a role names it; the call binds both by their labels.
         #expect(
             rendered.source.contains(
-                "builder.register(method: .post, path: \"/uploads/multipart\") { request, _, _, _, responseSender in"
+                "builder.register(method: .post, path: \"/uploads/multipart\") { request, requestContext, _, _, responseSender in"
             )
         )
         #expect(rendered.source.contains("try await self._wireSubject.upload(request, responseSender: responseSender)"))
@@ -1413,7 +1420,7 @@ struct RouteContributorGenerationTests {
         #expect(result.diagnostics.isEmpty)
         #expect(
             result.source.contains(
-                "self._wireFactory_Keys_session.create(Builder.RequestContext.self, Builder.Reader.self, Builder.ResponseSender.self)"
+                "self._wireFactory_Keys_session.create(Builder.RequestContext.Base.self, Builder.Reader.self, Builder.ResponseSender.self)"
             )
         )
     }
@@ -1811,14 +1818,14 @@ struct RouteContributorGenerationTests {
         #expect(
             rendered.source.contains(
                 "self._wireFactory_AuditKeys_factory.create(doubles: wireMVCDoubles, "
-                    + "Builder.RequestContext.self, Builder.Reader.self, Builder.ResponseSender.self)"
+                    + "Builder.RequestContext.Base.self, Builder.Reader.self, Builder.ResponseSender.self)"
             )
         )
         // The production witness's fold stays box-role-only — no doubles (the mock is only bound under the key).
         #expect(
             rendered.source.contains(
                 "self._wireFactory_AuditKeys_factory.create("
-                    + "Builder.RequestContext.self, Builder.Reader.self, Builder.ResponseSender.self)"
+                    + "Builder.RequestContext.Base.self, Builder.Reader.self, Builder.ResponseSender.self)"
             )
         )
         // Hoist: in the variant witness the doubles bind *above* the fold, else `create(doubles:)` wouldn't
@@ -1880,7 +1887,7 @@ struct RouteContributorGenerationTests {
         #expect(
             rendered.source.contains(
                 "self._wireFactory_AuditKeys_factory.create(doubles: wireMVCDoubles, "
-                    + "Builder.RequestContext.self, Builder.Reader.self, Builder.ResponseSender.self)"
+                    + "Builder.RequestContext.Base.self, Builder.Reader.self, Builder.ResponseSender.self)"
             )
         )
     }
@@ -1891,8 +1898,18 @@ struct RouteContributorGenerationTests {
     @Test func rawRouteOnVariantWitnessEntersSeedlessScope() {
         let rendered = generateRouteContributors(files: [("App.swift", phaseCFixture)], testEntry: true)
         #expect(rendered.diagnostics.isEmpty)
-        #expect(rendered.source.contains("try await wireMVCController.stream(responseSender: responseSender)"))
-        #expect(rendered.source.contains("try await self._wireSubject.stream(responseSender: responseSender)"))
+        #expect(
+            rendered.source.contains(
+                "try await wireMVCController.stream(responseSender: "
+                    + "ResponseHeaderApplyingSender(wrapping: responseSender, registry: wireMVCResponseHeaderRegistry))"
+            )
+        )
+        #expect(
+            rendered.source.contains(
+                "try await self._wireSubject.stream(responseSender: "
+                    + "ResponseHeaderApplyingSender(wrapping: responseSender, registry: wireMVCResponseHeaderRegistry))"
+            )
+        )
     }
 
     /// Issue 08 retired. It was a field-*ordering* hazard: `withBindValues` (as it was then) took the slots in

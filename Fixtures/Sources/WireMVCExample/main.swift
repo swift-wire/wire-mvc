@@ -58,13 +58,17 @@ let server = NIOHTTPServer(
     )
 )
 
-var builder = TrieRouteBuilder(for: server)
+// The hand-written path wraps the server the same way the generated `@main` does: `WireMVCContextServer`
+// presents it as a server whose `RequestContext` carries the per-request response-header registry, and puts
+// that on inside `serve(handler:)`. Everything below — builder, router, routes — is generic over it.
+let wireMVCServer = WireMVCContextServer(server)
+var builder = TrieRouteBuilder(for: wireMVCServer)
 let services = try WireMVC.apply(graph, to: &builder)
 try WireMVC.mountIntrospection(for: graph, into: &builder)
 let router = builder.finalize()  // build → freeze → serve
 
 try await withThrowingTaskGroup(of: Void.self) { group in
-    group.addTask { try await server.serve(handler: router) }
+    group.addTask { try await wireMVCServer.serve(handler: router) }
 
     let addresses = try await server.listeningAddresses
     guard let port = addresses.first?.port else {

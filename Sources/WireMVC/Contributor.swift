@@ -25,7 +25,7 @@ public protocol RouteContributor: Sendable {
         coding: WireMVCCoding
     ) throws
     where
-        Builder.RequestContext: ~Copyable,
+        Builder.RequestContext: ~Copyable & ResponseHeaderCarrying,
         Builder.Reader: ~Copyable,
         Builder.ResponseSender: ~Copyable,
         Builder.ResponseSender.Writer: ~Copyable

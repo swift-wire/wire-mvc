@@ -1,7 +1,7 @@
 public import HTTPAPIs
 public import ServiceLifecycle
 public import Testing
-import WireMVC
+public import WireMVC
 
 // Test support for a `@WireMVCBootstrap` app. The one public way to stand a suite up is the suite trait
 // `@Suite(.wiremvc(<mode>))`: `WireMVCRouteGen` emits, in a test consumer, a `.wiremvc(_:)` factory whose
@@ -203,22 +203,25 @@ public enum WireMVCTesting {
     /// route builder is created *for* a server, so the generated factory calls
     /// ``WireMVCTestMode/makeTestServer()`` before the build and hands the same instance on. Building a
     /// second one here would serve a different server than the router was built for.
-    public static func runSuite<Server: HTTPServer, Handler: HTTPServerRequestHandler>(
-        _ mode: WireMVCTestMode<Server>,
-        on server: Server,
+    /// `ModeServer` is the app's own test-server type (what the mode carries and describes); `Server` is
+    /// what is actually served on, which is that type behind `WireMVCContextServer`. They are separate
+    /// generic parameters because the courier wrapping happens between the two.
+    public static func runSuite<ModeServer: HTTPServer, Handler: HTTPServerRequestHandler>(
+        _ mode: WireMVCTestMode<ModeServer>,
+        on server: WireMVCContextServer<ModeServer>,
         handler: Handler,
         services: [any Service],
         servicePolicy: WireMVCTestServices? = nil,
         runTests: @concurrent @Sendable () async throws -> Void
     ) async throws
     where
-        Server.RequestContext: ~Copyable,
-        Server.Reader: ~Copyable,
-        Server.ResponseSender: ~Copyable,
-        Server.ResponseSender.Writer: ~Copyable,
-        Handler.RequestContext == Server.RequestContext,
-        Handler.Reader == Server.Reader,
-        Handler.ResponseSender == Server.ResponseSender
+        ModeServer.RequestContext: ~Copyable,
+        ModeServer.Reader: ~Copyable,
+        ModeServer.ResponseSender: ~Copyable,
+        ModeServer.ResponseSender.Writer: ~Copyable,
+        Handler.RequestContext == WireMVCContext<ModeServer.RequestContext>,
+        Handler.Reader == ModeServer.Reader,
+        Handler.ResponseSender == ModeServer.ResponseSender
     {
         // The whole serving window is marked active, so the generated keyed dispatch will resolve doubles for
         // requests this suite drives — and only for those. See ``WireMVCTesting/harnessIsActive``.
@@ -228,7 +231,7 @@ public enum WireMVCTesting {
                     group.addTask { try await WireMVC.runServices(services) }
                 }
                 group.addTask { try await server.serve(handler: handler) }
-                let client = try await mode.client(server)
+                let client = try await mode.client(server.base)
                 try await TestClient.$currentStorage.withValue(client) {
                     try await runTests()
                 }

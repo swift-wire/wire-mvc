@@ -205,14 +205,16 @@ private struct BridgeResponseSender: HTTPResponseSender {
 /// The bridge builder: a `HTTPServerRouteBuilder` whose reader/sender are the copyable bridge types.
 /// It accumulates routes, then `apply(to:)` forwards each onto a `ServerTransport`.
 private struct ServerTransportRouteBuilder: HTTPServerRouteBuilder {
-    typealias RequestContext = BridgeRequestContext
+    // The bridge is the top of its own stack, so it puts the courier on itself — the analogue of
+    // `WireMVCContextHandler` on the proposal-native path.
+    typealias RequestContext = WireMVCContext<BridgeRequestContext>
     typealias Reader = BridgeReader
     typealias ResponseSender = BridgeResponseSender
 
     typealias Handler =
         @Sendable (
             HTTPRequest,
-            consuming BridgeRequestContext,
+            consuming WireMVCContext<BridgeRequestContext>,
             [String: Substring],
             consuming sending BridgeReader,
             consuming sending BridgeResponseSender
@@ -253,7 +255,10 @@ private struct ServerTransportRouteBuilder: HTTPServerRouteBuilder {
                         do {
                             try await handler(
                                 request,
-                                BridgeRequestContext(),
+                                WireMVCContext(
+                                    base: BridgeRequestContext(),
+                                    responseHeaders: ResponseHeaderRegistry()
+                                ),
                                 metadata.pathParameters,
                                 BridgeReader(bytes),
                                 BridgeResponseSender(channel: channel)

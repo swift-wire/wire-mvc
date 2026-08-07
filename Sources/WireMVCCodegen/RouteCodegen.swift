@@ -45,7 +45,7 @@ struct RouteBlockGenerator {
     /// Set for a `@Scoped(seed:)` controller (the seed type): its routes construct the controller fresh
     /// per request from the proxy's `_wireEnterScope` thunk, rather than calling the held `_wireSubject`.
     /// `nil` for an app-scoped (`@Singleton`) controller. Set at the start of `routeBlocks`.
-    private var scopedSeedType: String?
+    var scopedSeedType: String?
     /// Set when this witness is a keyed-harness *variant* witness (H2.2b) — the one emitted on the variant
     /// proxy type for a `@Scoped(seed:)` subject in a test target that links `WireMVCTesting`. Its scoped
     /// routes correlate the request's per-key doubles from the `TestBindStore` (else an explicit 500) and
@@ -80,7 +80,7 @@ struct RouteBlockGenerator {
 
     /// The per-request scoped-controller local's name — deliberately `wireMVC`-prefixed so it can't
     /// collide with a handler's decoded parameter locals.
-    private let scopeEntryLocalName = "wireMVCController"
+    let scopeEntryLocalName = "wireMVCController"
 
     /// The per-request scope-teardown closure's local name — the `@Teardown` walk for the request scope's
     /// own bindings, returned by `_wireEnterScope` alongside the controller (M5.4.5).
@@ -92,7 +92,7 @@ struct RouteBlockGenerator {
     /// being declared after entry, is skipped when entry itself throws (nothing was constructed). Teardown
     /// errors are collected by the closure and discarded here (the response is the request's outcome). The
     /// seed is the register closure's `request` (seed-from-`HTTPRequest`).
-    private var scopeEntryProloguePrefix: String {
+    var scopeEntryProloguePrefix: String {
         // A production app-`@Singleton` controller is held (no scope entry); every scoped controller and every
         // variant witness (including a seedless app-scoped one) enters per request.
         guard scopedSeedType != nil || keyedScopeEntry != nil else { return "" }
@@ -122,7 +122,7 @@ struct RouteBlockGenerator {
     /// header) into `wireMVCDoubles` for the in-`do` entry — the `@BindType`d slot then resolves to the
     /// supplied mock — and a request that reaches the route with no supplied doubles (no header, or no store
     /// entry) is an explicit 500.
-    private var scopeEntryPreamble: String {
+    var scopeEntryPreamble: String {
         // Emitted for any variant witness (seed-scoped or seedless); the production witness has no preamble.
         guard let keyed = keyedScopeEntry else { return "" }
         let missingMessage =
@@ -224,9 +224,10 @@ struct RouteBlockGenerator {
         else { return nil }
         let hasBinds = !binds.isEmpty
         let call = "try await \(subjectExpression).\(function.name.text)(\(callArgs.joined(separator: ", ")))"
-        // A fold means a registry exists, so the terminal always resolves — even with no statics and no
-        // returned fields, a middleware may have contributed.
-        let drainsMiddleware = !middleware.isEmpty
+        // Every typed route drains. The registry rides the courier context, so it exists whether or not
+        // this route has a fold — and a global middleware must reach a route with no `@Middleware` of its
+        // own, which is most of them. Making it conditional would miss those silently.
+        let drainsMiddleware = true
         guard
             let response = responseComputation(
                 from: function,
@@ -256,7 +257,9 @@ struct RouteBlockGenerator {
             middleware: middleware,
             hoistedPreamble: foldThreadsDoubles ? scopeEntryPreamble : "",
             requestName: requestName,
-            contextName: "_",
+            // Only the fold-less path reads the registry off the register closure's context; through a fold
+            // it comes off the final box, and the terminal has no use for the unwrapped context.
+            contextName: middleware.isEmpty ? "requestContext" : "_",
             parametersName: parametersName,
             readerName: readerName,
             drainsResponseHeaders: drainsMiddleware,
@@ -273,207 +276,6 @@ struct RouteBlockGenerator {
     }
 }
 
-// MARK: - Raw route codegen
-
-extension RouteBlockGenerator {
-    private enum RawRole { case context, reader, sender }
-
-    private func hasRawRoute(_ function: FunctionDeclSyntax) -> Bool {
-        for case let .attribute(attr) in function.attributes
-        where attr.attributeName.trimmedDescription == "RawRoute" {
-            return true
-        }
-        return false
-    }
-
-    /// The `@RawRoute` register call: pass the register closure's primitives straight to the handler. A
-    /// bare `@RawRoute` matches each parameter by type (`HTTPRequest`, `[String: Substring]`) and by the
-    /// reader/sender/context generic parameters' constraints. An explicit `@RawRoute(.role, …)` binds the
-    /// parameters positionally by the listed roles — one role per parameter — so a **transformed slot**
-    /// whose type a middleware produces (e.g. `consuming MultiPartSender<S>`) binds by role rather than by
-    /// an inference that can't name it. No decode, no encode either way.
-    fileprivate mutating func rawRouteBlock(
-        function: FunctionDeclSyntax,
-        verb: Verb,
-        path: String,
-        middleware: [String]
-    ) -> String? {
-        guard let mapping = rawCallArgs(function) else { return nil }
-        // A scoped controller — or any variant witness (including a seedless app-`@Singleton` `@TestScopable`
-        // one) — reconstructs its subject per request, so the raw call dispatches on `subjectExpression`
-        // (`wireMVCController`) after the scope-entry prologue, not the held `_wireSubject`; a production
-        // app-`@Singleton` raw route stays `self._wireSubject`, byte-for-byte unchanged. When the fold threads
-        // doubles the correlation is hoisted above the fold, as in the typed path.
-        let call = "try await \(subjectExpression).\(function.name.text)(\(mapping.callArgs.joined(separator: ", ")))"
-        let foldThreadsDoubles = middleware.contains { $0.contains(Self.doublesCreateArgument) }
-        let terminalBody = "\(foldThreadsDoubles ? "" : scopeEntryPreamble)\(scopeEntryProloguePrefix)\(call)"
-        // Scope entry needs `request` (its seed, and the variant preamble's correlation), even when the
-        // handler itself doesn't take it.
-        let needsRequest = mapping.used.contains("request") || scopedSeedType != nil || keyedScopeEntry != nil
-        return emitRegister(
-            verb: verb,
-            path: path,
-            middleware: middleware,
-            hoistedPreamble: foldThreadsDoubles ? scopeEntryPreamble : "",
-            requestName: needsRequest ? "request" : "_",
-            contextName: mapping.used.contains("requestContext") ? "requestContext" : "_",
-            parametersName: mapping.used.contains("pathParameters") ? "pathParameters" : "_",
-            readerName: mapping.used.contains("reader") ? "reader" : "_",
-            terminalBody: terminalBody
-        )
-    }
-
-    /// The raw-route role mapping: for each handler parameter, the register-closure primitive it binds
-    /// to (explicit `@RawRoute(.role, …)` or inferred by type/constraint), plus which primitives are
-    /// used. Shared by `rawRouteBlock` (routes) and `notFoundRegistration` (the `@NotFound` fallback).
-    /// `nil` with a diagnostic on an unbindable parameter or a missing response sender.
-    private mutating func rawCallArgs(
-        _ function: FunctionDeclSyntax
-    ) -> (callArgs: [String], used: Set<String>)? {
-        let params = Array(function.signature.parameterClause.parameters)
-        var callArgs: [String] = []
-        var used: Set<String> = []
-
-        if let explicitRoles = explicitRawRoles(function) {
-            guard explicitRoles.count == params.count else {
-                diagnostics.append(
-                    RouteCodegenDiagnostic(
-                        .rawRouteRoleCountMismatch(
-                            function.name.text,
-                            roles: explicitRoles.count,
-                            parameters: params.count
-                        ),
-                        at: function.name
-                    )
-                )
-                return nil
-            }
-            for (param, role) in zip(params, explicitRoles) {
-                guard let primitive = rawPrimitive(forRoleName: role) else {
-                    diagnostics.append(
-                        RouteCodegenDiagnostic(.unsupportedRawParameter(name: role, type: role), at: param)
-                    )
-                    return nil
-                }
-                callArgs.append("\(rawArgumentLabel(param))\(primitive)")
-                used.insert(primitive)
-            }
-        } else {
-            let roles = rawGenericRoles(function)
-            for param in params {
-                let type = strippingOwnership(param.type.trimmedDescription)
-                let canonical = type.filter { !$0.isWhitespace }
-                let primitive: String
-                if canonical == "HTTPRequest" {
-                    primitive = "request"
-                } else if canonical == "[String:Substring]" {
-                    primitive = "pathParameters"
-                } else if roles[type] == .context {
-                    primitive = "requestContext"
-                } else if roles[type] == .reader {
-                    primitive = "reader"
-                } else if roles[type] == .sender {
-                    primitive = "responseSender"
-                } else {
-                    let name = (param.secondName ?? param.firstName).text
-                    diagnostics.append(
-                        RouteCodegenDiagnostic(.unsupportedRawParameter(name: name, type: type), at: param)
-                    )
-                    return nil
-                }
-                callArgs.append("\(rawArgumentLabel(param))\(primitive)")
-                used.insert(primitive)
-            }
-        }
-
-        guard used.contains("responseSender") else {
-            diagnostics.append(
-                RouteCodegenDiagnostic(.rawRouteMissingSender(function.name.text), at: function.name)
-            )
-            return nil
-        }
-        return (callArgs, used)
-    }
-
-    /// The `builder.registerNotFound { … }` for a `@NotFound` handler method (M5.5 Phase 4), called
-    /// through `subjectExpression` (the generated `@main`'s `bootstrap` local — not `self`). In practice
-    /// the method is `@RawRoute` (it writes the response directly); the raw role mapping is reused, so a
-    /// `@NotFound @RawRoute func handleNotFound(request:, responseSender:)` binds exactly like a route.
-    /// `nil` with a diagnostic if the mapping fails (e.g. no response sender).
-    mutating func notFoundRegistration(function: FunctionDeclSyntax, subjectExpression: String) -> String? {
-        guard hasRawRoute(function) else {
-            diagnostics.append(RouteCodegenDiagnostic(.notFoundNotRaw(function.name.text), at: function.name))
-            return nil
-        }
-        guard let mapping = rawCallArgs(function) else { return nil }
-        return emitRegisterClosure(
-            registerCall: "builder.registerNotFound",
-            middleware: [],
-            requestName: mapping.used.contains("request") ? "request" : "_",
-            contextName: mapping.used.contains("requestContext") ? "requestContext" : "_",
-            parametersName: "_",
-            readerName: mapping.used.contains("reader") ? "reader" : "_",
-            terminalBody:
-                "try await \(subjectExpression).\(function.name.text)(\(mapping.callArgs.joined(separator: ", ")))"
-        )
-    }
-
-    /// The call-argument label for a raw handler parameter (`""` for a wildcard first name, else `name: `).
-    private func rawArgumentLabel(_ param: FunctionParameterSyntax) -> String {
-        param.firstName.tokenKind == .wildcard ? "" : "\(param.firstName.text): "
-    }
-
-    /// The role names of an explicit `@RawRoute(.role, …)`, or `nil` for a bare `@RawRoute` / `@RawRoute()`
-    /// (which uses type/constraint inference instead).
-    private func explicitRawRoles(_ function: FunctionDeclSyntax) -> [String]? {
-        for case let .attribute(attr) in function.attributes
-        where attr.attributeName.trimmedDescription == "RawRoute" {
-            guard let arguments = attr.arguments?.as(LabeledExprListSyntax.self), !arguments.isEmpty else {
-                return nil
-            }
-            return arguments.compactMap {
-                $0.expression.as(MemberAccessExprSyntax.self)?.declName.baseName.text
-            }
-        }
-        return nil
-    }
-
-    /// The register-closure primitive a `@RawRoute` role names — the role name *is* the primitive name;
-    /// this also validates the role against the known set.
-    private func rawPrimitive(forRoleName role: String) -> String? {
-        ["request", "requestContext", "pathParameters", "reader", "responseSender"].contains(role) ? role : nil
-    }
-
-    /// Map each handler generic parameter to a raw role by its constraint — `AsyncReader` → reader,
-    /// `HTTPResponseSender` → sender — so a parameter of that generic type binds to the matching
-    /// register-closure primitive.
-    private func rawGenericRoles(_ function: FunctionDeclSyntax) -> [String: RawRole] {
-        var roles: [String: RawRole] = [:]
-        guard let generics = function.genericParameterClause else { return roles }
-        for parameter in generics.parameters {
-            let constraint = parameter.inheritedType?.trimmedDescription ?? ""
-            if constraint.contains("AsyncReader") {
-                roles[parameter.name.text] = .reader
-            } else if constraint.contains("HTTPResponseSender") {
-                roles[parameter.name.text] = .sender
-            } else if constraint.contains("RequestContext") {
-                roles[parameter.name.text] = .context
-            }
-        }
-        return roles
-    }
-
-    /// Strip leading ownership/transfer specifiers (`consuming sending Sender` → `Sender`) so the base
-    /// type matches a generic-parameter name or a concrete raw-primitive type.
-    private func strippingOwnership(_ type: String) -> String {
-        var base = type
-        for specifier in ["consuming ", "borrowing ", "inout ", "sending ", "__owned ", "__shared "] {
-            while base.hasPrefix(specifier) { base = String(base.dropFirst(specifier.count)) }
-        }
-        return base
-    }
-}
-
 // MARK: - Register call & middleware fold
 
 extension RouteBlockGenerator {
@@ -483,7 +285,7 @@ extension RouteBlockGenerator {
     /// middleware, the register closure binds request/context/reader/sender unconditionally to build the
     /// base box, and the terminal re-binds its values off the folded final box via `withContents` —
     /// path parameters are captured from the register closure (never boxed).
-    fileprivate func emitRegister(
+    func emitRegister(
         verb: Verb,
         path: String,
         middleware: [String],
@@ -512,7 +314,7 @@ extension RouteBlockGenerator {
     /// `builder.registerNotFound` (the `@NotFound` fallback, M5.5 Phase 4) — the closure body is
     /// identical; only the call that takes it differs. `registerCall` is everything up to the trailing
     /// closure.
-    fileprivate func emitRegisterClosure(
+    func emitRegisterClosure(
         registerCall: String,
         middleware: [String],
         hoistedPreamble: String = "",
@@ -524,9 +326,14 @@ extension RouteBlockGenerator {
         terminalBody: String
     ) -> String {
         guard !middleware.isEmpty else {
+            let drain =
+                drainsResponseHeaders
+                ? "let \(responseHeaderDrainLocal) = requestContext.responseHeaders\n" : ""
+            // `hoistedPreamble` carries the raw route's registry binding (and a variant witness's doubles
+            // correlation), so it has to lead here too — not only on the fold path.
             return """
                 \(registerCall) { \(requestName), \(contextName), \(parametersName), \(readerName), responseSender in
-                \(terminalBody)
+                \(hoistedPreamble)\(drain)\(terminalBody)
                 }
                 """
         }
@@ -541,8 +348,8 @@ extension RouteBlockGenerator {
         // it off the *final* box before `withPendingContents` consumes it.
         return """
             \(registerCall) { request, requestContext, \(parametersName), reader, responseSender in
-                \(hoistedPreamble)let \(responseHeaderRegistryLocal) = ResponseHeaderRegistry()
-                let wireMVCBaseBox = RequestResponseMiddlewareBox.pending(request: request, requestContext: requestContext, reader: reader, responseSender: responseSender, responseHeaders: \(responseHeaderRegistryLocal))
+                \(hoistedPreamble)let \(responseHeaderRegistryLocal) = requestContext.responseHeaders
+                let wireMVCBaseBox = RequestResponseMiddlewareBox.pending(request: request, requestContext: requestContext.takeBase(), reader: reader, responseSender: responseSender, responseHeaders: \(responseHeaderRegistryLocal))
                 let wireMVCChain = wireCompose {
             \(fold)
                 }
@@ -561,7 +368,7 @@ extension RouteBlockGenerator {
     /// - `T.self` → `self._wire<T>` — the middleware is a graph binding, injected by type. The plugin's
     ///   `.injectsFromGraph` pass gives the proxy a `_wire<T>` field holding that binding.
     /// - a key that names a `@Factory` template (`factoryKeys`) → `self._wireFactory_<key>.create(
-    ///   Builder.RequestContext.self, Builder.Reader.self, Builder.ResponseSender.self)` — the
+    ///   Builder.RequestContext.Base.self, Builder.Reader.self, Builder.ResponseSender.self)` — the
     ///   generic-with-deps factory case. The plugin synthesises `_WireFactory_<key>` and lifts it onto the
     ///   proxy; the fold calls its `create`, specialised at the builder's box associated types.
     /// - any other key → `self._wire<key>` — a keyed graph binding, injected by the same
@@ -585,7 +392,7 @@ extension RouteBlockGenerator {
                 // the call). Every other factory's `create` is box-role-only, as in production.
                 let doublesArgument = doublesThreadedFactoryKeys.contains(expression) ? Self.doublesCreateArgument : ""
                 constructions.append(
-                    "self.\(property).create(\(doublesArgument)Builder.RequestContext.self, Builder.Reader.self, Builder.ResponseSender.self)"
+                    "self.\(property).create(\(doublesArgument)Builder.RequestContext.Base.self, Builder.Reader.self, Builder.ResponseSender.self)"
                 )
             } else {
                 constructions.append("self.\(dependencyPropertyName(forKey: expression))")
@@ -706,7 +513,8 @@ extension RouteBlockGenerator {
 // MARK: - Attribute reading
 
 extension RouteBlockGenerator {
-    fileprivate struct Verb {
+    // Read by the raw-route half in RawRouteCodegen.swift, so not fileprivate.
+    struct Verb {
         let method: String  // e.g. ".get"
         let path: String?
     }

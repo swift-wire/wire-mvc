@@ -34,10 +34,11 @@ struct ResponseHeaderGenerationTests {
 
     // MARK: - Emission
 
-    /// The regression that matters most: a route using none of this emits exactly what it emitted before
-    /// response headers existed — no `headerFields:` argument, no `resolved` call, no return local. It is
-    /// what lets the 77 pre-existing goldens stay untouched, so it is asserted rather than assumed.
-    @Test func routeWithoutHeadersEmitsTheOriginalCall() {
+    /// A route declaring nothing still resolves, because a *global* middleware may have contributed and
+    /// most routes have no `@Middleware` of their own. The byte-identical emission this once asserted was
+    /// given up deliberately for that: making the drain conditional would have missed those routes
+    /// silently, which is the failure mode this whole area kept producing.
+    @Test func routeDeclaringNothingStillResolvesMiddlewareContributions() {
         let source = """
             @Singleton @Controller("/things")
             struct Things {
@@ -49,11 +50,12 @@ struct ResponseHeaderGenerationTests {
         #expect(
             emitted.contains(
                 "wireMVCOutcome = try WireMVCResponse.json(try await self._wireSubject.get(id: id), "
-                    + "status: .ok, coding: wireMVCAppCoding)"
+                    + "status: .ok, headerFields: WireMVCResponseHeaders.resolved(middleware: try await wireMVCResponseHeaderDrain.drain()), "
+                    + "coding: wireMVCAppCoding)"
             )
         )
-        #expect(!emitted.contains("headerFields:"))
-        #expect(!emitted.contains("wireMVCReturn"))
+        #expect(emitted.contains("let wireMVCResponseHeaderDrain = requestContext.responseHeaders"))
+        #expect(!emitted.contains("wireMVCReturn"), "no response tuple, so no return local")
     }
 
     /// Tier order is application order — controller entries first, the route's after — and the verb rides
@@ -75,7 +77,7 @@ struct ResponseHeaderGenerationTests {
             witness(source).contains(
                 "headerFields: WireMVCResponseHeaders.resolved(statics: ["
                     + ".set(.cacheControl, \"public\"), .set(.vary, \"Accept-Encoding\"), "
-                    + ".set(.cacheControl, \"no-store\"), .append(.vary, \"Origin\")])"
+                    + ".set(.cacheControl, \"no-store\"), .append(.vary, \"Origin\")], middleware: try await wireMVCResponseHeaderDrain.drain())"
             )
         )
     }
@@ -98,7 +100,7 @@ struct ResponseHeaderGenerationTests {
             emitted.contains(
                 "WireMVCResponse.json(wireMVCReturn.body, status: wireMVCReturn.status, "
                     + "headerFields: WireMVCResponseHeaders.resolved("
-                    + "statics: [.set(.cacheControl, \"no-store\")], returned: wireMVCReturn.headers)"
+                    + "statics: [.set(.cacheControl, \"no-store\")], returned: wireMVCReturn.headers, middleware: try await wireMVCResponseHeaderDrain.drain())"
             )
         )
     }
@@ -132,7 +134,8 @@ struct ResponseHeaderGenerationTests {
         #expect(
             witness(source).contains(
                 "wireMVCOutcome = .status(wireMVCReturn.status, "
-                    + "headerFields: WireMVCResponseHeaders.resolved(returned: wireMVCReturn.headers))"
+                    + "headerFields: WireMVCResponseHeaders.resolved(returned: wireMVCReturn.headers, "
+                    + "middleware: try await wireMVCResponseHeaderDrain.drain()))"
             )
         )
         #expect(diagnostics(source).isEmpty, "the return type is the declaration; no annotation is owed")
@@ -199,7 +202,7 @@ struct ResponseHeaderGenerationTests {
         #expect(
             witness(source).contains(
                 "wireMVCOutcome = .status(.noContent, headerFields: "
-                    + "WireMVCResponseHeaders.resolved(statics: [.set(.cacheControl, \"no-store\")]))"
+                    + "WireMVCResponseHeaders.resolved(statics: [.set(.cacheControl, \"no-store\")], middleware: try await wireMVCResponseHeaderDrain.drain()))"
             )
         )
     }
@@ -308,7 +311,7 @@ struct ResponseHeaderGenerationTests {
         #expect(diagnostics(source).isEmpty)
         #expect(
             witness(source).contains(
-                "statics: [.set(.setCookie, \"a=1\"), .append(.setCookie, \"b=2\")]"
+                "statics: [.set(.setCookie, \"a=1\"), .append(.setCookie, \"b=2\")], middleware: try await wireMVCResponseHeaderDrain.drain()"
             )
         )
     }
