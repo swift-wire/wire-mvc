@@ -96,6 +96,40 @@ let package = Package(
         // `WireMVCTesting` makes the plugin emit the `.wiremvc(_:)` suite-trait factory (not a `@main`,
         // which can't live in a test bundle); the suite runs `.swiftHttpServer` — a harness-owned server on
         // an ephemeral loopback port — and drives `GET /hello/Alice` over real HTTP.
+        // A second `@WireMVCBootstrap` app that declares **no** `@NotFound`, so its 404 is the plugin's
+        // synthesised one — the branch every other fixture skips by writing its own handler.
+        .executableTarget(
+            name: "WireMVCFallbackExample",
+            dependencies: [
+                .product(name: "WireMVC", package: "wire-mvc"),
+                .product(name: "WireMVCRouter", package: "wire-mvc"),
+                .product(name: "Wire", package: "swift-wire"),
+                .product(name: "HTTPAPIs", package: "swift-http-api-proposal"),
+                .product(name: "HTTPTypes", package: "swift-http-types"),
+                .product(name: "NIOHTTPServer", package: "swift-http-server"),
+                .product(name: "Logging", package: "swift-log"),
+                .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
+            ],
+            swiftSettings: proposalSettings,
+            plugins: [.plugin(name: "WireMVCBuildPlugin", package: "wire-mvc")]
+        ),
+        .testTarget(
+            name: "WireMVCFallbackExampleTests",
+            dependencies: [
+                "WireMVCFallbackExample",
+                .product(name: "WireMVCTesting", package: "wire-mvc"),
+                .product(name: "WireMVC", package: "wire-mvc"),
+                .product(name: "WireMVCRouter", package: "wire-mvc"),
+                .product(name: "Wire", package: "swift-wire"),
+                .product(name: "HTTPAPIs", package: "swift-http-api-proposal"),
+                .product(name: "HTTPTypes", package: "swift-http-types"),
+                .product(name: "NIOHTTPServer", package: "swift-http-server"),
+                .product(name: "Logging", package: "swift-log"),
+                .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
+            ],
+            swiftSettings: proposalSettings,
+            plugins: [.plugin(name: "WireMVCBuildPlugin", package: "wire-mvc")]
+        ),
         .testTarget(
             name: "WireMVCBootstrapExampleTests",
             dependencies: [

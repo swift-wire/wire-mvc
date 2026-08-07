@@ -257,8 +257,12 @@ struct RouteContributorGenerationTests {
                         let server = WireMVCContextServer(try bootstrap.createServer())
                         var builder = bootstrap.createRouteBuilder(for: server)
                         let wireMVCServices = try WireMVC.apply(graph, to: &builder, coding: WireMVCCoding.default)
-                        builder.registerNotFound { _, _, _, _, responseSender in
-                            try await responseSender.sendAndFinish(HTTPResponse(status: .notFound))
+                        builder.registerNotFound { _, requestContext, _, _, responseSender in
+                            let wireMVCResponseHeaderDrain = requestContext.responseHeaders
+                            try await WireMVCOutcome.status(
+                                .notFound,
+                                headerFields: WireMVCResponseHeaders.resolved(middleware: try await wireMVCResponseHeaderDrain.drain())
+                            ).send(on: responseSender)
                         }
                         let handler = builder.finalize()
                         let wireMVCServed = graph._WireGlobalMiddleware_AppBootstrap.wrapGlobalMiddleware(handler)
@@ -338,8 +342,12 @@ struct RouteContributorGenerationTests {
                                 let server = WireMVCContextServer(mode.makeTestServer())
                                 var builder = bootstrap.createRouteBuilder(for: server)
                                 let wireMVCServices = try WireMVC.apply(graph, to: &builder, coding: WireMVCCoding.default)
-                                builder.registerNotFound { _, _, _, _, responseSender in
-                                    try await responseSender.sendAndFinish(HTTPResponse(status: .notFound))
+                                builder.registerNotFound { _, requestContext, _, _, responseSender in
+                                    let wireMVCResponseHeaderDrain = requestContext.responseHeaders
+                                    try await WireMVCOutcome.status(
+                                        .notFound,
+                                        headerFields: WireMVCResponseHeaders.resolved(middleware: try await wireMVCResponseHeaderDrain.drain())
+                                    ).send(on: responseSender)
                                 }
                                 let handler = builder.finalize()
                                 let wireMVCServed = graph._WireGlobalMiddleware_AppBootstrap.wrapGlobalMiddleware(handler)
