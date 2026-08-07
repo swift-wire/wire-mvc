@@ -243,7 +243,10 @@ struct RouteBlockGenerator {
             + controllerErrorMappings
             + globalErrorMappings
         // A scoped controller's terminal always needs `request` — it is the scope-entry seed.
-        let requestName = (hasBinds || scopedSeedType != nil) ? "request" : "_"
+        // A keyed variant witness needs `request` too — its preamble correlates the per-request doubles off
+        // it. Without this a parameterless route on a *seedless* @TestScopable controller binds `_` and the
+        // preamble references a name that is not in scope.
+        let requestName = (hasBinds || scopedSeedType != nil || keyedScopeEntry != nil) ? "request" : "_"
         let parametersName = hasBinds ? "pathParameters" : "_"
         let readerName = hasBody ? "reader" : "_"
         // When the fold threads doubles (a mock-consuming variant factory), the doubles correlation must bind
