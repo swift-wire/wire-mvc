@@ -1,9 +1,8 @@
 public import AsyncStreaming
+import BasicContainers
 public import HTTPAPIs
 public import HTTPTypes
 public import WireMVC
-
-import BasicContainers
 
 // The prototype of the streaming response tier proposed in
 // `Documentation/Notes/StreamingResponseTier.md`, exercised end to end with a `ChunkProducer` body — no

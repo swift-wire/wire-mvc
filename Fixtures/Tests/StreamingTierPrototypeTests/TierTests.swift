@@ -128,11 +128,13 @@ struct TierTests {
         )
         try await outcome.send(on: RecordingSender(recorder: recorder))
 
-        #expect(recorder.recorded == [
-            .head(.ok, [.contentType: "application/json"]),
-            .chunk(#"{"ok":true}"#),
-            .finished(nil),
-        ])
+        #expect(
+            recorder.recorded == [
+                .head(.ok, [.contentType: "application/json"]),
+                .chunk(#"{"ok":true}"#),
+                .finished(nil),
+            ]
+        )
     }
 }
 

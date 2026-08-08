@@ -179,8 +179,8 @@ struct ElementaryProducerTests {
     }
 }
 
-private extension AsyncStream where Element: Sendable {
-    init(rows: [Element]) {
+extension AsyncStream where Element: Sendable {
+    fileprivate init(rows: [Element]) {
         self.init { continuation in
             for row in rows { continuation.yield(row) }
             continuation.finish()

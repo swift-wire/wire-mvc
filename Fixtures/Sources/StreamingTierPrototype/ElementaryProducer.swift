@@ -1,8 +1,7 @@
 public import AsyncStreaming
+import BasicContainers
 public import Elementary
 public import HTTPTypes
-
-import BasicContainers
 
 // Renders Elementary HTML straight into the proposal's response body writer — the end-to-end proof that
 // WireMVC can stream HTML, using the `escapable-stream-writer` fork of Elementary.
