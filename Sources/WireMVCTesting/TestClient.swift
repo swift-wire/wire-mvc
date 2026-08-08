@@ -159,6 +159,14 @@ public struct TestClient: Sendable {
         configuration.httpCookieStorage = nil
         configuration.httpShouldSetCookies = false
         configuration.httpCookieAcceptPolicy = .never
+        // A test client must observe the server, not a cache. Once a route answers with a freshness
+        // directive — `Cache-Control: max-age=…`, which is an ordinary thing for a route to return — the
+        // session will serve a later identical GET out of its cache, replaying both the stale body and the
+        // stale head. That reads as a server bug: a request with different headers appears to be ignored,
+        // and a request carrying `Origin` comes back without its CORS fields because the cached copy was
+        // stored for a request that had none. Both are the cache answering, and neither reaches the server.
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         return URLSession(configuration: configuration)
     }()
 

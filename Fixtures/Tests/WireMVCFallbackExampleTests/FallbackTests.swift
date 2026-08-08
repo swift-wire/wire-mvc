@@ -95,6 +95,26 @@ struct CORSTests {
         }
     }
 
+    /// Two requests to the *same* URL, in one test, against one server — the shape every other test here
+    /// misses, because each `@Test` binds a fresh port and so never reuses a cache entry.
+    ///
+    /// `/ping` answers with `Cache-Control: max-age=5`, which is an ordinary thing for a route to return.
+    /// A URLSession that caches will serve the second GET from the copy stored for the first, and that copy
+    /// was made for a request carrying no `Origin` — so the CORS fields come back missing and the middleware
+    /// looks broken when it never ran. `TestClient` disables caching for exactly this reason; this pins it.
+    @Test func aCacheableRouteIsNotReplayedForALaterRequest() async throws {
+        try await withClient { client in
+            let plain = try #require(try await client.get("/ping").head?.headerFields)
+            #expect(plain[.cacheControl] == "max-age=5", "the route really is cacheable")
+            #expect(plain[.accessControlAllowOrigin] == nil)
+
+            let fields = try #require(
+                try await client.get("/ping", headers: ["Origin": "https://allowed.example"]).head?.headerFields
+            )
+            #expect(fields[.accessControlAllowOrigin] == "https://allowed.example", "reached the server")
+        }
+    }
+
     /// The preflight. Answered by the middleware rather than routed — it is an `OPTIONS` to a path whose
     /// real route is a `GET`, so there is nothing to dispatch to. It carries the preflight-only fields *and*
     /// the shared ones, which only holds because `respondingWith` drains the contributions into it.
@@ -113,6 +133,19 @@ struct CORSTests {
             #expect(fields[.accessControlMaxAge] == "600", "preflight-only")
             #expect(fields[.accessControlAllowOrigin] == "https://allowed.example", "drained contribution")
             #expect(fields[.accessControlAllowCredentials] == "true", "drained contribution")
+        }
+    }
+}
+
+// A controller-scope contributor alongside the global one. Both write to the same registry, so both fields
+// must arrive — reproducing a case where the global one was being lost.
+@Suite(.wiremvc(.swiftHttpServer))
+struct TwoScopeContributionTests {
+    @Test func globalAndControllerContributionsBothArrive() async throws {
+        try await withClient { client in
+            let fields = try #require(try await client.get("/ping").head?.headerFields)
+            #expect(fields[.init("x-controller")!] == "controller", "the controller-scope contribution")
+            #expect(fields[.init("x-stamp")!] == "global", "the global contribution")
         }
     }
 }
