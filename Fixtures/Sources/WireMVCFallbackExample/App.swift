@@ -50,12 +50,15 @@ package struct Pong: Codable, Sendable, Equatable {
 
 @Singleton
 @Controller("/ping")
+@Middleware(ControllerStampKeys.factory)
 package struct PingController: Sendable {
     @Inject package init() {}
 
     @Get
     @JSONResponse
-    package func ping() -> Pong { Pong(ok: true) }
+    package func ping() -> (headers: HTTPFields, body: Pong) {
+        ([.cacheControl: "max-age=5"], Pong(ok: true))
+    }
 }
 
 /// No `@NotFound` — that absence is the fixture.
@@ -144,5 +147,33 @@ where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields?, Sender.Wr
             .status(.unauthorized, headerFields: [.wwwAuthenticate: #"Bearer realm="fixture""#])
         )
         return try await next(responded)
+    }
+}
+
+// MARK: - A controller-scope contributor alongside the global one
+
+package enum ControllerStampKeys {
+    package static let factory = FactoryKey()
+}
+
+/// Contributes at **controller** scope while `Stamp` contributes at **global** scope. Both write to the
+/// same registry, so both fields must reach the response.
+@Factory(ControllerStampKeys.factory)
+@MiddlewareFactory
+package struct ControllerStamp<
+    Ctx: HTTPServerCapability.RequestContext & ~Copyable,
+    Reader: AsyncReader & ~Copyable,
+    Sender: HTTPResponseSender & ~Copyable
+>: Middleware
+where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields?, Sender.Writer: ~Copyable {
+    package typealias Input = RequestResponseMiddlewareBox<Ctx, Reader, Sender>
+    package typealias NextInput = Input
+
+    package func intercept<Return: ~Copyable>(
+        input: consuming Input,
+        next: (consuming NextInput) async throws -> Return
+    ) async throws -> Return {
+        input.responseHeaders.add(.set(.init("x-controller")!, "controller"))
+        return try await next(input)
     }
 }
