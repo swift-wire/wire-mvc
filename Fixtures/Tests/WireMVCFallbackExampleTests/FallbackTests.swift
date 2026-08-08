@@ -28,3 +28,91 @@ struct FallbackTests {
         }
     }
 }
+
+// The gate path. A gate answers the request itself, so the terminal — and its drain — never runs. These
+// are the only tests anywhere that exercise `respondingWith`, and the only ones that exercise `.setIfAbsent`.
+@Suite(.wiremvc(.swiftHttpServer))
+struct GateTests {
+    /// A gate's own response carries what middleware contributed. Without `respondingWith` draining, the
+    /// global `x-stamp` would be missing from exactly the responses that most want a header — a challenge,
+    /// a redirect, a 403.
+    @Test func aGateResponseCarriesContributedFields() async throws {
+        try await withClient { client in
+            let response = try await client.get("/gated")
+            #expect(response.status == 401)
+            let fields = try #require(response.head?.headerFields)
+            #expect(fields[.wwwAuthenticate] == #"Bearer realm="fixture""#, "the gate's own field")
+            #expect(fields[.init("x-stamp")!] == "global", "a global contribution reached a gated response")
+        }
+    }
+
+    /// `.setIfAbsent` defers. `Stamp` runs outside the gate and has already set `x-stamp`, so the gate's
+    /// own `.setIfAbsent` must lose — on a matched route as well as on the gated one above.
+    @Test func setIfAbsentDefersToAContributorAlreadyThere() async throws {
+        try await withClient { client in
+            let response = try await client.get("/ping")
+            #expect(response.status == 200)
+            #expect(response.head?.headerFields[.init("x-stamp")!] == "global")
+        }
+    }
+}
+
+// CORS over a live server. The app configures `.oneOf` with credentials — allowed because it names one
+// origin per response, where `.all` with credentials traps at construction.
+@Suite(.wiremvc(.swiftHttpServer))
+struct CORSTests {
+    /// An actual request from a listed origin: the origin is echoed, credentials advertised, `Vary` says the
+    /// answer depends on `Origin`, and `Expose-Headers` names what script may read.
+    @Test func anAllowedOriginGetsTheCORSFields() async throws {
+        try await withClient { client in
+            let response = try await client.get("/ping", headers: ["Origin": "https://allowed.example"])
+            #expect(response.status == 200)
+            let fields = try #require(response.head?.headerFields)
+            #expect(fields[.accessControlAllowOrigin] == "https://allowed.example")
+            #expect(fields[.accessControlAllowCredentials] == "true")
+            #expect(fields[values: .vary].contains("Origin"))
+            #expect(fields[.accessControlExposeHeaders] == "x-stamp")
+        }
+    }
+
+    /// An unlisted origin is answered *without* the field. Echoing it, or falling back to the first listed
+    /// entry, would tell the browser it was allowed.
+    @Test func anUnlistedOriginGetsNoAllowOrigin() async throws {
+        try await withClient { client in
+            let response = try await client.get("/ping", headers: ["Origin": "https://evil.example"])
+            #expect(response.status == 200)
+            #expect(response.head?.headerFields[.accessControlAllowOrigin] == nil)
+        }
+    }
+
+    /// A same-origin request carries no `Origin`, so it must gain no CORS fields at all — and in particular
+    /// no `Vary: Origin`, which would cost cache hits on every response that never varies.
+    @Test func aRequestWithoutOriginIsUntouched() async throws {
+        try await withClient { client in
+            let fields = try #require(try await client.get("/ping").head?.headerFields)
+            #expect(fields[.accessControlAllowOrigin] == nil)
+            #expect(!fields[values: .vary].contains("Origin"))
+        }
+    }
+
+    /// The preflight. Answered by the middleware rather than routed — it is an `OPTIONS` to a path whose
+    /// real route is a `GET`, so there is nothing to dispatch to. It carries the preflight-only fields *and*
+    /// the shared ones, which only holds because `respondingWith` drains the contributions into it.
+    @Test func aPreflightIsAnsweredWithBothFieldSets() async throws {
+        try await withClient { client in
+            let response = try await client.send(
+                "OPTIONS",
+                "/ping",
+                headers: ["Origin": "https://allowed.example", "Access-Control-Request-Method": "POST"]
+            )
+            #expect(response.status == 204)
+            let fields = try #require(response.head?.headerFields)
+            #expect(fields[.accessControlAllowMethods] == "GET, POST", "preflight-only")
+            // Field names are case-insensitive, and `rawName` keeps canonical casing ("Content-Type").
+            #expect(fields[.accessControlAllowHeaders]?.lowercased() == "content-type", "preflight-only")
+            #expect(fields[.accessControlMaxAge] == "600", "preflight-only")
+            #expect(fields[.accessControlAllowOrigin] == "https://allowed.example", "drained contribution")
+            #expect(fields[.accessControlAllowCredentials] == "true", "drained contribution")
+        }
+    }
+}
