@@ -1,5 +1,6 @@
 #if ServerTransport
 import AsyncStreaming
+import Middleware
 import BasicContainers
 import HTTPAPIs
 import HTTPTypes
@@ -165,6 +166,71 @@ struct StreamingController: RouteContributor {
     }
 }
 
+/// Contributes a response header field on the way in, exactly as a real controller-scope middleware does.
+/// It reaches the registry off the box, which on this path exists only because the `ServerTransport` bridge
+/// constructs the courier itself.
+struct StampMiddleware<
+    Ctx: HTTPServerCapability.RequestContext & ~Copyable,
+    Reader: AsyncReader & ~Copyable,
+    Sender: HTTPResponseSender & ~Copyable
+>: Middleware
+where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields?, Sender.Writer: ~Copyable {
+    typealias Input = RequestResponseMiddlewareBox<Ctx, Reader, Sender>
+    typealias NextInput = Input
+
+    func intercept<Return: ~Copyable>(
+        input: consuming Input,
+        next: (consuming NextInput) async throws -> Return
+    ) async throws -> Return {
+        input.responseHeaders.add(.set(.init("x-stamp")!, "adapter"))
+        return try await next(input)
+    }
+}
+
+/// A hand-written contributor shaped like the generated witness: read the registry off the courier, build
+/// the box over the *unwrapped* context, fold, and drain at the terminal.
+struct StampedController: RouteContributor {
+    func registerWireRoutes<Builder: HTTPServerRouteBuilder>(
+        on builder: inout Builder,
+        coding: WireMVCCoding
+    ) throws
+    where
+        Builder.RequestContext: ~Copyable & ResponseHeaderCarrying,
+        Builder.Reader: ~Copyable,
+        Builder.ResponseSender: ~Copyable,
+        Builder.ResponseSender.Writer: ~Copyable
+    {
+        builder.register(method: .get, path: "/stamped") { request, requestContext, _, reader, responseSender in
+            let registry = requestContext.responseHeaders
+            let box = RequestResponseMiddlewareBox.pending(
+                request: request,
+                requestContext: requestContext.takeBase(),
+                reader: reader,
+                responseSender: responseSender,
+                responseHeaders: registry
+            )
+            let chain = wireCompose {
+                StampMiddleware<Builder.RequestContext.Base, Builder.Reader, Builder.ResponseSender>()
+            }
+            try await chain.intercept(input: box) { finalBox in
+                let drain = finalBox.responseHeaders
+                return try await finalBox.withPendingContents { _, _, _, sender in
+                    try await WireMVCOutcome.status(
+                        .ok,
+                        headerFields: WireMVCResponseHeaders.resolved(middleware: try await drain.drain())
+                    ).send(on: sender)
+                }
+            }
+        }
+    }
+}
+
+/// A graph whose single controller contributes a header field through a middleware.
+struct StampedGraph: WireMVCComposable {
+    var routeContributors: [any RouteContributor] { [StampedController()] }
+    var services: [any Service] { [] }
+}
+
 /// Stands in for `Wire.bootstrap()`'s collated graph. No `@BackgroundService` contributors here, so
 /// `services` is empty — the routes are what this adapter test drives.
 struct TestGraph: WireMVCComposable {
@@ -200,6 +266,22 @@ struct AdapterTests {
 
         let (miss, _) = try await transport.send(.get, "/nope")
         #expect(miss.status == .notFound)
+    }
+
+    /// A middleware's contributed header field reaches the response **through the bridge**.
+    ///
+    /// The registry rides the request context, and on this path the courier is constructed by the
+    /// `ServerTransport` bridge rather than by `WireMVCContextServer` — a separate construction site that
+    /// nothing else exercises. Hummingbird and Vapor both mount through here, so without this the entire
+    /// response-header feature runs untested on two of the three runtimes.
+    @Test
+    func contributedHeaderFieldsReachTheResponseThroughTheBridge() async throws {
+        let transport = MockTransport()
+        try WireMVCServerTransport.apply(StampedGraph(), to: transport)
+
+        let (response, _) = try await transport.send(.get, "/stamped")
+        #expect(response.status == .ok)
+        #expect(response.headerFields[.init("x-stamp")!] == "adapter")
     }
 
     /// A raw streaming (SSE) handler streams through the adapter incrementally: events arrive from an
