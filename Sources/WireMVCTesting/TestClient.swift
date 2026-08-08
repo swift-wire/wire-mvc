@@ -114,11 +114,14 @@ public struct TestClient: Sendable {
 
     /// The one send both surfaces funnel through — the untyped verbs above and the generated typed clients'
     /// `routeResponse`, which layers path templating and the non-2xx rule on top.
-    func send(
+    /// Send any method. The named verbs above cover the ones a typed route declares; this is for the rest —
+    /// a CORS preflight's `OPTIONS`, a `HEAD`, anything a `@RawRoute` serves. Public because without it a
+    /// suite simply cannot reach those, which made CORS preflight untestable.
+    public func send(
         _ method: String,
         _ path: String,
-        body: Data?,
-        headers: [String: String]
+        body: Data? = nil,
+        headers: [String: String] = [:]
     ) async throws -> TestResponse {
         switch transport {
         case .loopback:

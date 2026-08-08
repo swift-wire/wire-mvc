@@ -39,6 +39,10 @@ let package = Package(
         // `RoutableHTTPServerBuilder` + `HTTPServerRequestHandler`. Opt-in, so the router-agnostic
         // core (and the ServerTransport adapter) don't pull it in.
         .library(name: "WireMVCRouter", targets: ["WireMVCRouter"]),
+        // Opt-in middleware the native path has no other source for — WireMVC owns its box, so nothing in
+        // the Hummingbird/Vapor ecosystems ports across. Provisional: if the proposal standardises a box,
+        // this becomes a compatibility shim rather than an implementation.
+        .library(name: "WireMVCMiddleware", targets: ["WireMVCMiddleware"]),
         .library(name: "WireMVCServerTransport", targets: ["WireMVCServerTransport"]),
         // Test support for a `@WireMVCBootstrap` app — the generated `.wiremvc(_:)` suite trait stands the app
         // up on the server its mode carries and points `TestClient.current` at it. The generated
@@ -195,6 +199,18 @@ let package = Package(
         // The routing algorithm is the non-generic `RouteTable`; `WireRouter` threads the server's
         // `~Copyable` associated types. What a `@WireMVCBootstrap` `createRoutableBuilder(for:)` returns.
         .target(
+            name: "WireMVCMiddleware",
+            dependencies: [
+                "WireMVC",
+                .product(name: "Wire", package: "swift-wire"),
+                .product(name: "HTTPAPIs", package: "swift-http-api-proposal"),
+                .product(name: "HTTPTypes", package: "swift-http-types"),
+                .product(name: "Middleware", package: "swift-http-api-proposal"),
+                .product(name: "AsyncStreaming", package: "swift-async-algorithms"),
+            ],
+            swiftSettings: proposalSettings
+        ),
+        .target(
             name: "WireMVCRouter",
             dependencies: [
                 "WireMVC",
@@ -285,6 +301,14 @@ let package = Package(
                 .product(name: "HTTPTypes", package: "swift-http-types"),
                 .product(name: "AsyncStreaming", package: "swift-async-algorithms"),
                 .product(name: "BasicContainers", package: "swift-collections"),
+            ],
+            swiftSettings: proposalSettings
+        ),
+        .testTarget(
+            name: "WireMVCMiddlewareTests",
+            dependencies: [
+                "WireMVCMiddleware",
+                .product(name: "HTTPTypes", package: "swift-http-types"),
             ],
             swiftSettings: proposalSettings
         ),

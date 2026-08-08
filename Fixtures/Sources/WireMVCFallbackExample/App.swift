@@ -5,6 +5,7 @@ package import NIOHTTPServer
 import ServiceLifecycle
 package import Wire
 package import WireMVC
+package import WireMVCMiddleware
 package import WireMVCRouter
 
 // A second `@WireMVCBootstrap` app whose whole point is what it *does not* declare: no `@NotFound`.
@@ -61,8 +62,22 @@ package struct PingController: Sendable {
 @Singleton
 @WireMVCBootstrap
 @Middleware(StampKeys.factory)
+@Middleware(GateKeys.factory)
+@Middleware(CORSMiddlewareKeys.factory)
 package struct FallbackBootstrap: Sendable {
     @Inject package init() {}
+
+    /// The middleware's dependency, supplied through the graph like any other. `.oneOf` with credentials is
+    /// the combination worth exercising: allowed *because* it names one origin per response, where `.all`
+    /// with credentials traps at construction.
+    @Provides package static let cors = CORSConfiguration(
+        allowOrigin: .oneOf(["https://allowed.example"]),
+        allowMethods: [.get, .post],
+        allowHeaders: [.contentType],
+        allowCredentials: true,
+        exposedHeaders: [.init("x-stamp")!],
+        maxAge: .seconds(600)
+    )
 
     package func createServer() throws -> NIOHTTPServer {
         NIOHTTPServer(
@@ -85,5 +100,49 @@ package struct FallbackBootstrap: Sendable {
         Server.ResponseSender.Writer: ~Copyable
     {
         TrieRouteBuilder(for: server)
+    }
+}
+
+// MARK: - The gate path
+
+package enum GateKeys {
+    package static let factory = FactoryKey()
+}
+
+/// A gate: it answers `/gated` itself rather than letting the terminal run, which is the one path where
+/// `respondingWith` matters.
+///
+/// A gate short-circuits the terminal, so the terminal's drain never happens — contributions would vanish on
+/// exactly the responses that most want them (a `401` needing its challenge, a redirect needing a cookie set
+/// on the way out). `respondingWith` drains into the outcome before sending; raw `responding` hands over the
+/// sender and does not, which is why it is documented as being for streaming.
+///
+/// It also uses `.setIfAbsent`, the verb that exists so a contributor can defer: `Stamp` runs outside this
+/// and has already set `x-stamp`, so this one's value must lose.
+@Factory(GateKeys.factory)
+@MiddlewareFactory
+package struct Gate<
+    Ctx: HTTPServerCapability.RequestContext & ~Copyable,
+    Reader: AsyncReader & ~Copyable,
+    Sender: HTTPResponseSender & ~Copyable
+>: Middleware
+where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields?, Sender.Writer: ~Copyable {
+    package typealias Input = RequestResponseMiddlewareBox<Ctx, Reader, Sender>
+    package typealias NextInput = Input
+
+    package func intercept<Return: ~Copyable>(
+        input: consuming Input,
+        next: (consuming NextInput) async throws -> Return
+    ) async throws -> Return {
+        input.responseHeaders.add(.setIfAbsent(.init("x-stamp")!, "gate"))
+        guard input.peekedRequest.path?.hasPrefix("/gated") == true else {
+            return try await next(input)
+        }
+        // Responds *with an outcome*, so whatever middleware contributed is drained into it. The challenge
+        // is the route's own; the `x-stamp` above it comes from the global tier.
+        let responded = try await input.respondingWith(
+            .status(.unauthorized, headerFields: [.wwwAuthenticate: #"Bearer realm="fixture""#])
+        )
+        return try await next(responded)
     }
 }

@@ -101,6 +101,7 @@ let package = Package(
         .executableTarget(
             name: "WireMVCFallbackExample",
             dependencies: [
+                .product(name: "WireMVCMiddleware", package: "wire-mvc"),
                 .product(name: "WireMVC", package: "wire-mvc"),
                 .product(name: "WireMVCRouter", package: "wire-mvc"),
                 .product(name: "Wire", package: "swift-wire"),
@@ -116,6 +117,7 @@ let package = Package(
         .testTarget(
             name: "WireMVCFallbackExampleTests",
             dependencies: [
+                .product(name: "WireMVCMiddleware", package: "wire-mvc"),
                 "WireMVCFallbackExample",
                 .product(name: "WireMVCTesting", package: "wire-mvc"),
                 .product(name: "WireMVC", package: "wire-mvc"),
