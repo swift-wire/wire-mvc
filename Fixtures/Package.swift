@@ -43,11 +43,54 @@ let package = Package(
         ),
         .package(url: "https://github.com/apple/swift-http-types.git", from: "1.6.0"),
         .package(url: "https://github.com/apple/swift-collections.git", from: "1.6.0"),
+        // A fork of Elementary, pinned to a revision until upstream takes the change (the same
+        // arrangement `wire-mvc-examples/OpenAPISpec` uses for its generator fork). It relaxes
+        // `HTMLStreamWriter`/`_AsyncHTMLRendering` to `~Copyable, ~Escapable` *and* makes async rendering
+        // inherit the caller's isolation — jointly necessary before a lifetime-bound response body writer
+        // can be streamed into at all. See Documentation/Notes/StreamingResponseTier.md.
+        .package(
+            url: "https://github.com/tachyonics/elementary.git",
+            revision: "07eb69492ddf7052616af47518e7f883bd8f2691"
+        ),
         .package(url: "https://github.com/swift-server/swift-http-server.git", branch: "main"),
         .package(url: "https://github.com/swift-server/swift-service-lifecycle.git", from: "2.0.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.13.2"),
     ],
     targets: [
+        // The streaming response tier proposed in `Documentation/Notes/StreamingResponseTier.md`,
+        // prototyped against the proposal's real types with a `ChunkProducer` body — and against the *real*
+        // `WireMVCOutcome`, since the claim under test is that the buffered tier is untouched.
+        //
+        // Here rather than in wire-mvc proper because no route kind emits it yet: `RouteCodegen` has no
+        // streaming terminal, so there is nothing in the framework for it to be part of. It lives in the
+        // fixtures to keep the runtime half compiling and passing — including the ownership and `Sendable`
+        // shapes the design turns on — while the codegen work is done. No `WireMVCBuildPlugin`: it declares
+        // no `@Controller`, so there is nothing to generate.
+        .target(
+            name: "StreamingTierPrototype",
+            dependencies: [
+                .product(name: "WireMVC", package: "wire-mvc"),
+                .product(name: "Elementary", package: "elementary"),
+                .product(name: "HTTPAPIs", package: "swift-http-api-proposal"),
+                .product(name: "AsyncStreaming", package: "swift-async-algorithms"),
+                .product(name: "HTTPTypes", package: "swift-http-types"),
+                .product(name: "BasicContainers", package: "swift-collections"),
+            ],
+            swiftSettings: proposalSettings
+        ),
+        .testTarget(
+            name: "StreamingTierPrototypeTests",
+            dependencies: [
+                "StreamingTierPrototype",
+                .product(name: "Elementary", package: "elementary"),
+                .product(name: "WireMVC", package: "wire-mvc"),
+                .product(name: "HTTPAPIs", package: "swift-http-api-proposal"),
+                .product(name: "AsyncStreaming", package: "swift-async-algorithms"),
+                .product(name: "HTTPTypes", package: "swift-http-types"),
+                .product(name: "BasicContainers", package: "swift-collections"),
+            ],
+            swiftSettings: proposalSettings
+        ),
         // The full-matrix self-checker: hand-written assembly (no `@WireMVCBootstrap`), serving every
         // route shape on `NIOHTTPServer` and driving each over real HTTP. Runs to completion and exits
         // non-zero on any mismatch, so CI runs it as a program rather than a test.

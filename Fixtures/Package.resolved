@@ -1,5 +1,5 @@
 {
-  "originHash" : "a1b5a402b34736c6ea02fc33910627e1a398cd6725af7a8b60713e21d5f4cc3f",
+  "originHash" : "0fa43637ac08befcf8c8d622cd0fee2c4ade898fca64f1ba986ecc6bc93675cc",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -8,6 +8,14 @@
       "state" : {
         "revision" : "4603a8036d921ea999fadb742931546c341f4bd7",
         "version" : "1.35.0"
+      }
+    },
+    {
+      "identity" : "elementary",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/tachyonics/elementary.git",
+      "state" : {
+        "revision" : "07eb69492ddf7052616af47518e7f883bd8f2691"
       }
     },
     {
