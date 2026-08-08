@@ -123,7 +123,7 @@ public struct TestClient: Sendable {
         switch transport {
         case .loopback:
             let request = makeRequest(method, path, body: body, headers: headers)
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Self.session.data(for: request)
             return TestResponse(head: Self.head(of: response), body: data)
         case .inProcess(let dispatch):
             // The buffered surface over a streaming transport: start the exchange, then drain it whole.
@@ -137,6 +137,27 @@ public struct TestClient: Sendable {
             return TestResponse(head: head, body: try await exchange.drainBody())
         }
     }
+
+    /// The client's own `URLSession`, with cookie handling switched off at the **configuration** level.
+    ///
+    /// `URLSession.shared` manages cookies through the process-wide `HTTPCookieStorage`: it stores every
+    /// `Set-Cookie` a route sends and then replaces an explicitly-set `Cookie` header with whatever it holds
+    /// for that host. A suite that logs in twice therefore sends the second session's cookie on a request
+    /// that explicitly carries the first, and the route answers as the wrong user — silently.
+    ///
+    /// `URLRequest.httpShouldHandleCookies = false` is the documented per-request opt-out, and setting it
+    /// alone **did not stop the rewriting on Linux CI** — a suite still received the previous login's cookie
+    /// on a request explicitly carrying another. Why it had no effect there is not established: it is not
+    /// referenced in `URLSessionTask.swift` or `HTTPURLProtocol.swift` upstream, which is suggestive but not
+    /// conclusive, and no upstream issue was found. This removes the storage instead of asking the request
+    /// to bypass it, which does not depend on knowing the answer.
+    static let session: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.httpCookieAcceptPolicy = .never
+        return URLSession(configuration: configuration)
+    }()
 
     /// Rebuild the proposal's response head from Foundation's. `URLSession` reports the status and header
     /// fields separately from the body, so this is the loopback transport's one lossy seam — header *order*
@@ -173,13 +194,8 @@ public struct TestClient: Sendable {
         var request = URLRequest(url: URL(string: "http://\(host):\(port)\(path)")!)
         request.httpMethod = method
         request.httpBody = body
-        // The caller's headers are authoritative. `URLSession.shared` otherwise manages cookies through the
-        // process-wide `HTTPCookieStorage`: it stores every `Set-Cookie` a route sends and then *replaces* a
-        // manually-set `Cookie` header with whatever it has stored for that host. A suite that logs in twice
-        // therefore sends the second login's cookie on a request that explicitly carries the first, and the
-        // route answers as the wrong user — silently, and only on the platform whose Foundation does the
-        // rewriting, which is why this reproduced on Linux CI and not on macOS. Any cookie-based test is
-        // untestable without this.
+        // Belt to `Self.session`'s braces. Correct on Darwin; observed to have no effect on Linux CI, which
+        // is why the session carries the actual fix.
         request.httpShouldHandleCookies = false
         for (name, value) in headers {
             request.setValue(value, forHTTPHeaderField: name)
