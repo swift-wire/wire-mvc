@@ -2,14 +2,15 @@ import AsyncStreaming
 import BasicContainers
 import Elementary
 import HTTPTypes
-import StreamingTierPrototype
+import StreamingBodyProducers
 import Testing
 import WireMVC
+import WireMVCElementary
 
 // The end-to-end claim: Elementary HTML renders *directly* into swift-http-api-proposal's lifetime-bound
 // response body writer, through WireMVC's streaming tier, with no intermediate buffer and no bridging task.
 //
-// Requires the `escapable-stream-writer` fork of Elementary (path dependency in Package.swift). Against
+// Requires the pinned Elementary fork, via wire-mvc's `Elementary` trait. Against
 // upstream Elementary this file does not compile at all: `HTMLStreamWriter` requires an escapable conformer,
 // and `ProposalHTMLStreamWriter` cannot be one.
 
@@ -42,10 +43,10 @@ struct ElementaryProducerTests {
     @Test("a fragment renders into the proposal's writer")
     func fragment() async throws {
         let recorder = Recorder()
-        try await wireMVCStreamingTerminal(
+        try await drive(
             responseSender: RecordingSender(recorder: recorder),
             headerFields: [.contentType: "text/html; charset=utf-8"],
-            handler: { ElementaryProducer(div(.class("greeting")) { p { "Hi mom!" } }) },
+            handler: { WireMVCHTMLProducer(div(.class("greeting")) { p { "Hi mom!" } }) },
             errorMapping: { _ in .status(.internalServerError) }
         )
 
@@ -59,10 +60,10 @@ struct ElementaryProducerTests {
         let recorder = Recorder()
         let todos = [Todo(id: "a", title: "buy milk"), Todo(id: "b", title: "write codegen")]
 
-        try await wireMVCStreamingTerminal(
+        try await drive(
             responseSender: RecordingSender(recorder: recorder),
             headerFields: [.contentType: "text/html; charset=utf-8"],
-            handler: { ElementaryProducer(TodosPage(todos: todos)) },
+            handler: { WireMVCHTMLProducer(TodosPage(todos: todos)) },
             errorMapping: { _ in .status(.internalServerError) }
         )
 
@@ -81,9 +82,9 @@ struct ElementaryProducerTests {
         let recorder = Recorder()
         let todos = (0..<200).map { Todo(id: "t\($0)", title: "task number \($0)") }
 
-        try await wireMVCStreamingTerminal(
+        try await drive(
             responseSender: RecordingSender(recorder: recorder),
-            handler: { ElementaryProducer(TodosPage(todos: todos), chunkSize: 256) },
+            handler: { WireMVCHTMLProducer(TodosPage(todos: todos), chunkSize: 256) },
             errorMapping: { _ in .status(.internalServerError) }
         )
 
@@ -101,10 +102,10 @@ struct ElementaryProducerTests {
 
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask {
-                try await wireMVCStreamingTerminal(
+                try await drive(
                     responseSender: RecordingSender(recorder: recorder),
                     handler: {
-                        ElementaryProducer(
+                        WireMVCHTMLProducer(
                             div {
                                 ul {
                                     for todo in todos {
@@ -141,10 +142,10 @@ struct ElementaryProducerTests {
     func asyncContent() async throws {
         let recorder = Recorder()
 
-        try await wireMVCStreamingTerminal(
+        try await drive(
             responseSender: RecordingSender(recorder: recorder),
             handler: {
-                ElementaryProducer(
+                WireMVCHTMLProducer(
                     ul {
                         AsyncForEach(AsyncStream(rows: ["alpha", "beta", "gamma"])) { row in
                             li { row }
@@ -167,10 +168,10 @@ struct ElementaryProducerTests {
         let recorder = Recorder()
         let trailer: HTTPFields = [.init("x-render")!: "elementary"]
 
-        try await wireMVCStreamingTerminal(
+        try await drive(
             responseSender: RecordingSender(recorder: recorder),
             trailer: trailer,
-            handler: { ElementaryProducer(p { "done" }) },
+            handler: { WireMVCHTMLProducer(p { "done" }) },
             errorMapping: { _ in .status(.internalServerError) }
         )
 

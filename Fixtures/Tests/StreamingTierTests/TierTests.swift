@@ -1,7 +1,7 @@
 import AsyncStreaming
 import BasicContainers
 import HTTPTypes
-import StreamingTierPrototype
+import StreamingBodyProducers
 import Testing
 import WireMVC
 
@@ -20,7 +20,7 @@ struct TierTests {
     @Test("chunks reach the peer as separate writes, after the head")
     func incrementalWrites() async throws {
         let recorder = Recorder()
-        try await wireMVCStreamingTerminal(
+        try await drive(
             responseSender: RecordingSender(recorder: recorder),
             headerFields: [.contentType: "text/html; charset=utf-8"],
             handler: { ChunkProducer(["<html>", "<body>", "hi", "</body></html>"]) },
@@ -42,7 +42,7 @@ struct TierTests {
 
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask {
-                try await wireMVCStreamingTerminal(
+                try await drive(
                     responseSender: RecordingSender(recorder: recorder),
                     handler: { GatedProducer(first: "shell", rest: "tail", gate: gate) },
                     errorMapping: { _ in .status(.internalServerError) }
@@ -68,7 +68,7 @@ struct TierTests {
     @Test("a handler failure before the first byte maps to a buffered outcome")
     func handlerFailureMapsNormally() async throws {
         let recorder = Recorder()
-        try await wireMVCStreamingTerminal(
+        try await drive(
             responseSender: RecordingSender(recorder: recorder),
             handler: { () async throws -> ChunkProducer in throw HandlerFailed() },
             errorMapping: { _ in .status(.notFound) }
@@ -84,7 +84,7 @@ struct TierTests {
         let boom = BoomError(message: "row 3 exploded")
 
         await #expect(throws: BoomError.self) {
-            try await wireMVCStreamingTerminal(
+            try await drive(
                 responseSender: RecordingSender(recorder: recorder),
                 handler: { FailingProducer(before: ["<html>", "<p>ok</p>"], failure: boom) },
                 errorMapping: { _ in .status(.internalServerError) }
@@ -106,7 +106,7 @@ struct TierTests {
         let recorder = Recorder()
         let trailer: HTTPFields = [.init("x-render-ms")!: "12"]
 
-        try await wireMVCStreamingTerminal(
+        try await drive(
             responseSender: RecordingSender(recorder: recorder),
             trailer: trailer,
             handler: { ChunkProducer(["a", "b"]) },
@@ -168,7 +168,7 @@ struct NonSendableTests {
     @Test("a producer holding a non-Sendable value streams without an erasure box")
     func nonSendableProducer() async throws {
         let recorder = Recorder()
-        try await wireMVCStreamingTerminal(
+        try await drive(
             responseSender: RecordingSender(recorder: recorder),
             handler: { NonSendableProducer(model: NonSendableModel()) },
             errorMapping: { _ in .status(.internalServerError) }

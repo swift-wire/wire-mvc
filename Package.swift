@@ -44,6 +44,12 @@ let package = Package(
         // this becomes a compatibility shim rather than an implementation.
         .library(name: "WireMVCMiddleware", targets: ["WireMVCMiddleware"]),
         .library(name: "WireMVCServerTransport", targets: ["WireMVCServerTransport"]),
+        // The HTML adapter `@HTMLResponse` resolves against: it supplies `WireMVCHTMLProducer`, which
+        // streams an Elementary `some HTML` into the proposal's response body writer. WireMVC's core
+        // names no HTML library — the codegen emits a `WireMVCHTMLProducer(...)` call that resolves in the
+        // controller's own module, so a different HTML library can supply the same type and `@HTMLResponse`
+        // stays a convention rather than a dependency.
+        .library(name: "WireMVCElementary", targets: ["WireMVCElementary"]),
         // Test support for a `@WireMVCBootstrap` app — the generated `.wiremvc(_:)` suite trait stands the app
         // up on the server its mode carries and points `TestClient.current` at it. The generated
         // `_WireRoutes.swift` emits that factory (and imports this) for a test consumer, so a
@@ -79,6 +85,9 @@ let package = Package(
         // of a consumer that doesn't serve on it: a framework-agnostic package depending on `WireMVC`
         // resolves no NIO stack at all. Enable it on the wire-mvc dependency to run a live suite.
         .trait(name: "NIOHTTPServer"),
+        // Opt-in HTML responses. Off by default so Elementary is pruned from the graph of a consumer that
+        // serves no HTML — the same reasoning as `NIOHTTPServer`. Enable it to use `@HTMLResponse`.
+        .trait(name: "Elementary"),
     ],
     dependencies: [
         .package(url: "https://github.com/tachyonics/swift-wire.git", branch: "main"),
@@ -95,6 +104,14 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-log.git", from: "1.13.2"),
         .package(url: "https://github.com/apple/swift-openapi-runtime.git", from: "1.7.0"),
         .package(url: "https://github.com/swiftlang/swift-syntax", branch: "release/6.4.x"),
+        // Pinned to a revision until upstream takes the change: it relaxes `HTMLStreamWriter` to
+        // `~Copyable, ~Escapable` *and* makes async rendering inherit the caller's isolation. Both are
+        // needed before an Elementary body can be streamed into a lifetime-bound response body writer at
+        // all — see Documentation/Notes/StreamingResponseTier.md.
+        .package(
+            url: "https://github.com/tachyonics/elementary.git",
+            revision: "07eb69492ddf7052616af47518e7f883bd8f2691"
+        ),
     ],
     targets: [
         // The route codegen — the domain half of a route contributor (verbs, param bindings, response
@@ -192,6 +209,22 @@ let package = Package(
                     condition: .when(traits: ["NIOHTTPServer"])
                 ),
                 .product(name: "Logging", package: "swift-log", condition: .when(traits: ["NIOHTTPServer"])),
+            ],
+            swiftSettings: proposalSettings
+        ),
+        // The HTML adapter. Deliberately a separate target: WireMVC's core must not pick the ecosystem's
+        // HTML library on everyone's behalf, and it does not have to — the codegen emits text into the
+        // *controller's* module, so `WireMVCHTMLProducer(...)` resolves against whatever adapter that module
+        // imports. Swapping this target for one over a different HTML library needs no codegen change.
+        .target(
+            name: "WireMVCElementary",
+            dependencies: [
+                "WireMVC",
+                .product(name: "Elementary", package: "elementary", condition: .when(traits: ["Elementary"])),
+                .product(name: "HTTPTypes", package: "swift-http-types"),
+                .product(name: "AsyncStreaming", package: "swift-async-algorithms"),
+                // `UniqueArray` — the buffer type the adapter hands to the proposal's writer.
+                .product(name: "BasicContainers", package: "swift-collections"),
             ],
             swiftSettings: proposalSettings
         ),

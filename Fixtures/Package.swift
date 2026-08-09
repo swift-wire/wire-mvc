@@ -33,7 +33,7 @@ let package = Package(
         // The framework under test, with the NIO test support switched on — that trait is what gives
         // `WireMVCTesting` the `NIOHTTPServer: WireMVCTestServer` conformance and the `.swiftHttpServer`
         // suite mode, and it is the only thing that pulls `swift-http-server` into this graph.
-        .package(path: "..", traits: ["NIOHTTPServer"]),
+        .package(path: "..", traits: ["NIOHTTPServer", "Elementary"]),
         .package(url: "https://github.com/tachyonics/swift-wire.git", branch: "main"),
         .package(url: "https://github.com/apple/swift-http-api-proposal.git", .upToNextMinor(from: "0.2.0")),
         .package(
@@ -43,34 +43,23 @@ let package = Package(
         ),
         .package(url: "https://github.com/apple/swift-http-types.git", from: "1.6.0"),
         .package(url: "https://github.com/apple/swift-collections.git", from: "1.6.0"),
-        // A fork of Elementary, pinned to a revision until upstream takes the change (the same
-        // arrangement `wire-mvc-examples/OpenAPISpec` uses for its generator fork). It relaxes
-        // `HTMLStreamWriter`/`_AsyncHTMLRendering` to `~Copyable, ~Escapable` *and* makes async rendering
-        // inherit the caller's isolation — jointly necessary before a lifetime-bound response body writer
-        // can be streamed into at all. See Documentation/Notes/StreamingResponseTier.md.
-        .package(
-            url: "https://github.com/tachyonics/elementary.git",
-            revision: "07eb69492ddf7052616af47518e7f883bd8f2691"
-        ),
         .package(url: "https://github.com/swift-server/swift-http-server.git", branch: "main"),
         .package(url: "https://github.com/swift-server/swift-service-lifecycle.git", from: "2.0.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.13.2"),
     ],
     targets: [
-        // The streaming response tier proposed in `Documentation/Notes/StreamingResponseTier.md`,
-        // prototyped against the proposal's real types with a `ChunkProducer` body — and against the *real*
-        // `WireMVCOutcome`, since the claim under test is that the buffered tier is untouched.
+        // Synthetic bodies for WireMVC's streaming response tier (`WireMVC/StreamingResponses.swift`):
+        // fixed chunks, a mid-body failure, a gated tail. `StreamingTierTests` drives the shipped terminal
+        // over them with a writer that records every individual write — which is what makes "streamed" a
+        // byte-exact assertion rather than an inference from the response head, as it necessarily is in the
+        // over-the-wire suite.
         //
-        // Here rather than in wire-mvc proper because no route kind emits it yet: `RouteCodegen` has no
-        // streaming terminal, so there is nothing in the framework for it to be part of. It lives in the
-        // fixtures to keep the runtime half compiling and passing — including the ownership and `Sendable`
-        // shapes the design turns on — while the codegen work is done. No `WireMVCBuildPlugin`: it declares
-        // no `@Controller`, so there is nothing to generate.
+        // Here rather than in wire-mvc proper because it is test support, not framework surface. No
+        // `WireMVCBuildPlugin`: it declares no `@Controller`, so there is nothing to generate.
         .target(
-            name: "StreamingTierPrototype",
+            name: "StreamingBodyProducers",
             dependencies: [
                 .product(name: "WireMVC", package: "wire-mvc"),
-                .product(name: "Elementary", package: "elementary"),
                 .product(name: "HTTPAPIs", package: "swift-http-api-proposal"),
                 .product(name: "AsyncStreaming", package: "swift-async-algorithms"),
                 .product(name: "HTTPTypes", package: "swift-http-types"),
@@ -79,10 +68,10 @@ let package = Package(
             swiftSettings: proposalSettings
         ),
         .testTarget(
-            name: "StreamingTierPrototypeTests",
+            name: "StreamingTierTests",
             dependencies: [
-                "StreamingTierPrototype",
-                .product(name: "Elementary", package: "elementary"),
+                "StreamingBodyProducers",
+                .product(name: "WireMVCElementary", package: "wire-mvc"),
                 .product(name: "WireMVC", package: "wire-mvc"),
                 .product(name: "HTTPAPIs", package: "swift-http-api-proposal"),
                 .product(name: "AsyncStreaming", package: "swift-async-algorithms"),
@@ -121,6 +110,7 @@ let package = Package(
         .executableTarget(
             name: "WireMVCBootstrapExample",
             dependencies: [
+                .product(name: "WireMVCElementary", package: "wire-mvc"),
                 .product(name: "WireMVC", package: "wire-mvc"),
                 .product(name: "WireMVCRouter", package: "wire-mvc"),
                 .product(name: "Wire", package: "swift-wire"),
@@ -178,6 +168,7 @@ let package = Package(
         .testTarget(
             name: "WireMVCBootstrapExampleTests",
             dependencies: [
+                .product(name: "WireMVCElementary", package: "wire-mvc"),
                 "WireMVCBootstrapExample",
                 .product(name: "WireMVCTesting", package: "wire-mvc"),
                 // A direct dependency so the plugin re-parses WireMVC's adapter directives
@@ -209,6 +200,7 @@ let package = Package(
         .testTarget(
             name: "WireMVCBootstrapExampleReplaceTests",
             dependencies: [
+                .product(name: "WireMVCElementary", package: "wire-mvc"),
                 "WireMVCBootstrapExample",
                 .product(name: "WireMVCTesting", package: "wire-mvc"),
                 // Direct dependency so the plugin re-parses WireMVC's adapter directives — see the sibling
@@ -233,6 +225,7 @@ let package = Package(
         .testTarget(
             name: "WireMVCBootstrapExampleBindTests",
             dependencies: [
+                .product(name: "WireMVCElementary", package: "wire-mvc"),
                 "WireMVCBootstrapExample",
                 .product(name: "WireMVCTesting", package: "wire-mvc"),
                 .product(name: "WireMVC", package: "wire-mvc"),

@@ -1,11 +1,16 @@
 # Streaming response tier — a design note
 
-> **Status:** proposed (2026-08-08). **Prototyped and passing end to end** — `Fixtures/StreamingTierPrototype`
-> streams both a synthetic `ChunkProducer` body *and* real Elementary HTML into swift-http-api-proposal's
-> response body writer, 13 tests in 3 suites. Not yet integrated into WireMVC's codegen. Nothing here
-> is a prerequisite for `@HTMLResponse`, which buffers and is deliberately scoped to the existing
-> `WireMVCOutcome` tier; this note is what a *streaming* HTML route — and, more to the point, the SSE and
-> multipart routes that already exist — would need.
+> **Status:** **shipped** (2026-08-09). The tier is `WireMVC/StreamingResponses.swift`; `@HTMLResponse`
+> emits it, and `WireMVCElementary` supplies the producer. Streaming is `@HTMLResponse`'s contract from the
+> outset — there is no buffered HTML mode and never was one in the shipped surface.
+>
+> Pinned at three levels: `Tests/WireMVCCodegenTests/HTMLResponseGenerationTests` (9, the emitted terminal
+> and its diagnostics), `Fixtures/Tests/StreamingTierTests` (13, the runtime over a recording writer, both
+> synthetic bodies and real Elementary HTML), and `Fixtures/Tests/.../HTMLResponseOverTheWireTests` (7, a
+> live `NIOHTTPServer`).
+>
+> Still to come: migrating the SSE and multipart routes off `@RawRoute` onto this tier, which was the
+> original motivation and is the larger part of the payoff.
 >
 > The assumptions the design rests on were checked against the 6.4 snapshot toolchain
 > (`6.4.x-snapshot-2026-07-06`) rather than assumed; see *What was verified*.
@@ -350,7 +355,7 @@ meantime — but streaming HTML needs 1 and 2 together:
    HTML cannot do the one thing streaming HTML is for.
 
 1 and 2 should be one PR — separately, the first is dead code. `WireMVCBodyProducer` and
-`ElementaryProducer` in `Fixtures/StreamingTierPrototype` are the working use case to point at.
+`ElementaryProducer` in `Fixtures/StreamingBodyProducers` are the working use case to point at.
 
 The manifest cost on Elementary's side is small: tools-version 6.1 → 6.4, plus
 `.enableExperimentalFeature("Lifetimes")` and `.enableUpcomingFeature("NonisolatedNonsendingByDefault")`.
@@ -370,17 +375,60 @@ That is also the stronger internal argument for the work. "Streaming HTML needs 
 weak case. "Two shipped example routes pay full `@RawRoute` cost for something that should be typed, and HTML
 would be the third" is not.
 
-## The prototype
+**Still outstanding.** `@HTMLResponse` shipped; the migration did not. `GET /todos/stream` and `GET /export`
+in `wire-mvc-examples` are still `@RawRoute`, and they were the original motivation. Until they move, the
+tier has one client and the argument above is a promise rather than a result.
 
-The tier has been built and run end to end against the proposal's real types, in two layers. Package
-settings mirror `wire-mvc-examples/Controllers` exactly (`strictMemorySafety`, `LifetimeDependence`,
+## What `@HTMLResponse` emits
+
+The generated terminal for `func home() async throws -> some HTML`:
+
+```swift
+try await wireMVCStreamingTerminal(
+responseSender: responseSender,
+building: {
+return WireMVCStreamingOutcome(
+status: .ok,
+headerFields: WireMVCResponseHeaders.resolved(statics: [.setIfAbsent(.contentType, "text/html; charset=utf-8")], middleware: try await wireMVCResponseHeaderDrain.drain()),
+producer: WireMVCHTMLProducer(try await self._wireSubject.home())
+)
+},
+errorMapping: { wireMVCError in … }
+)
+```
+
+Four decisions in that, three of which the build forced.
+
+**The producer type is never spelled.** `Producer` is inferred from `building`'s return type. Nothing else
+would work: the handler returns an opaque `some HTML`, which the generated code cannot name.
+
+**`return` is not optional.** Swift infers a closure's result type from a bare trailing expression only when
+it is the *sole* statement, so the moment a route has a `@Path` binding — or a scope prologue, or a body
+collection — `Producer` becomes uninferrable. The codegen emits `return` in both cases rather than tracking
+which shape it is in. This compiled for the no-binding route and failed for the next one along, which is
+precisely the class of bug only a fixture catches.
+
+**Content-Type goes through the existing header machinery**, seeded as a `.setIfAbsent` static placed first.
+A route's own `@ResponseHeader(.contentType, …)` — a `.set`, applied later — still wins by the ordinary tier
+rule, and a handler-returned field wins over that. No second place content types come from. Charset is
+included, unlike `WireMVCOutcome.json`'s bare `application/json`: a browser sniffs an HTML body without it.
+
+**Everything that can fail before the head sits inside `building`** — scope entry, body collection, parameter
+binding, the handler call, the header drain — so all of it maps through the same `@ErrorResponse` chain a
+`@JSONResponse` route uses. That is not a nicety: it is what makes the streaming tier's error handling equal
+to the buffered tier's *up to the first byte*, which is as far as any streaming design can go.
+
+## How it is pinned
+
+The tier is exercised at two levels below the codegen, in `Fixtures`. Package settings mirror
+`wire-mvc-examples/Controllers` exactly (`strictMemorySafety`, `LifetimeDependence`,
 `Lifetimes`, `NonisolatedNonsendingByDefault`, …) so the ownership surface is identical to the real thing.
 
 **Layer 1 — the tier alone**, with a `ChunkProducer` standing in for a rendered body and no Elementary
 dependency, so the design is validated independently of whether Elementary can be adapted at all. It also
 composes with the **real** `WireMVCOutcome`, since "the buffered tier is untouched" is a claim under test.
 
-Seven tests pass, covering every claim this note makes:
+Seven tests, covering every claim this note makes:
 
 | Claim | How it is pinned |
 | --- | --- |
@@ -414,6 +462,18 @@ the Elementary fork (`tachyonics/elementary`, pinned to `07eb694`). Six further 
 | Trailers survive the Elementary path | Delivered after the rendered body |
 
 Against upstream Elementary this layer does not compile at all — which is the point of it.
+
+**Layer 3 — over real HTTP**, in `HTMLResponseOverTheWireTests`: four `@HTMLResponse` routes on the
+fixtures' `NIOHTTPServer`, seven tests. The seeded content type, an annotated `404` alongside a route
+constant, a binding failure mapping to `400` *before* the head, an `@ErrorResponse` handler throw doing the
+same, and the global middleware tier contributing to a streamed head.
+
+Its limit is worth stating, because the obvious assertion does not hold. A collecting client cannot see
+individual writes, so "streamed" is only inferable from the response head — and this stack reports
+`Transfer-Encoding: Identity`, not `chunked`. What is observable is the **absence of `Content-Length`** on a
+~28 KB body: a buffered response knows its size, a streamed one does not. That is the regression signal at
+this level. The byte-exact evidence — many separate writes, the head observable while the body is still
+rendering — needs the recording writer in layer 1, and only exists there.
 
 ## What was verified
 
