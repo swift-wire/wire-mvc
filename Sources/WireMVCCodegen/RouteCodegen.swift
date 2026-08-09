@@ -194,6 +194,77 @@ struct RouteBlockGenerator {
         return blocks.joined(separator: "\n")
     }
 
+    /// A route's response mode: its resolved constant header fields, and whether it is an `@HTMLResponse`
+    /// (streaming) route. `nil` when the route states its mode more than once, which is diagnosed here.
+    ///
+    /// Split out of `routeBlock` for length, along the seam the rest of this file already follows — the
+    /// response half is its own concern (see `ResponseCodegen.swift`).
+    private mutating func responseMode(
+        of function: FunctionDeclSyntax,
+        controllerResponseHeaders: [ResponseHeaderEntry]
+    ) -> (staticHeaders: [ResponseHeaderEntry], isHTML: Bool)? {
+        // Tier order is application order: controller entries first, the route's after, so the route's
+        // `.set` replaces and its `.append` adds. Nothing is filtered out here.
+        var staticHeaders =
+            controllerResponseHeaders + responseHeaderEntries(from: function.attributes, scopeLabel: "route")
+        // A route states its response mode exactly once. Two annotations is a contradiction, and silently
+        // honouring the first (which is what the response chain would do) is a worse way to find that out.
+        let annotations = responseAnnotationNames(on: function.attributes)
+        if annotations.count > 1 {
+            record(
+                RouteCodegenDiagnostic(
+                    .multipleResponseAnnotations(
+                        function.name.text,
+                        annotations: annotations.map { "@\($0)" }.joined(separator: ", ")
+                    ),
+                    at: function.name
+                )
+            )
+            return nil
+        }
+        let isHTML = annotations.first == "HTMLResponse"
+        // Seed `text/html; charset=utf-8` through the *existing* header machinery rather than inventing a
+        // second place content types come from. `setIfAbsent` and first-in-list means a route's own
+        // `@ResponseHeader(.contentType, …)` — applied later, as a `.set` — still wins, as does a field the
+        // handler returns. Charset included, unlike `WireMVCOutcome.json`'s bare `application/json`: a
+        // browser sniffs an HTML body without it.
+        if isHTML {
+            staticHeaders.insert(
+                ResponseHeaderEntry(name: ".contentType", value: "\"text/html; charset=utf-8\"", verb: "setIfAbsent"),
+                at: 0
+            )
+        }
+        return (staticHeaders, isHTML)
+    }
+
+    /// Which terminal a route needs, and the statements that feed it: the buffered assignment a
+    /// `@JSONResponse`/`@ResponseStatus` route emits, or the outcome expression an `@HTMLResponse` route's
+    /// `building` closure ends in. `nil` when the route was diagnosed.
+    private mutating func responseEmission(
+        of function: FunctionDeclSyntax,
+        call: String,
+        staticHeaders: [ResponseHeaderEntry],
+        drainsMiddleware: Bool,
+        isHTML: Bool
+    ) -> ResponseEmission? {
+        if isHTML {
+            return htmlResponseOutcome(
+                from: function,
+                call: call,
+                staticHeaders: staticHeaders,
+                drainsMiddleware: drainsMiddleware
+            )
+            .map(ResponseEmission.streaming)
+        }
+        return responseComputation(
+            from: function,
+            call: call,
+            staticHeaders: staticHeaders,
+            drainsMiddleware: drainsMiddleware
+        )
+        .map(ResponseEmission.buffered)
+    }
+
     private mutating func routeBlock(
         function: FunctionDeclSyntax,
         verb: Verb,
@@ -217,35 +288,12 @@ struct RouteBlockGenerator {
         }
         // Tier order is application order: controller entries first, the route's after, so the route's
         // `.set` replaces and its `.append` adds. Nothing is filtered out here.
-        var staticHeaders =
-            controllerResponseHeaders + responseHeaderEntries(from: function.attributes, scopeLabel: "route")
-        // A route states its response mode exactly once. Two annotations is a contradiction, and silently
-        // honouring the first (which is what the chain below would do) is a worse way to find that out.
-        let responseAnnotations = responseAnnotationNames(on: function.attributes)
-        if responseAnnotations.count > 1 {
-            record(
-                RouteCodegenDiagnostic(
-                    .multipleResponseAnnotations(
-                        function.name.text,
-                        annotations: responseAnnotations.map { "@\($0)" }.joined(separator: ", ")
-                    ),
-                    at: function.name
-                )
+        guard
+            let (staticHeaders, isHTML) = responseMode(
+                of: function,
+                controllerResponseHeaders: controllerResponseHeaders
             )
-            return nil
-        }
-        let isHTML = responseAnnotations.first == "HTMLResponse"
-        // Seed `text/html; charset=utf-8` through the *existing* header machinery rather than inventing a
-        // second place content types come from. `setIfAbsent` and first-in-list means a route's own
-        // `@ResponseHeader(.contentType, …)` — applied later, as a `.set` — still wins, as does a field the
-        // handler returns. Charset included, unlike `WireMVCOutcome.json`'s bare `application/json`: a
-        // browser sniffs an HTML body without it.
-        if isHTML {
-            staticHeaders.insert(
-                ResponseHeaderEntry(name: ".contentType", value: "\"text/html; charset=utf-8\"", verb: "setIfAbsent"),
-                at: 0
-            )
-        }
+        else { return nil }
         let hasBody = routeHasBody(function)
         guard let (binds, callArgs) = parameterBindings(of: function, path: path, hasBody: hasBody)
         else { return nil }
@@ -255,27 +303,15 @@ struct RouteBlockGenerator {
         // this route has a fold — and a global middleware must reach a route with no `@Middleware` of its
         // own, which is most of them. Making it conditional would miss those silently.
         let drainsMiddleware = true
-        let response: String?
-        let streamingOutcome: String?
-        if isHTML {
-            streamingOutcome = htmlResponseOutcome(
-                from: function,
+        guard
+            let emission = responseEmission(
+                of: function,
                 call: call,
                 staticHeaders: staticHeaders,
-                drainsMiddleware: drainsMiddleware
+                drainsMiddleware: drainsMiddleware,
+                isHTML: isHTML
             )
-            guard streamingOutcome != nil else { return nil }
-            response = nil
-        } else {
-            streamingOutcome = nil
-            response = responseComputation(
-                from: function,
-                call: call,
-                staticHeaders: staticHeaders,
-                drainsMiddleware: drainsMiddleware
-            )
-            guard response != nil else { return nil }
-        }
+        else { return nil }
         // Route-scope `@ErrorResponse` is consulted before the controller's (route overrides controller);
         // the Bootstrap's global tier is the default, consulted last (M5.5 Phase 3).
         let errorMappings =
@@ -294,6 +330,29 @@ struct RouteBlockGenerator {
         // the register-closure top and drop it from the terminal (which still enters scope off the hoisted
         // binding). Otherwise the preamble stays in the terminal, byte-for-byte unchanged.
         let foldThreadsDoubles = middleware.contains { $0.contains(Self.doublesCreateArgument) }
+        let terminalBody =
+            switch emission {
+            case .streaming(let outcome):
+                streamingClosureBody(
+                    hasBinds: hasBinds,
+                    hasBody: hasBody,
+                    binds: binds,
+                    outcome: outcome,
+                    scopeEntryPreamble: foldThreadsDoubles ? "" : scopeEntryPreamble,
+                    scopeEntryPrologue: scopeEntryProloguePrefix,
+                    errorMappings: errorMappings
+                )
+            case .buffered(let response):
+                closureBody(
+                    hasBinds: hasBinds,
+                    hasBody: hasBody,
+                    binds: binds,
+                    response: response,
+                    scopeEntryPreamble: foldThreadsDoubles ? "" : scopeEntryPreamble,
+                    scopeEntryPrologue: scopeEntryProloguePrefix,
+                    errorMappings: errorMappings
+                )
+            }
         return emitRegister(
             verb: verb,
             path: path,
@@ -306,26 +365,7 @@ struct RouteBlockGenerator {
             parametersName: parametersName,
             readerName: readerName,
             drainsResponseHeaders: drainsMiddleware,
-            terminalBody: streamingOutcome.map { outcome in
-                streamingClosureBody(
-                    hasBinds: hasBinds,
-                    hasBody: hasBody,
-                    binds: binds,
-                    outcome: outcome,
-                    scopeEntryPreamble: foldThreadsDoubles ? "" : scopeEntryPreamble,
-                    scopeEntryPrologue: scopeEntryProloguePrefix,
-                    errorMappings: errorMappings
-                )
-            }
-                ?? closureBody(
-                    hasBinds: hasBinds,
-                    hasBody: hasBody,
-                    binds: binds,
-                    response: response!,
-                    scopeEntryPreamble: foldThreadsDoubles ? "" : scopeEntryPreamble,
-                    scopeEntryPrologue: scopeEntryProloguePrefix,
-                    errorMappings: errorMappings
-                )
+            terminalBody: terminalBody
         )
     }
 }
@@ -910,4 +950,11 @@ public func codingProxyField(for reference: String) -> String {
     reference.hasSuffix(".self")
         ? dependencyPropertyName(forType: String(reference.dropLast(".self".count)))
         : dependencyPropertyName(forKey: reference)
+}
+
+/// What a route's response half produced — the two terminal shapes, kept apart because the streaming one
+/// ends in an expression the `building` closure returns while the buffered one assigns `wireMVCOutcome`.
+enum ResponseEmission {
+    case buffered(String)
+    case streaming(String)
 }

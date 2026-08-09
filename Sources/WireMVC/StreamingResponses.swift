@@ -1,8 +1,7 @@
 public import AsyncStreaming
+import BasicContainers
 public import HTTPAPIs
 public import HTTPTypes
-
-import BasicContainers
 
 // The streaming response tier — a typed route whose status and header fields resolve normally but whose
 // body is produced incrementally. See `Documentation/Notes/StreamingResponseTier.md` for the design and

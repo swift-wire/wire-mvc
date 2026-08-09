@@ -21,7 +21,9 @@ final class Recorder: Sendable {
     func record(_ event: WireEvent) { events.withLock { $0.append(event) } }
     var recorded: [WireEvent] { events.withLock { $0 } }
 
-    var chunks: [String] { recorded.compactMap { if case let .chunk(s) = $0 { return s } else { return nil } } }
+    var chunks: [String] {
+        recorded.compactMap { if case let .chunk(text) = $0 { return text } else { return nil } }
+    }
     var body: String { chunks.joined() }
 }
 

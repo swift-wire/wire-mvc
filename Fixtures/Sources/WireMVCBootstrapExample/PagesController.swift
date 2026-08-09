@@ -53,7 +53,10 @@ package struct PagesController {
     @ErrorResponse(PageTooLarge.self, .badRequest)
     package func list(@Path count: Int) throws -> some HTML {
         guard count <= 500 else { throw PageTooLarge() }
-        return TodoListPage(heading: "Todos", rows: (0..<count).map { "task number \($0) — with enough text to fill a chunk" })
+        return TodoListPage(
+            heading: "Todos",
+            rows: (0..<count).map { "task number \($0) — with enough text to fill a chunk" }
+        )
     }
 
     /// A route constant beating the seeded content type, and a non-200 annotated status. Both go through

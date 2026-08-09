@@ -1,14 +1,12 @@
 public import AsyncStreaming
+import BasicContainers
 public import HTTPTypes
 public import WireMVC
-
-import BasicContainers
 
 // Test producers for WireMVC's streaming response tier (`WireMVC/StreamingResponses.swift`). They exist so
 // the suite can drive the *shipped* tier over synthetic bodies — fixed chunks, a mid-body failure, a gated
 // tail — with no HTML library in the way. The tier itself is no longer duplicated here; these are
 // producers, nothing more.
-
 
 /// The prototype's stand-in for a rendered HTML body: fixed chunks, written one at a time.
 public struct ChunkProducer: WireMVCBodyProducer {
