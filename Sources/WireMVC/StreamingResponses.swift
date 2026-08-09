@@ -1,0 +1,120 @@
+public import AsyncStreaming
+public import HTTPAPIs
+public import HTTPTypes
+
+import BasicContainers
+
+// The streaming response tier — a typed route whose status and header fields resolve normally but whose
+// body is produced incrementally. See `Documentation/Notes/StreamingResponseTier.md` for the design and
+// for why each shape here is the one that compiles.
+//
+// It sits alongside ``WireMVCOutcome`` rather than inside it. The buffered tier is untouched: gates, the
+// header registry, `@ErrorResponse` mappings and the generated typed client all still see exactly the
+// non-generic `WireMVCOutcome` they saw before.
+
+/// A description of a body that is written incrementally.
+///
+/// The producer **terminates the response itself**, calling `finish` with the trailer it is handed. That
+/// division of labour is forced rather than chosen: a `~Escapable` writer cannot be held in a struct field,
+/// so it cannot be passed by an escaping borrow; and handing it back (`write(into:) -> W`) makes the return
+/// value lifetime-dependent on an argument, which the checker cannot trace across a protocol witness once
+/// the value has passed through an intermediary. Letting the producer finish keeps every lifetime-dependent
+/// value inside one function body, and needs no `@_lifetime` annotation anywhere in this tier.
+///
+/// The cost is a real obligation: a producer that returns without calling `finish` leaves the response
+/// unterminated, which per the proposal aborts it. That is the same observable outcome as a mid-body throw,
+/// so the failure mode is at least consistent — but nothing enforces it.
+///
+/// **No `Sendable` requirement**, deliberately. The producer never escapes the terminal's region. Requiring
+/// `Sendable` would be the sole reason a non-`Sendable` body value — an Elementary `some HTML` capturing a
+/// model object, say — would need an erasure box.
+public protocol WireMVCBodyProducer {
+    consuming func writeBody<W: CallerAsyncWriter & ~Copyable & ~Escapable>(
+        into writer: consuming W,
+        terminatedBy trailer: HTTPFields?
+    ) async throws where W.WriteElement == UInt8, W.FinalElement == HTTPFields?
+}
+
+/// A response whose head is sent up front and whose body is then streamed by a ``WireMVCBodyProducer``.
+///
+/// Generic over the *concrete* producer, which is inferred at its single construction site inside the
+/// generated terminal's `building` closure. It appears in no user-written signature.
+public struct WireMVCStreamingOutcome<Producer: WireMVCBodyProducer> {
+    /// The response status. Resolved before the producer runs, because the head goes out first.
+    public var status: HTTPResponse.Status
+
+    /// The response header fields, already folded — `@ResponseHeader` constants, the handler's returned
+    /// fields, and middleware contributions, in the usual order. A contribution registered *after* the head
+    /// is sent has nowhere to go; see ``trailer``.
+    public var headerFields: HTTPFields
+
+    /// What writes the body.
+    public var producer: Producer
+
+    /// Trailing fields, delivered with the end of the body — where post-head metadata goes now that the
+    /// header fold has already run (`Writer.FinalElement == HTTPFields?`).
+    public var trailer: HTTPFields?
+
+    public init(
+        status: HTTPResponse.Status,
+        headerFields: HTTPFields = [:],
+        producer: Producer,
+        trailer: HTTPFields? = nil
+    ) {
+        self.status = status
+        self.headerFields = headerFields
+        self.producer = producer
+        self.trailer = trailer
+    }
+
+    /// Send the head, then hand the writer to the producer.
+    ///
+    /// Deliberately `throws`. A mid-body failure propagates to the framework, and the writer is dropped
+    /// without `finish` — which the proposal defines as aborting the response, the honest wire signal for a
+    /// truncated body. Nothing is swallowed, and nothing pretends a post-head error can become a status.
+    public consuming func send<Sender: HTTPResponseSender & ~Copyable>(
+        on sender: consuming Sender
+    ) async throws where Sender.Writer: ~Copyable {
+        let writer = try await sender.send(HTTPResponse(status: status, headerFields: headerFields))
+        try await producer.writeBody(into: writer, terminatedBy: trailer)
+    }
+}
+
+/// The terminal-local discriminant: what a streaming route decided to send. Never named by a user.
+public enum WireMVCTerminalOutcome<Producer: WireMVCBodyProducer> {
+    case stream(WireMVCStreamingOutcome<Producer>)
+    case buffered(WireMVCOutcome)
+}
+
+/// The generated terminal for a streaming route.
+///
+/// **Discriminate inside the `do`/`catch`, consume the sender once, outside it** — preserving the
+/// single-consume-site invariant the buffered terminal already maintains. The alternative (sending inside
+/// the `do`) does not compile: the ownership checker reports `'responseSender' consumed more than once`,
+/// because a throwing send inside the `do` can reach the `catch`. The soundness rule is the checker's.
+///
+/// `building` carries everything that can fail *before* the head goes out — scope entry, parameter binding,
+/// the handler call, the header drain — so all of it still maps through `errorMapping` exactly as a
+/// buffered route's does. Nothing after the first byte can be mapped, which is inherent to streaming and is
+/// why `Producer` is only reached once `building` has returned.
+///
+/// `Producer` is inferred from `building`'s return type, which is what lets the generated code stream a
+/// handler returning an opaque type it cannot spell.
+public func wireMVCStreamingTerminal<Producer: WireMVCBodyProducer, Sender: HTTPResponseSender & ~Copyable>(
+    responseSender: consuming Sender,
+    building: () async throws -> WireMVCStreamingOutcome<Producer>,
+    errorMapping: (any Error) throws -> WireMVCOutcome
+) async throws where Sender.Writer: ~Copyable {
+    let wireMVCResult: WireMVCTerminalOutcome<Producer>
+    do {
+        wireMVCResult = .stream(try await building())
+    } catch let wireMVCError {
+        wireMVCResult = .buffered(try errorMapping(wireMVCError))
+    }
+    switch wireMVCResult {
+    case .stream(let streaming):
+        try await streaming.send(on: responseSender)
+    case .buffered(let buffered):
+        try await buffered.send(on: responseSender)
+    }
+}

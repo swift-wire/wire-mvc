@@ -217,8 +217,35 @@ struct RouteBlockGenerator {
         }
         // Tier order is application order: controller entries first, the route's after, so the route's
         // `.set` replaces and its `.append` adds. Nothing is filtered out here.
-        let staticHeaders =
+        var staticHeaders =
             controllerResponseHeaders + responseHeaderEntries(from: function.attributes, scopeLabel: "route")
+        // A route states its response mode exactly once. Two annotations is a contradiction, and silently
+        // honouring the first (which is what the chain below would do) is a worse way to find that out.
+        let responseAnnotations = responseAnnotationNames(on: function.attributes)
+        if responseAnnotations.count > 1 {
+            record(
+                RouteCodegenDiagnostic(
+                    .multipleResponseAnnotations(
+                        function.name.text,
+                        annotations: responseAnnotations.map { "@\($0)" }.joined(separator: ", ")
+                    ),
+                    at: function.name
+                )
+            )
+            return nil
+        }
+        let isHTML = responseAnnotations.first == "HTMLResponse"
+        // Seed `text/html; charset=utf-8` through the *existing* header machinery rather than inventing a
+        // second place content types come from. `setIfAbsent` and first-in-list means a route's own
+        // `@ResponseHeader(.contentType, …)` — applied later, as a `.set` — still wins, as does a field the
+        // handler returns. Charset included, unlike `WireMVCOutcome.json`'s bare `application/json`: a
+        // browser sniffs an HTML body without it.
+        if isHTML {
+            staticHeaders.insert(
+                ResponseHeaderEntry(name: ".contentType", value: "\"text/html; charset=utf-8\"", verb: "setIfAbsent"),
+                at: 0
+            )
+        }
         let hasBody = routeHasBody(function)
         guard let (binds, callArgs) = parameterBindings(of: function, path: path, hasBody: hasBody)
         else { return nil }
@@ -228,14 +255,27 @@ struct RouteBlockGenerator {
         // this route has a fold — and a global middleware must reach a route with no `@Middleware` of its
         // own, which is most of them. Making it conditional would miss those silently.
         let drainsMiddleware = true
-        guard
-            let response = responseComputation(
+        let response: String?
+        let streamingOutcome: String?
+        if isHTML {
+            streamingOutcome = htmlResponseOutcome(
                 from: function,
                 call: call,
                 staticHeaders: staticHeaders,
                 drainsMiddleware: drainsMiddleware
             )
-        else { return nil }
+            guard streamingOutcome != nil else { return nil }
+            response = nil
+        } else {
+            streamingOutcome = nil
+            response = responseComputation(
+                from: function,
+                call: call,
+                staticHeaders: staticHeaders,
+                drainsMiddleware: drainsMiddleware
+            )
+            guard response != nil else { return nil }
+        }
         // Route-scope `@ErrorResponse` is consulted before the controller's (route overrides controller);
         // the Bootstrap's global tier is the default, consulted last (M5.5 Phase 3).
         let errorMappings =
@@ -266,15 +306,26 @@ struct RouteBlockGenerator {
             parametersName: parametersName,
             readerName: readerName,
             drainsResponseHeaders: drainsMiddleware,
-            terminalBody: closureBody(
-                hasBinds: hasBinds,
-                hasBody: hasBody,
-                binds: binds,
-                response: response,
-                scopeEntryPreamble: foldThreadsDoubles ? "" : scopeEntryPreamble,
-                scopeEntryPrologue: scopeEntryProloguePrefix,
-                errorMappings: errorMappings
-            )
+            terminalBody: streamingOutcome.map { outcome in
+                streamingClosureBody(
+                    hasBinds: hasBinds,
+                    hasBody: hasBody,
+                    binds: binds,
+                    outcome: outcome,
+                    scopeEntryPreamble: foldThreadsDoubles ? "" : scopeEntryPreamble,
+                    scopeEntryPrologue: scopeEntryProloguePrefix,
+                    errorMappings: errorMappings
+                )
+            }
+                ?? closureBody(
+                    hasBinds: hasBinds,
+                    hasBody: hasBody,
+                    binds: binds,
+                    response: response!,
+                    scopeEntryPreamble: foldThreadsDoubles ? "" : scopeEntryPreamble,
+                    scopeEntryPrologue: scopeEntryProloguePrefix,
+                    errorMappings: errorMappings
+                )
         )
     }
 }
@@ -500,6 +551,45 @@ extension RouteBlockGenerator {
             \(errorCatchClause(mappings: errorMappings, includeBindingBuiltin: hasBinds))
             }
             try await wireMVCOutcome.send(on: responseSender)
+            """
+    }
+
+    /// The terminal for a **streaming** route (`@HTMLResponse`).
+    ///
+    /// `wireMVCStreamingTerminal` discriminates inside its own `do`/`catch` and consumes the sender once,
+    /// afterwards — the same single-consume-site invariant the buffered terminal above maintains. Sending
+    /// inside the `do` does not compile (`'responseSender' consumed more than once`), so the shape is the
+    /// checker's choice rather than a preference.
+    ///
+    /// Everything that can fail *before* the head goes out — scope entry, body collection, parameter
+    /// binding, the handler call, the header drain — sits inside `building`, so all of it still maps
+    /// through the same `@ErrorResponse` chain a buffered route uses. Nothing after the first byte can be
+    /// mapped; that is inherent to streaming, and is why the producer is only reached once `building`
+    /// returns. The generated code never names the producer type: it is inferred from `building`.
+    func streamingClosureBody(
+        hasBinds: Bool,
+        hasBody: Bool,
+        binds: [String],
+        outcome: String,
+        scopeEntryPreamble: String,
+        scopeEntryPrologue: String,
+        errorMappings: [ErrorMapping]
+    ) -> String {
+        let collect = hasBody ? "let requestBody = try await WireMVCRequest.collectBody(reader)\n" : ""
+        let bindsBlock = binds.isEmpty ? "" : binds.joined(separator: "\n") + "\n"
+        // `building` ends in the outcome. A single-expression body needs no `return`; a multi-statement one
+        // (a response tuple, a bind, a prologue) supplies its own — `htmlResponseOutcome` writes it.
+        let body = "\(scopeEntryPrologue)\(collect)\(bindsBlock)\(outcome)"
+        return """
+            \(scopeEntryPreamble)try await wireMVCStreamingTerminal(
+            responseSender: responseSender,
+            building: {
+            \(body)
+            },
+            errorMapping: { wireMVCError in
+            \(errorChainExpression(mappings: errorMappings, includeBindingBuiltin: hasBinds))
+            }
+            )
             """
     }
 
@@ -735,12 +825,34 @@ extension RouteBlockGenerator {
             elements.append("WireMVCOutcome.status(.internalServerError)")
         }
 
+        return "wireMVCOutcome = \(errorChainExpression(mappings: mappings, elements: elements))"
+    }
+
+    /// The consultation chain as a bare expression. The buffered terminal assigns it; the streaming
+    /// terminal returns it from `errorMapping`. Same chain, same order, two callers.
+    func errorChainExpression(mappings: [ErrorMapping], includeBindingBuiltin: Bool) -> String {
+        var elements: [String] = []
+        for mapping in mappings where !mapping.isCatchAll {
+            elements.append(chainElement(mapping, terminal: false))
+        }
+        if includeBindingBuiltin {
+            elements.append("(wireMVCError as? WireMVCBindingError).map { WireMVCOutcome.status($0.status) }")
+        }
+        if let catchAll = mappings.first(where: { $0.isCatchAll }) {
+            elements.append(chainElement(catchAll, terminal: true))
+        } else {
+            elements.append("WireMVCOutcome.status(.internalServerError)")
+        }
+        return errorChainExpression(mappings: mappings, elements: elements)
+    }
+
+    private func errorChainExpression(mappings: [ErrorMapping], elements: [String]) -> String {
         let tryPrefix = mappings.contains(where: \.isThrowing) ? "try " : ""
         if elements.count == 1 {
-            return "wireMVCOutcome = \(tryPrefix)\(elements[0])"
+            return "\(tryPrefix)\(elements[0])"
         }
         let chain = elements.joined(separator: "\n?? ")
-        return "wireMVCOutcome = \(tryPrefix)(\n\(chain)\n)"
+        return "\(tryPrefix)(\n\(chain)\n)"
     }
 
     /// One element of the `??` consultation chain. A non-terminal element yields `WireMVCOutcome?`

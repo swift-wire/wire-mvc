@@ -166,6 +166,29 @@ public macro JSONResponse() = #externalMacro(module: "WireMVCMacros", type: "Rou
 public macro JSONResponse(status: HTTPResponse.Status) =
     #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
 
+/// The route returns HTML, **streamed** — the head goes out first, then the body is written incrementally
+/// as it renders. `Content-Type: text/html; charset=utf-8` unless the route says otherwise.
+///
+///     @Get("/todos")
+///     @HTMLResponse
+///     func page() async throws -> some HTML { TodosPage(todos: try await repository.all()) }
+///
+/// Streaming is the contract, not an optimisation, and it has one consequence worth stating plainly:
+/// **`@ErrorResponse` covers this route only up to the first byte.** Binding failures, scope-entry throws
+/// and the handler itself still map to a status as they would on a `@JSONResponse` route; a failure *during
+/// rendering* happens after the head is on the wire, so it cannot become a status and instead truncates the
+/// response (the writer is dropped without `finish`, which the proposal defines as an abort).
+///
+/// The return type is not named here. The generated terminal wraps whatever the handler returns in a
+/// `WireMVCHTMLProducer`, resolved against the adapter the *controller's own module* imports — `WireMVCElementary`
+/// in practice. WireMVC's core depends on no HTML library, so this annotation names a convention rather than
+/// one. See `Documentation/Notes/StreamingResponseTier.md`.
+@attached(peer)
+public macro HTMLResponse() = #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
+@attached(peer)
+public macro HTMLResponse(status: HTTPResponse.Status) =
+    #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
+
 /// The route returns no body; the response carries the given status.
 @attached(peer)
 public macro ResponseStatus(_ status: HTTPResponse.Status) =

@@ -18,7 +18,7 @@ extension RouteBlockGenerator {
         let attributes = function.attributes
         let route = function.name.text
         guard let shape = responseReturnShape(of: function, route: route) else { return nil }
-        let staticsLiteral = staticHeaders.isEmpty ? nil : responseHeaderLiteral(staticHeaders)
+        let staticsLiteral = self.staticsLiteral(staticHeaders)
 
         // A **bodiless response tuple** states its own response mode: no `body` label means no body, and
         // `status:` means the status is computed. Both facts are in the signature, more explicitly than an
@@ -55,7 +55,12 @@ extension RouteBlockGenerator {
             // the dead value unwritable rather than merely diagnosed; the bare `@JSONResponse` is still
             // required, because it names the codec.
             if shape.hasStatus, jsonResponseExplicitStatus(from: attributes) != nil {
-                record(RouteCodegenDiagnostic(.deadResponseStatusArgument(route), at: function.name))
+                record(
+                    RouteCodegenDiagnostic(
+                        .deadResponseStatusArgument(route, annotation: "JSONResponse"),
+                        at: function.name
+                    )
+                )
                 return nil
             }
             // The untouched path: no statics, no tuple, no fold — the exact string this emitted before.
@@ -95,30 +100,110 @@ extension RouteBlockGenerator {
         return nil
     }
 
+    /// The `WireMVCStreamingOutcome` expression an `@HTMLResponse` route's `building` closure ends in, or
+    /// `nil` if this route is not one (or is one that fails to type-check as one).
+    ///
+    /// The producer is spelled `WireMVCHTMLProducer(...)` and resolved in the *controller's* module against
+    /// whatever HTML adapter it imports — the codegen names no HTML library, which is what keeps
+    /// `@HTMLResponse` a convention rather than a dependency on Elementary.
+    mutating func htmlResponseOutcome(
+        from function: FunctionDeclSyntax,
+        call: String,
+        staticHeaders: [ResponseHeaderEntry],
+        drainsMiddleware: Bool
+    ) -> String? {
+        let route = function.name.text
+        guard let status = annotatedStatus(from: function.attributes, annotation: "HTMLResponse") else {
+            return nil
+        }
+        guard let shape = responseReturnShape(of: function, route: route) else { return nil }
+        guard shape.hasBody else {
+            record(RouteCodegenDiagnostic(.htmlResponseOnVoid(route), at: function.name))
+            return nil
+        }
+        if shape.hasStatus, explicitStatusArgument(from: function.attributes, annotation: "HTMLResponse") != nil {
+            record(
+                RouteCodegenDiagnostic(
+                    .deadResponseStatusArgument(route, annotation: "HTMLResponse"),
+                    at: function.name
+                )
+            )
+            return nil
+        }
+        let statics = staticsLiteral(staticHeaders)
+        let fields = headerExpression(shape: shape, statics: statics, drainsMiddleware: drainsMiddleware)
+
+        guard shape.isTuple else {
+            // `return` even though this is the only statement in the simple case: with a binding or a scope
+            // prologue the `building` closure is multi-statement, and Swift infers a closure's result type
+            // from a bare trailing expression only when it is the *sole* statement. One spelling for both.
+            return """
+                return WireMVCStreamingOutcome(
+                status: \(status),
+                headerFields: \(fields),
+                producer: WireMVCHTMLProducer(\(call))
+                )
+                """
+        }
+        let resolvedStatus = shape.hasStatus ? "\(returnLocal).\(responseTupleStatusLabel)" : status
+        return """
+            let \(returnLocal) = \(call)
+            return WireMVCStreamingOutcome(
+            status: \(resolvedStatus),
+            headerFields: \(fields),
+            producer: WireMVCHTMLProducer(\(returnLocal).\(responseTupleBodyLabel))
+            )
+            """
+    }
+
     /// The name of whichever response annotation is written on this route, or `nil` if none is.
     private func responseAnnotationName(on attributes: AttributeListSyntax) -> String? {
         for case let .attribute(attr) in attributes {
             let name = attr.attributeName.trimmedDescription
-            if name == "JSONResponse" || name == "ResponseStatus" { return name }
+            if name == "JSONResponse" || name == "ResponseStatus" || name == "HTMLResponse" { return name }
         }
         return nil
+    }
+
+    /// Every response annotation written on this route, in source order — for the "exactly one" rule.
+    func responseAnnotationNames(on attributes: AttributeListSyntax) -> [String] {
+        var names: [String] = []
+        for case let .attribute(attr) in attributes {
+            let name = attr.attributeName.trimmedDescription
+            if name == "JSONResponse" || name == "ResponseStatus" || name == "HTMLResponse" {
+                names.append(name)
+            }
+        }
+        return names
     }
 
     /// The `status:` argument written on `@JSONResponse`, or `nil` for the bare form — as distinct from
     /// ``jsonResponseStatus(from:)``, which substitutes `.ok` for the bare form and so cannot tell an
     /// author-written status from the default.
     private func jsonResponseExplicitStatus(from attributes: AttributeListSyntax) -> String? {
-        for case let .attribute(attr) in attributes where attr.attributeName.trimmedDescription == "JSONResponse" {
+        explicitStatusArgument(from: attributes, annotation: "JSONResponse")
+    }
+
+    /// The `status:` argument written on `annotation`, or `nil` for the bare form — as distinct from
+    /// ``annotatedStatus(from:annotation:)``, which substitutes `.ok` and so cannot tell an author-written
+    /// status from the default.
+    func explicitStatusArgument(from attributes: AttributeListSyntax, annotation: String) -> String? {
+        for case let .attribute(attr) in attributes where attr.attributeName.trimmedDescription == annotation {
             guard case let .argumentList(list) = attr.arguments else { return nil }
             return list.first { $0.label?.text == "status" }?.expression.trimmedDescription
         }
         return nil
     }
 
+    /// The `statics:` literal, or `nil` when the route contributes no constant fields.
+    func staticsLiteral(_ entries: [ResponseHeaderEntry]) -> String? {
+        entries.isEmpty ? nil : responseHeaderLiteral(entries)
+    }
+
     /// The `headerFields:` argument — one `WireMVCResponseHeaders.resolved` call over whichever
     /// contributors this route actually has. Both arguments default, so a route with only one names only
     /// that one.
-    private func headerExpression(shape: ResponseReturnShape, statics: String?, drainsMiddleware: Bool) -> String {
+    func headerExpression(shape: ResponseReturnShape, statics: String?, drainsMiddleware: Bool) -> String {
         let returned = shape.hasHeaders ? "\(returnLocal).\(responseTupleHeadersLabel)" : nil
         let arguments = [
             statics.map { "statics: \($0)" },
@@ -156,7 +241,7 @@ extension RouteBlockGenerator {
     /// tuple stays a body, so nothing about existing routes changes. Once it does use one, the whole label
     /// list must be a legal form, because a near-miss (`(status:, header:)`) is far more likely a typo than
     /// an intentional payload, and silently encoding it as a JSON body would be a confusing way to find out.
-    private mutating func responseReturnShape(
+    mutating func responseReturnShape(
         of function: FunctionDeclSyntax,
         route: String
     ) -> ResponseReturnShape? {
@@ -198,7 +283,12 @@ extension RouteBlockGenerator {
     }
 
     private func jsonResponseStatus(from attributes: AttributeListSyntax) -> String? {
-        for case let .attribute(attr) in attributes where attr.attributeName.trimmedDescription == "JSONResponse" {
+        annotatedStatus(from: attributes, annotation: "JSONResponse")
+    }
+
+    /// The status `annotation` names, defaulting to `.ok` for the bare form; `nil` when absent entirely.
+    func annotatedStatus(from attributes: AttributeListSyntax, annotation: String) -> String? {
+        for case let .attribute(attr) in attributes where attr.attributeName.trimmedDescription == annotation {
             guard case let .argumentList(list) = attr.arguments else { return ".ok" }
             let statusArg = list.first { $0.label?.text == "status" }
             return statusArg?.expression.trimmedDescription ?? ".ok"
