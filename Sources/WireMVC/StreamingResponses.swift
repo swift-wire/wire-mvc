@@ -42,10 +42,10 @@ public protocol WireMVCBodyProducer {
     ) async throws where W.WriteElement == UInt8, W.FinalElement == HTTPFields?
 }
 
-public extension WireMVCBodyProducer {
+extension WireMVCBodyProducer {
     /// Defaulted, so a producer whose bytes have no single content type — server-sent events framed by the
     /// route, a raw stream — simply says nothing and lets the route's own `@ResponseHeader` stand.
-    var contentType: String? { nil }
+    public var contentType: String? { nil }
 }
 
 /// A response whose head is sent up front and whose body is then streamed by a ``WireMVCBodyProducer``.
