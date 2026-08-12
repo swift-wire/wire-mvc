@@ -274,6 +274,71 @@ struct UserBindingIntegrationTests {
         #expect(source.contains("body: requestBody"))
     }
 
+    // MARK: - The `.path` obligation
+
+    /// The placeholder check generalised. `@Path` was checked by *name* against the route's `{name}`
+    /// placeholders (`RouteCodegen.swift:526`); the obligation is what that check was really asking about,
+    /// so a binding declared outside WireMVC now gets it too.
+    @Test("a user path binding without a matching placeholder is diagnosed")
+    func userPathBindingMissingPlaceholder() {
+        let (_, diagnostics) = generate(
+            """
+            @RequestBinding(.path)
+            public struct Slug<Value: Sendable>: RequestBound {}
+            """,
+            """
+            @Controller("/pages")
+            public struct PagesController {
+                @Get("/{id}")
+                @JSONResponse
+                public func page(@Slug name: String) async throws -> Token { Token() }
+            }
+            """
+        )
+        #expect(diagnostics.contains { $0.contains("no matching '{name}' placeholder") }, "got: \(diagnostics)")
+    }
+
+    @Test("a user path binding with a matching placeholder is accepted")
+    func userPathBindingWithPlaceholder() {
+        let (source, diagnostics) = generate(
+            """
+            @RequestBinding(.path)
+            public struct Slug<Value: Sendable>: RequestBound {}
+            """,
+            """
+            @Controller("/pages")
+            public struct PagesController {
+                @Get("/{name}")
+                @JSONResponse
+                public func page(@Slug name: String) async throws -> Token { Token() }
+            }
+            """
+        )
+        #expect(diagnostics.isEmpty, "got: \(diagnostics)")
+        #expect(source.contains("Slug<String>.bind("))
+    }
+
+    /// A binding with *no* `.path` obligation is not checked against the template — otherwise every
+    /// `@Query`-shaped binding would be required to appear in the path.
+    @Test("a binding without the obligation is not checked against the template")
+    func noObligationNoPlaceholderCheck() {
+        let (_, diagnostics) = generate(
+            """
+            @RequestBinding
+            public struct Locale<Value: Sendable>: RequestBound {}
+            """,
+            """
+            @Controller("/pages")
+            public struct PagesController {
+                @Get("/home")
+                @JSONResponse
+                public func page(@Locale locale: String) async throws -> Token { Token() }
+            }
+            """
+        )
+        #expect(diagnostics.isEmpty, "got: \(diagnostics)")
+    }
+
     @Test("an unknown attribute is still diagnosed, not silently bound")
     func unknownIsStillDiagnosed() {
         let (_, diagnostics) = generate(
