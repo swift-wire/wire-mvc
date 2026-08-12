@@ -3,7 +3,6 @@
 .DS_Store
 build.log
 swiftlint.zip
-.swift-version
 .vscode/
 
 # Swift compiler artifacts from SourceKit-LSP's index build. When the
