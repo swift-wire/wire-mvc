@@ -59,6 +59,14 @@ package struct PagesController {
         )
     }
 
+    /// A binding WireMVC has never heard of — `@TextBody` is declared in this module with
+    /// `@RequestBinding(.body)`, and the plugin reads that off the declaration.
+    @Post("/echo")
+    @HTMLResponse
+    package func echo(@TextBody text: String) -> some HTML {
+        TodoListPage(heading: "Echo", rows: [text])
+    }
+
     /// A route constant beating the seeded content type, and a non-200 annotated status. Both go through
     /// the ordinary header machinery, so this is the same tier rule every other route obeys.
     @Get("/gone")

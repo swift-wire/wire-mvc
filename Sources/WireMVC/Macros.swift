@@ -157,6 +157,22 @@ public macro Delete(_ path: String) = #externalMacro(module: "WireMVCMacros", ty
 @attached(peer)
 public macro Delete() = #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
 
+/// Marks a type as a request binding, and states what the code generator must do for it.
+///
+///     @RequestBinding(.body)
+///     public struct FormBody<Value: Decodable & Sendable>: RequestBound { … }
+///
+/// The bare form declares a binding with no obligations — a query or header value. Recognition needs no
+/// argument: the generator recognises a binding by *finding this declaration*, which is why an unannotated
+/// type keeps the ordinary "needs a binding annotation" diagnostic at its use site rather than degrading
+/// into a type error somewhere else.
+///
+/// Read off the declaration by the build plugin, which already re-parses every Wire-aware dependency module
+/// — so a binding declared in a library is usable in any consumer without WireMVC knowing its name.
+@attached(peer)
+public macro RequestBinding(_ obligations: WireMVCBindingObligation...) =
+    #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
+
 // ── Response markers (peer, no-op — read by `@Controller`) ──
 
 /// The route returns an `Encodable` body, encoded as JSON with the given status (default 200).

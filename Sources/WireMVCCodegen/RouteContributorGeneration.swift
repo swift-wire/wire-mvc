@@ -36,11 +36,13 @@ public func renderRegisterWireRoutesWitness(
     factoryKeys: Set<String>,
     globalErrorMappings: [ErrorMapping] = [],
     keyedScopeEntry: KeyedScopeEntry? = nil,
-    doublesThreadedFactoryKeys: Set<String> = []
+    doublesThreadedFactoryKeys: Set<String> = [],
+    discoveredBindings: [String: BindingObligations] = [:]
 ) -> (witness: String, diagnostics: [RouteCodegenDiagnostic]) {
     var generator = RouteBlockGenerator(
         subjectAccessor: subjectAccessor,
         factoryKeys: factoryKeys,
+        discoveredBindings: discoveredBindings,
         globalErrorMappings: globalErrorMappings,
         keyedScopeEntry: keyedScopeEntry,
         doublesThreadedFactoryKeys: doublesThreadedFactoryKeys
@@ -65,7 +67,8 @@ public func renderRouteContributorExtension(
     pathPrefix: String,
     factoryKeys: Set<String>,
     globalErrorMappings: [ErrorMapping] = [],
-    keyedScopeEntry: KeyedScopeEntry? = nil
+    keyedScopeEntry: KeyedScopeEntry? = nil,
+    discoveredBindings: [String: BindingObligations] = [:]
 ) -> (source: String, diagnostics: [RouteCodegenDiagnostic]) {
     let rendered = renderRegisterWireRoutesWitness(
         access: controller.access,
@@ -74,7 +77,8 @@ public func renderRouteContributorExtension(
         subjectAccessor: contributorProxySubjectAccessor,
         factoryKeys: factoryKeys,
         globalErrorMappings: globalErrorMappings,
-        keyedScopeEntry: keyedScopeEntry
+        keyedScopeEntry: keyedScopeEntry,
+        discoveredBindings: discoveredBindings
     )
     let raw = """
         extension \(controller.proxyTypeName): RouteContributor {
@@ -97,7 +101,8 @@ public func renderVariantRouteContributorExtension(
     globalErrorMappings: [ErrorMapping] = [],
     variantName: String,
     keyedScopeEntry: KeyedScopeEntry,
-    doublesThreadedFactoryKeys: Set<String> = []
+    doublesThreadedFactoryKeys: Set<String> = [],
+    discoveredBindings: [String: BindingObligations] = [:]
 ) -> (source: String, diagnostics: [RouteCodegenDiagnostic]) {
     let rendered = renderRegisterWireRoutesWitness(
         access: controller.access,
@@ -107,7 +112,8 @@ public func renderVariantRouteContributorExtension(
         factoryKeys: factoryKeys,
         globalErrorMappings: globalErrorMappings,
         keyedScopeEntry: keyedScopeEntry,
-        doublesThreadedFactoryKeys: doublesThreadedFactoryKeys
+        doublesThreadedFactoryKeys: doublesThreadedFactoryKeys,
+        discoveredBindings: discoveredBindings
     )
     let raw = """
         extension \(variantProxyTypeName(variantName: variantName, subject: controller.name)): RouteContributor {
@@ -166,6 +172,9 @@ public func generateRouteContributors(
     let parsed = files.map { file -> (path: String, tree: SourceFileSyntax) in
         (file.path, Parser.parse(source: file.source))
     }
+    // Scanned over the whole input for the same reason the factory keys are: a binding is declared in one
+    // file — usually a dependency's — and used in another.
+    let discoveredBindings = scanRequestBindings(in: parsed.map(\.tree))
     var composition = analyzeComposedInputs(parsed)
     var located = composition.diagnostics
     // The generated `@main`/`.wiremvc()` entry calls `Wire.bootstrap()`, so the consumer needs `import Wire`;
@@ -214,7 +223,8 @@ public func generateRouteContributors(
         factoryKeys: composition.factoryKeys,
         globalErrorMappings: composition.globalErrorMappings,
         harnessKey: harnessKey,
-        doublesThreadedFactoryKeys: doublesThreadedFactoryKeys
+        doublesThreadedFactoryKeys: doublesThreadedFactoryKeys,
+        discoveredBindings: discoveredBindings
     )
     located.append(contentsOf: controllerExtensions.diagnostics)
 
@@ -396,7 +406,8 @@ private func renderControllerExtensions(
     factoryKeys: Set<String>,
     globalErrorMappings: [ErrorMapping],
     harnessKey: DiscoveredTestingKey?,
-    doublesThreadedFactoryKeys: Set<String>
+    doublesThreadedFactoryKeys: Set<String>,
+    discoveredBindings: [String: BindingObligations]
 ) -> ControllerExtensionsResult {
     var extensions: [(name: String, source: String)] = []
     var located: [LocatedRouteDiagnostic] = []
@@ -415,7 +426,8 @@ private func renderControllerExtensions(
                 pathPrefix: found.pathPrefix,
                 factoryKeys: factoryKeys,
                 globalErrorMappings: globalErrorMappings,
-                keyedScopeEntry: nil
+                keyedScopeEntry: nil,
+                discoveredBindings: discoveredBindings
             )
             extensions.append((found.declaration.name, rendered.source))
 
@@ -449,7 +461,8 @@ private func renderControllerExtensions(
                 globalErrorMappings: globalErrorMappings,
                 variantName: harnessKey.variantName,
                 keyedScopeEntry: entry,
-                doublesThreadedFactoryKeys: doublesThreadedFactoryKeys
+                doublesThreadedFactoryKeys: doublesThreadedFactoryKeys,
+                discoveredBindings: discoveredBindings
             )
             extensions.append((found.declaration.name + "Variant", variant.source))
         }

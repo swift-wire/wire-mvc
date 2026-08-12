@@ -24,6 +24,11 @@ struct RouteBlockGenerator {
     /// `@Middleware(X)` argument is classified: a key in this set is a factory (its `create` is called
     /// on the lifted `_wireFactory_<key>`); any other key is a graph binding (referenced as `_wire<key>`).
     let factoryKeys: Set<String>
+    /// User-declared bindings and their obligations, scanned from `@RequestBinding` declarations across the
+    /// input sources (the consumer's and every Wire-aware dependency's). Empty for the `@Controller` macro
+    /// path, which sees only the file it expands in — so the built-in wrappers stay recognised on their own,
+    /// and a user binding needs the plugin.
+    var discoveredBindings: [String: BindingObligations] = [:]
     /// The `@WireMVCBootstrap` composition root's `@ErrorResponse` entries (M5.5 Phase 3) — the **global
     /// default tier**, folded into every route's terminal after the controller's own, before the
     /// binding-error built-in. Empty for the `@Controller` macro path (which has no whole-graph view of
@@ -638,7 +643,7 @@ extension RouteBlockGenerator {
 
     fileprivate func routeHasBody(_ function: FunctionDeclSyntax) -> Bool {
         for param in function.signature.parameterClause.parameters {
-            if let binding = binding(from: param.attributes), binding.wrapper == "JSONBody" {
+            if let binding = binding(from: param.attributes), readsRequestBody(binding.wrapper) {
                 return true
             }
         }
@@ -673,7 +678,7 @@ extension RouteBlockGenerator {
     private func binding(from attributes: AttributeListSyntax) -> Binding? {
         for case let .attribute(attr) in attributes {
             let name = attr.attributeName.trimmedDescription
-            if routeBindingWrappers.contains(name) {
+            if routeBindingWrappers.contains(name) || discoveredBindings[name] != nil {
                 return Binding(wrapper: name, name: routeFirstStringLiteral(attr.arguments))
             }
         }
@@ -693,6 +698,17 @@ extension RouteBlockGenerator {
 /// The binding-wrapper attribute names a handler parameter can carry. File-scope (not a stored property)
 /// so the generator's methods can live in extensions.
 let routeBindingWrappers: Set<String> = ["Path", "Query", "JSONBody", "Header"]
+
+extension RouteBlockGenerator {
+    /// Whether a binding reads the request body — the `@RequestBinding(.body)` obligation.
+    ///
+    /// `JSONBody` is answered by name as well, because WireMVC's own bindings carry no attribute: adding one
+    /// would make the built-ins depend on a macro the `@Controller` expansion cannot see, and the macro path
+    /// has no whole-graph view to scan. The set is the floor, the scan is the extension.
+    func readsRequestBody(_ wrapper: String) -> Bool {
+        wrapper == "JSONBody" || discoveredBindings[wrapper, default: []].contains(.body)
+    }
+}
 
 /// The labels a route's **response tuple** return may carry, in canonical order. A handler returns either
 /// its body alone or a labelled tuple naming what it wants to say about the response alongside it:
