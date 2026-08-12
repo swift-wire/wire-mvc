@@ -28,10 +28,24 @@ public import HTTPTypes
 /// `Sendable` would be the sole reason a non-`Sendable` body value — an Elementary `some HTML` capturing a
 /// model object, say — would need an erasure box.
 public protocol WireMVCBodyProducer {
+    /// The `Content-Type` these bytes are, seeded into the response unless the route already named one.
+    ///
+    /// The producer *is* the codec, so it is the thing that knows. Before this the codegen seeded HTML's
+    /// content type as a static header contribution while `WireMVCOutcome.json` seeded JSON's internally —
+    /// two mechanisms for one intent, and neither available to a body type WireMVC has never heard of.
+    /// `RequestBodySendable.sendBody` already returns `(bytes, contentType)` together for the same reason.
+    var contentType: String? { get }
+
     consuming func writeBody<W: CallerAsyncWriter & ~Copyable & ~Escapable>(
         into writer: consuming W,
         terminatedBy trailer: HTTPFields?
     ) async throws where W.WriteElement == UInt8, W.FinalElement == HTTPFields?
+}
+
+public extension WireMVCBodyProducer {
+    /// Defaulted, so a producer whose bytes have no single content type — server-sent events framed by the
+    /// route, a raw stream — simply says nothing and lets the route's own `@ResponseHeader` stand.
+    var contentType: String? { nil }
 }
 
 /// A response whose head is sent up front and whose body is then streamed by a ``WireMVCBodyProducer``.
@@ -74,7 +88,14 @@ public struct WireMVCStreamingOutcome<Producer: WireMVCBodyProducer> {
     public consuming func send<Sender: HTTPResponseSender & ~Copyable>(
         on sender: consuming Sender
     ) async throws where Sender.Writer: ~Copyable {
-        let writer = try await sender.send(HTTPResponse(status: status, headerFields: headerFields))
+        var fields = headerFields
+        // Seeded, not forced: a route's own `@ResponseHeader(.contentType, …)` is already in `headerFields`
+        // by the time the terminal builds this, so naming one wins — the same precedence the static header
+        // tier gives it.
+        if fields[.contentType] == nil, let contentType = producer.contentType {
+            fields[.contentType] = contentType
+        }
+        let writer = try await sender.send(HTTPResponse(status: status, headerFields: fields))
         try await producer.writeBody(into: writer, terminatedBy: trailer)
     }
 }

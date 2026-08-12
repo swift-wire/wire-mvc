@@ -228,17 +228,10 @@ struct RouteBlockGenerator {
             return nil
         }
         let isHTML = annotations.first == "HTMLResponse"
-        // Seed `text/html; charset=utf-8` through the *existing* header machinery rather than inventing a
-        // second place content types come from. `setIfAbsent` and first-in-list means a route's own
-        // `@ResponseHeader(.contentType, …)` — applied later, as a `.set` — still wins, as does a field the
-        // handler returns. Charset included, unlike `WireMVCOutcome.json`'s bare `application/json`: a
-        // browser sniffs an HTML body without it.
-        if isHTML {
-            staticHeaders.insert(
-                ResponseHeaderEntry(name: ".contentType", value: "\"text/html; charset=utf-8\"", verb: "setIfAbsent"),
-                at: 0
-            )
-        }
+        // No content-type seeding here. The producer supplies its own (`WireMVCBodyProducer.contentType`),
+        // which is where a codec's content type belongs — the codegen naming `text/html` was a special case
+        // that only existed because the producer had nowhere to put it, and it could never have served a
+        // response mode WireMVC does not know by name.
         return (staticHeaders, isHTML)
     }
 
