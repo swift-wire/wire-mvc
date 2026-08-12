@@ -26,6 +26,64 @@ public struct BindingObligations: OptionSet, Sendable {
     public static let path = BindingObligations(rawValue: 1 << 1)
 }
 
+/// Every conformance to `name` declared in `files`, by conforming type — read off the inheritance clause of
+/// a type declaration or an extension.
+///
+/// Syntactic, so it sees only what is written in the parsed sources. That is enough for the one use it has:
+/// warning that a binding declared `@RequestBinding(.body)` does not conform to `RequestBodySendable`, where
+/// the attribute already tells us the declaring module *is* being parsed. A conformance added retroactively
+/// from a third module would not be seen — which is why the diagnostic this backs is a warning, not an error.
+public func scanConformances(to name: String, in files: [SourceFileSyntax]) -> Set<String> {
+    var found: Set<String> = []
+    for file in files {
+        let scanner = ConformanceScanner(protocolName: name, viewMode: .sourceAccurate)
+        scanner.walk(file)
+        found.formUnion(scanner.found)
+    }
+    return found
+}
+
+private final class ConformanceScanner: SyntaxVisitor {
+    let protocolName: String
+    var found: Set<String> = []
+
+    init(protocolName: String, viewMode: SyntaxTreeViewMode) {
+        self.protocolName = protocolName
+        super.init(viewMode: viewMode)
+    }
+
+    override func visit(_ node: ExtensionDeclSyntax) -> SyntaxVisitorContinueKind {
+        record(name: node.extendedType.trimmedDescription, node.inheritanceClause)
+        return .visitChildren
+    }
+
+    override func visit(_ node: StructDeclSyntax) -> SyntaxVisitorContinueKind {
+        record(name: node.name.text, node.inheritanceClause)
+        return .visitChildren
+    }
+
+    override func visit(_ node: ClassDeclSyntax) -> SyntaxVisitorContinueKind {
+        record(name: node.name.text, node.inheritanceClause)
+        return .visitChildren
+    }
+
+    override func visit(_ node: ActorDeclSyntax) -> SyntaxVisitorContinueKind {
+        record(name: node.name.text, node.inheritanceClause)
+        return .visitChildren
+    }
+
+    private func record(name: String, _ inheritance: InheritanceClauseSyntax?) {
+        guard let inheritance else { return }
+        // The extended type may be generic or qualified — key on the bare name, as a use site spells it.
+        let bare = name.split(separator: "<").first.map(String.init) ?? name
+        let simple = bare.split(separator: ".").last.map(String.init) ?? bare
+        for inherited in inheritance.inheritedTypes
+        where inherited.type.trimmedDescription.split(separator: ".").last.map(String.init) == protocolName {
+            found.insert(simple)
+        }
+    }
+}
+
 /// Every `@RequestBinding`-annotated declaration reachable in `files`, keyed by type name.
 ///
 /// Keyed on the bare type name because that is what a use site spells: `@FormBody input: Login` names

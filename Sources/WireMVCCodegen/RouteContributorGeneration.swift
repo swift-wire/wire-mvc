@@ -175,8 +175,16 @@ public func generateRouteContributors(
     // Scanned over the whole input for the same reason the factory keys are: a binding is declared in one
     // file — usually a dependency's — and used in another.
     let discoveredBindings = scanRequestBindings(in: parsed.map(\.tree))
+    let bindingWarnings = sendConformanceWarnings(discoveredBindings, in: parsed)
     var composition = analyzeComposedInputs(parsed)
     var located = composition.diagnostics
+    located += bindingWarnings.map {
+        LocatedRouteDiagnostic(
+            message: $0.message,
+            location: SourceLocationConverter(fileName: parsed[0].path, tree: parsed[0].tree)
+                .location(for: parsed[0].tree.position)
+        )
+    }
     // The generated `@main`/`.wiremvc()` entry calls `Wire.bootstrap()`, so the consumer needs `import Wire`;
     // a test consumer's `.wiremvc()` suite-trait factory adds `Testing` + `WireMVCTesting` (a program consumer
     // must not link the test client).
@@ -434,7 +442,11 @@ private func renderControllerExtensions(
             // The typed client is a test-only surface: it exists to be driven by a suite, and a program
             // consumer must not link `TestClient`.
             if testEntry,
-                let client = renderControllerClient(controller: found.declaration, pathPrefix: found.pathPrefix)
+                let client = renderControllerClient(
+                    controller: found.declaration,
+                    pathPrefix: found.pathPrefix,
+                    discoveredBindings: discoveredBindings
+                )
             {
                 clients.append((found.declaration.name, client))
             }
@@ -521,6 +533,32 @@ private func bootstrapArtifacts(
 
 /// A route-codegen diagnostic resolved to a source location — what the tool prints as
 /// `file:line:col: error:`.
+/// Bindings whose declared obligation their type cannot honour: `.body` without `RequestBodySendable`, or a
+/// plain binding without `RequestSendable`. Without this the mismatch surfaces as `has no member 'sendBody'`
+/// inside *generated* code, pointing at emitted text rather than at the declaration that is wrong.
+///
+/// Warnings, not errors: `scanConformances` is syntactic and cannot see a conformance declared in a module
+/// this build does not parse. A false error would break a valid build; a false warning is noise.
+private func sendConformanceWarnings(
+    _ discoveredBindings: [String: BindingObligations],
+    in parsed: [(path: String, tree: SourceFileSyntax)]
+) -> [RouteCodegenDiagnostic] {
+    guard let anchor = parsed.first?.tree else { return [] }
+    let trees = parsed.map(\.tree)
+    let bodySendable = scanConformances(to: "RequestBodySendable", in: trees)
+    let sendable = scanConformances(to: "RequestSendable", in: trees)
+    return discoveredBindings.sorted { $0.key < $1.key }.compactMap { binding, obligations in
+        let wantsBody = obligations.contains(.body)
+        let required = wantsBody ? "RequestBodySendable" : "RequestSendable"
+        let satisfied = wantsBody ? bodySendable.contains(binding) : sendable.contains(binding)
+        guard !satisfied else { return nil }
+        return RouteCodegenDiagnostic(
+            .bindingMissingSendConformance(binding: binding, conformance: required),
+            at: anchor
+        )
+    }
+}
+
 public struct LocatedRouteDiagnostic: Sendable {
     public let message: WireMVCDiagnostic
     public let location: SourceLocation
