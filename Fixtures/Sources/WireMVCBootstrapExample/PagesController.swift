@@ -67,6 +67,16 @@ package struct PagesController {
         TodoListPage(heading: "Echo", rows: [text])
     }
 
+    /// A **declared** `@Header`, so the generated client's precedence rule is testable: a route that binds a
+    /// header gets a typed parameter for it, and that parameter beats anything passed in the loose `headers:`
+    /// bag. The bag exists for headers a route does not declare (an auth token, a trace id read by a
+    /// middleware); passing both is a contradiction, and the typed one is the more specific statement.
+    @Get("/tenant")
+    @HTMLResponse
+    package func tenant(@Header("x-tenant") tenant: String) -> some HTML {
+        TodoListPage(heading: tenant, rows: [])
+    }
+
     /// A route constant beating the seeded content type, and a non-200 annotated status. Both go through
     /// the ordinary header machinery, so this is the same tier rule every other route obeys.
     @Get("/gone")

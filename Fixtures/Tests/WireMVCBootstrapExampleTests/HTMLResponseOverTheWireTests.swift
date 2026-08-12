@@ -145,3 +145,29 @@ struct HTMLResponseTypedClientTests {
         }
     }
 }
+
+/// Header precedence in the generated client, pinned behaviourally rather than by generated text.
+///
+/// `headerArgument` resolves a collision with `{ _, declared in declared }` — the route's own `@Header`
+/// binding wins over the caller's loose `headers:` bag. That is one closure away from the opposite, both
+/// spellings compile, and no golden test can tell them apart once the emitter is rewritten to build the
+/// request through `RequestSendable.send`. This test can.
+@Suite(.wiremvc(.swiftHttpServer))
+struct DeclaredHeaderPrecedenceTests {
+
+    @Test func aDeclaredHeaderBeatsTheCallersBag() async throws {
+        try await withClient(for: PagesControllerClient.self) { pages in
+            let html = try await pages.tenant(tenant: "declared", headers: ["x-tenant": "caller"])
+            #expect(html.contains("<title>declared</title>"), "the typed parameter is the specific statement")
+            #expect(!html.contains("caller"))
+        }
+    }
+
+    /// …and the bag still carries what the route does not declare.
+    @Test func theBagStillCarriesUndeclaredHeaders() async throws {
+        try await withClient(for: PagesControllerClient.self) { pages in
+            let html = try await pages.tenant(tenant: "acme", headers: ["x-trace": "abc123"])
+            #expect(html.contains("<title>acme</title>"))
+        }
+    }
+}
