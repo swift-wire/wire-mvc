@@ -39,10 +39,17 @@ struct ClientRoute {
     /// The full `{name}`-template path, controller prefix included.
     let pathTemplate: String
     let parameters: [ClientRouteParameter]
-    /// The `@JSONResponse` body type, `nil` for a `@ResponseStatus` (Void) route or a raw one.
+    /// The `@JSONResponse` body type, `nil` for a `@ResponseStatus` (Void) route, an `@HTMLResponse` one,
+    /// or a raw one.
     let responseType: String?
     /// A `@RawRoute`: the shim returns `TestResponse` and applies no status rule.
     let isRaw: Bool
+    /// An `@HTMLResponse`: the method returns the rendered markup as a `String`.
+    ///
+    /// There is no type to decode into — the handler's return is `some HTML`, an opaque type the client
+    /// could not name even if markup were decodable. What a test wants to assert on is the markup itself,
+    /// so that is what the method hands back.
+    let isHTML: Bool
 }
 
 /// One binding on a typed route, as the generated method exposes it.
@@ -106,7 +113,10 @@ private func renderClientMethod(_ route: ClientRoute) -> String {
     }
     let signature = signatureParts.joined(separator: ", ")
     let generics = route.isRaw ? "<WireMVCRawReturn: ~Copyable>" : ""
-    let returns = route.isRaw ? " -> WireMVCRawReturn" : route.responseType.map { " -> \($0)" } ?? ""
+    let returns =
+        if route.isRaw { " -> WireMVCRawReturn" } else if route.isHTML { " -> String" } else {
+            route.responseType.map { " -> \($0)" } ?? ""
+        }
 
     // `@Path`/`@Query`/`@Header` values are converted with `String(_:)`, the exact inverse of the
     // `LosslessStringConvertible` parse the route's binding does — so what the test passes is what the
@@ -135,6 +145,12 @@ private func renderClientMethod(_ route: ClientRoute) -> String {
     if route.isRaw {
         // The raw route owns its response, so the shim forwards the handler's return untouched.
         body = "return \(call)"
+    } else if route.isHTML {
+        // Markup, not a decoded value — `routeResponse` has already thrown for a non-2xx.
+        body = """
+            let wireMVCResponse = \(call)
+            return wireMVCResponse.bodyText
+            """
     } else if let responseType = route.responseType {
         body = """
             let wireMVCResponse = \(call)
@@ -229,7 +245,8 @@ func clientRoutes(of controller: ControllerDeclaration, pathPrefix: String) -> [
                 pathTemplate: pathTemplate,
                 parameters: pathPlaceholderParameters(in: pathTemplate),
                 responseType: nil,
-                isRaw: true
+                isRaw: true,
+                isHTML: false
             )
         }
 
@@ -261,7 +278,13 @@ func clientRoutes(of controller: ControllerDeclaration, pathPrefix: String) -> [
         // to be admitted here explicitly. Falling through to `return nil` would drop the route from the
         // client silently, which is the same failure the tuple projection was added to fix.
         let selfDescribing = projection.isResponseTuple && projection.body == nil
+        // Every response mode must be admitted explicitly. Falling through to `return nil` drops the route
+        // from the client *silently* — the failure the response-tuple projection was added to fix, and the
+        // one `@HTMLResponse` reintroduced by being a fourth mode added to a three-way test.
+        let isHTML = hasAttribute("HTMLResponse", on: function.attributes)
         if hasAttribute("JSONResponse", on: function.attributes) {
+            guard returnsValue else { return nil }
+        } else if isHTML {
             guard returnsValue else { return nil }
         } else if hasAttribute("ResponseStatus", on: function.attributes) {
             guard !returnsValue else { return nil }
@@ -274,8 +297,9 @@ func clientRoutes(of controller: ControllerDeclaration, pathPrefix: String) -> [
             wireMethod: verb.method,
             pathTemplate: pathTemplate,
             parameters: parameters,
-            responseType: returnsValue ? returnType : nil,
-            isRaw: false
+            responseType: (returnsValue && !isHTML) ? returnType : nil,
+            isRaw: false,
+            isHTML: isHTML
         )
     }
 
