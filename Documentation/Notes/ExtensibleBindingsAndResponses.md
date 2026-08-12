@@ -143,8 +143,20 @@ A request has one body, and nothing says so today.
 ## Response side: smaller, because of what `@HTMLResponse` turned out to be
 
 After the streaming tier there are exactly **two terminals** — buffered (`WireMVCOutcome`) and streaming
-(`WireMVCStreamingOutcome`). Every response mode is a pair: which terminal, and what wraps the handler's
+(`WireMVCStreamingOutcome`). Every response mode is a **pair**: which terminal, and what wraps the handler's
 return.
+
+A pair, not a triple. An earlier draft added a third field for the default content type, because the two
+shipped modes set it in two different places — `WireMVCOutcome.json` seeds `application/json` internally,
+while the codegen seeded `text/html` as a `.setIfAbsent` static contribution. That was an accident of how each
+was built, not a design: **a content type belongs to the codec**, and the wrapper is the thing that knows the
+bytes are HTML. `RequestBodySendable.sendBody` already returns `(bytes, contentType)` together for exactly
+that reason; the request side settled this question first.
+
+So `WireMVCBodyProducer` carries `contentType`, seeded by the terminal only when the route named none — which
+keeps a route's own `@ResponseHeader(.contentType, …)` winning, as the static header tier gave it before. The
+codegen names no content type at all now, and could not have served a mode it does not know by name while it
+did.
 
 | mode | terminal | wrapper |
 | --- | --- | --- |
@@ -212,7 +224,10 @@ client would JSON-decode a YAML body. That one is this design's to fix, not a de
    (placeholder validation) all come off declaration metadata; emission was already generic. What remains is
    the *client* half — the reverse bind plus a generalised `body:contentType:` overload — without which a
    user binding cannot appear in a generated request.
-4. **Open the response side** — the (terminal, wrapper, default content type) triple.
+4. **Open the response side** — the (terminal, wrapper) pair, read off the mode's *macro* declaration.
+   Verified viable: a macro declaration accepts a custom attribute, and `MacroDeclSyntax.attributes` exposes
+   it with labelled arguments intact, so the same declaration-scanning mechanism serves both sides. The
+   content-type half is already done — the producer supplies its own.
 5. **Write `@FormBody` in wire-mvc-examples**, not here. Demonstrating the seam is the point; a `@FormBody`
    inside WireMVC would prove nothing about whether the seam works, and this note exists because the last
    claim that the seam worked was never tested.

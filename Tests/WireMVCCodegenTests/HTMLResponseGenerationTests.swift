@@ -64,8 +64,9 @@ struct HTMLResponseGenerationTests {
         #expect(emitted.contains("producer: WireMVCHTMLProducer(try await self._wireSubject.home())"))
         #expect(emitted.contains("WireMVCStreamingOutcome("))
         #expect(emitted.contains("status: .ok"))
-        // Content-type is seeded through the ordinary header machinery.
-        #expect(emitted.contains(#".setIfAbsent(.contentType, "text/html; charset=utf-8")"#))
+        // The codegen names no content type: the producer supplies its own at send time. Behaviour is
+        // pinned over the wire by `HTMLResponseOverTheWireTests.servesAStreamedPage`.
+        #expect(!emitted.contains("text/html"))
         // The same error chain a buffered route gets, as the mapping closure.
         #expect(emitted.contains("errorMapping: { wireMVCError in"))
         #expect(emitted.contains("WireMVCOutcome.status(.internalServerError)"))
@@ -127,7 +128,11 @@ struct HTMLResponseGenerationTests {
         #expect(emitted.contains("producer: WireMVCHTMLProducer(wireMVCReturn.body)"))
     }
 
-    @Test("a route @ResponseHeader still beats the seeded content type")
+    /// A route naming its own content type still emits it as an ordinary static contribution — and, because
+    /// the producer only seeds when the field is absent, it still wins at send time. That precedence is a
+    /// runtime property now rather than an ordering of emitted literals, so the wire suite is where it is
+    /// asserted; this pins only that the route's own header survives the change.
+    @Test("a route's own content type is still emitted")
     func contentTypeOverride() {
         let emitted = witness(
             """
@@ -140,11 +145,8 @@ struct HTMLResponseGenerationTests {
             }
             """
         )
-        // Seeded first as setIfAbsent, the route's own .set applied after — order is the tier rule.
-        let seeded = emitted.range(of: #".setIfAbsent(.contentType, "text/html; charset=utf-8")"#)
-        let route = emitted.range(of: #".set(.contentType, "application/xhtml+xml")"#)
-        #expect(seeded != nil && route != nil)
-        if let seeded, let route { #expect(seeded.lowerBound < route.lowerBound) }
+        #expect(emitted.contains(#".set(.contentType, "application/xhtml+xml")"#))
+        #expect(!emitted.contains("text/html"), "the codegen no longer names a default")
     }
 
     // MARK: - Streaming + a request body

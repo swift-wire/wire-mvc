@@ -57,6 +57,9 @@ public struct WireMVCHTMLProducer<Content: HTML>: WireMVCBodyProducer {
     /// it simply completes in one write.
     public let chunkSize: Int
 
+    /// HTML, with the charset — a browser sniffs a body without it.
+    public var contentType: String? { wireMVCHTMLContentType }
+
     public init(_ content: Content, chunkSize: Int = 1024) {
         self.content = content
         self.chunkSize = chunkSize
