@@ -147,6 +147,79 @@ struct HTMLResponseGenerationTests {
         if let seeded, let route { #expect(seeded.lowerBound < route.lowerBound) }
     }
 
+    // MARK: - Streaming + a request body
+
+    /// The combination that shipped broken. `collectBody` **consumes** the reader and a closure only
+    /// borrows it, so emitting the collection inside `building` produces
+    /// `'reader' is borrowed and cannot be consumed`. Nothing exercised a streaming route with a body
+    /// binding, so the codegen emitted uncompilable code and every test still passed — only a fixture route
+    /// through the real plugin caught it.
+    @Test("a streaming route with a body binding collects through the terminal, not in the closure")
+    func bodyBindingUsesTheCollectingOverload() {
+        let emitted = witness(
+            """
+            @Controller("/pages")
+            struct PagesController {
+                @Post("/preview")
+                @HTMLResponse
+                func preview(@JSONBody input: Draft) async throws -> some HTML { Preview(input) }
+            }
+            """
+        )
+        #expect(emitted.contains("collectingBodyFrom: reader"))
+        #expect(emitted.contains("building: { requestBody in"))
+        // The read must not be inside the closure — that is the shape that does not compile.
+        let building = try? #require(emitted.range(of: "building: {"))
+        if let building, let collect = emitted.range(of: "WireMVCRequest.collectBody(") {
+            #expect(collect.lowerBound < building.lowerBound, "the collection is not emitted inside building")
+        } else {
+            // No inline `collectBody` at all is the expected shape: the terminal overload does it.
+            #expect(!emitted.contains("WireMVCRequest.collectBody("))
+        }
+    }
+
+    /// …and the binding decode still sits *inside* `building`, so a malformed body maps through
+    /// `@ErrorResponse` rather than escaping. Hoisting the read would have compiled and lost that.
+    @Test("the body binding decode stays inside the mapped region")
+    func decodeStaysMapped() {
+        let emitted = witness(
+            """
+            @Controller("/pages")
+            struct PagesController {
+                @Post("/preview")
+                @HTMLResponse
+                func preview(@JSONBody input: Draft) async throws -> some HTML { Preview(input) }
+            }
+            """
+        )
+        guard let building = emitted.range(of: "building: { requestBody in"),
+            let mapping = emitted.range(of: "errorMapping: {"),
+            let decode = emitted.range(of: "JSONBody<Draft>.bind")
+        else {
+            Issue.record("expected shape not emitted")
+            return
+        }
+        #expect(decode.lowerBound > building.upperBound)
+        #expect(decode.upperBound < mapping.lowerBound)
+    }
+
+    @Test("a streaming route with no body binding takes the plain overload")
+    func noBodyNoCollectingOverload() {
+        let emitted = witness(
+            """
+            @Controller("/pages")
+            struct PagesController {
+                @Get("/home")
+                @HTMLResponse
+                func home() async throws -> some HTML { HomePage() }
+            }
+            """
+        )
+        #expect(!emitted.contains("collectingBodyFrom:"))
+        #expect(!emitted.contains("requestBody in"))
+        #expect(emitted.contains("building: {"))
+    }
+
     // MARK: - The buffered path is untouched
 
     @Test("a JSON route still emits the buffered terminal")

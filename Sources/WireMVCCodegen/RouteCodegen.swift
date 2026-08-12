@@ -615,15 +615,18 @@ extension RouteBlockGenerator {
         scopeEntryPrologue: String,
         errorMappings: [ErrorMapping]
     ) -> String {
-        let collect = hasBody ? "let requestBody = try await WireMVCRequest.collectBody(reader)\n" : ""
         let bindsBlock = binds.isEmpty ? "" : binds.joined(separator: "\n") + "\n"
         // `building` ends in the outcome. A single-expression body needs no `return`; a multi-statement one
         // (a response tuple, a bind, a prologue) supplies its own — `htmlResponseOutcome` writes it.
-        let body = "\(scopeEntryPrologue)\(collect)\(bindsBlock)\(outcome)"
+        let body = "\(scopeEntryPrologue)\(bindsBlock)\(outcome)"
+        // A body route takes the collecting overload: `collectBody` consumes the reader, which a closure
+        // cannot do, and hoisting the read above the call would take it outside the mapped region.
+        let readerArgument = hasBody ? "\ncollectingBodyFrom: reader," : ""
+        let buildingParameter = hasBody ? " requestBody in" : ""
         return """
             \(scopeEntryPreamble)try await wireMVCStreamingTerminal(
-            responseSender: responseSender,
-            building: {
+            responseSender: responseSender,\(readerArgument)
+            building: {\(buildingParameter)
             \(body)
             },
             errorMapping: { wireMVCError in

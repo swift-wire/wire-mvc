@@ -117,3 +117,36 @@ public func wireMVCStreamingTerminal<Producer: WireMVCBodyProducer, Sender: HTTP
         try await buffered.send(on: responseSender)
     }
 }
+
+/// The generated terminal for a streaming route that reads the request body.
+///
+/// A separate overload rather than an optional reader, because `collectBody` **consumes** the reader and a
+/// closure only borrows it: emitting the collection inside `building` produces
+/// `'reader' is borrowed and cannot be consumed`. Hoisting it above the call would compile but move the read
+/// outside the mapped region, so a malformed body would escape `@ErrorResponse` instead of becoming a status.
+/// Collecting here keeps both — the reader is consumed in a function that owns it, inside the same `do` whose
+/// `catch` maps.
+public func wireMVCStreamingTerminal<
+    Producer: WireMVCBodyProducer,
+    Sender: HTTPResponseSender & ~Copyable,
+    Reader: AsyncReader & ~Copyable
+>(
+    responseSender: consuming Sender,
+    collectingBodyFrom reader: consuming sending Reader,
+    building: ([UInt8]) async throws -> WireMVCStreamingOutcome<Producer>,
+    errorMapping: (any Error) throws -> WireMVCOutcome
+) async throws where Sender.Writer: ~Copyable, Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields? {
+    let wireMVCResult: WireMVCTerminalOutcome<Producer>
+    do {
+        let requestBody = try await WireMVCRequest.collectBody(reader)
+        wireMVCResult = .stream(try await building(requestBody))
+    } catch let wireMVCError {
+        wireMVCResult = .buffered(try errorMapping(wireMVCError))
+    }
+    switch wireMVCResult {
+    case .stream(let streaming):
+        try await streaming.send(on: responseSender)
+    case .buffered(let buffered):
+        try await buffered.send(on: responseSender)
+    }
+}
