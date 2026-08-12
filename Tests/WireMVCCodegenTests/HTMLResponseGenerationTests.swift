@@ -215,3 +215,83 @@ struct HTMLResponseGenerationTests {
         #expect(messages.contains { $0.contains("the status on @HTMLResponse(status:)") })
     }
 }
+
+/// The typed client for `@HTMLResponse` routes.
+///
+/// These exist because the first cut of `@HTMLResponse` shipped without them: a fourth response mode added
+/// to a three-way test fell through to `return nil`, and every HTML route vanished from its controller's
+/// client with no diagnostic. The last test here is the structural one — it fails for *any* future response
+/// mode that forgets the client, which is the check that was missing rather than this one case.
+@Suite("@HTMLResponse typed client")
+struct HTMLResponseClientTests {
+
+    private func client(_ source: String) -> String {
+        let file = Parser.parse(source: source)
+        for statement in file.statements {
+            if let declaration = statement.item.asProtocol(DeclGroupSyntax.self) as? (any DeclSyntaxProtocol),
+                let controller = ControllerDeclaration(declaration)
+            {
+                return renderControllerClient(controller: controller, pathPrefix: "/pages") ?? ""
+            }
+        }
+        fatalError("fixture has no controller")
+    }
+
+    @Test("an HTML route gets a client method returning the rendered markup")
+    func htmlRouteReturnsMarkup() {
+        let emitted = client(
+            """
+            @Controller("/pages")
+            struct PagesController {
+                @Get("/home")
+                @HTMLResponse
+                func home() async throws -> some HTML { HomePage() }
+            }
+            """
+        )
+        #expect(emitted.contains("func home("))
+        #expect(emitted.contains("-> String"), "markup, not a decoded value")
+        #expect(emitted.contains("return wireMVCResponse.bodyText"))
+        #expect(!emitted.contains("wireMVCResponse.json"), "there is no type to decode into")
+    }
+
+    @Test("its bindings still become method parameters")
+    func htmlRouteKeepsItsBindings() {
+        let emitted = client(
+            """
+            @Controller("/pages")
+            struct PagesController {
+                @Get("/{id}")
+                @HTMLResponse
+                func page(@Path id: String, @Query q: String?) async throws -> some HTML { Page(id, q) }
+            }
+            """
+        )
+        #expect(emitted.contains("id: String"))
+        #expect(emitted.contains("q: String?"))
+    }
+
+    /// **The check that was missing.** Every route carrying a verb and a response annotation must appear in
+    /// the client; a mode that forgets to admit itself fails here rather than shipping.
+    @Test("every annotated route appears in its controller's client")
+    func noRouteIsSilentlyDropped() {
+        let emitted = client(
+            """
+            @Controller("/pages")
+            struct PagesController {
+                @Get("/home") @HTMLResponse
+                func home() async throws -> some HTML { HomePage() }
+                @Get("/data") @JSONResponse
+                func data() async throws -> Payload { Payload() }
+                @Delete("/{id}") @ResponseStatus(.noContent)
+                func remove(@Path id: String) async throws {}
+                @Get("/moved")
+                func moved() -> (status: HTTPResponse.Status, headers: HTTPFields) { (.found, [:]) }
+            }
+            """
+        )
+        for route in ["home", "data", "remove", "moved"] {
+            #expect(emitted.contains("func \(route)("), "route '\(route)' is missing from the client")
+        }
+    }
+}

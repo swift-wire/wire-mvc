@@ -111,3 +111,37 @@ struct HTMLResponseOverTheWireTests {
         }
     }
 }
+
+/// The generated typed client for HTML routes. It shipped missing — `@HTMLResponse` was a fourth response
+/// mode added to a three-way test in `ControllerClientGeneration`, so every HTML route fell through to
+/// `return nil` and vanished from its controller's client with no diagnostic.
+@Suite(.wiremvc(.swiftHttpServer))
+struct HTMLResponseTypedClientTests {
+
+    @Test func theClientHandsBackTheRenderedMarkup() async throws {
+        try await withClient(for: PagesControllerClient.self) { pages in
+            let html = try await pages.home()
+            #expect(html.hasPrefix("<!DOCTYPE html><html><head>"))
+            #expect(html.contains("<title>Home</title>"))
+            #expect(html.contains(#"<li class="todo">first</li>"#))
+        }
+    }
+
+    /// Bindings still become method parameters, and the path template is filled in for you.
+    @Test func bindingsBecomeParameters() async throws {
+        try await withClient(for: PagesControllerClient.self) { pages in
+            let html = try await pages.list(count: 3)
+            #expect(html.contains("task number 0 —"))
+            #expect(html.contains("task number 2 —"))
+            #expect(!html.contains("task number 3 —"))
+        }
+    }
+
+    /// The non-2xx rule is the same one every typed method applies — an HTML route is not special here.
+    @Test func aNonSuccessStatusThrows() async throws {
+        try await withClient(for: PagesControllerClient.self) { pages in
+            let error = try await #require(throws: WireMVCRouteError.self) { try await pages.list(count: 999) }
+            #expect(error.status == .badRequest)
+        }
+    }
+}
