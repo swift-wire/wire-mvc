@@ -20,3 +20,18 @@ extension TextBody: RequestBound where Value == String {
         return String(decoding: body, as: UTF8.self)
     }
 }
+
+/// The client half. `@RequestBinding(.body)` tells the generator this parameter *is* the request body; this
+/// conformance is what lets the generated typed client actually send one. Declaring the obligation without
+/// it produces `type 'TextBody<String>' has no member 'sendBody'` in generated code — which is why the
+/// codegen diagnoses the mismatch rather than leaving it to the compiler.
+extension TextBody: RequestBodySendable where Value == String {
+    package static func sendBody(
+        name: String,
+        value: String,
+        into request: inout WireMVCOutgoingRequest,
+        coding: WireMVCCoding
+    ) throws -> (bytes: [UInt8], contentType: String) {
+        ([UInt8](value.utf8), "text/plain; charset=utf-8")
+    }
+}

@@ -30,6 +30,7 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
     case deadResponseStatusArgument(String, annotation: String)
     case htmlResponseOnVoid(String)
     case multipleResponseAnnotations(String, annotations: String)
+    case bindingMissingSendConformance(binding: String, conformance: String)
 
     public var message: String {
         switch self {
@@ -73,6 +74,8 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
             "@\(annotation) on '\(route)' declares nothing the return type does not already say — a (status:headers:) tuple carries no body and computes its own status, so the annotation would be read by nobody and could only go out of date. Remove it. (A route that returns a body still needs @JSONResponse: that names the codec.)"
         case .htmlResponseOnVoid(let route):
             "@HTMLResponse on '\(route)' requires a returned value; use @ResponseStatus for a Void handler"
+        case .bindingMissingSendConformance(let binding, let conformance):
+            "binding '\(binding)' is declared @RequestBinding but does not conform to \(conformance), so the generated typed client cannot send it — add the conformance, or the client's call will fail to compile. (If it is declared in a module this build does not parse, ignore this.)"
         case .multipleResponseAnnotations(let route, let annotations):
             "route '\(route)' carries more than one response annotation (\(annotations)) — a route states its response mode exactly once"
         case .deadResponseStatusArgument(let route, let annotation):
@@ -84,7 +87,15 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
         }
     }
 
-    public var severity: DiagnosticSeverity { .error }
+    /// Everything is an error except the send-conformance check, which is syntactic and cannot see a
+    /// conformance declared in a module this build does not parse. A false error there would break a valid
+    /// build; a false warning is merely noise.
+    public var severity: DiagnosticSeverity {
+        switch self {
+        case .bindingMissingSendConformance: .warning
+        default: .error
+        }
+    }
 
     public var diagnosticID: MessageID {
         let id: String
@@ -113,6 +124,7 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
         case .deadResponseStatusArgument: id = "deadResponseStatusArgument"
         case .htmlResponseOnVoid: id = "htmlResponseOnVoid"
         case .multipleResponseAnnotations: id = "multipleResponseAnnotations"
+        case .bindingMissingSendConformance: id = "bindingMissingSendConformance"
         }
         return MessageID(domain: "WireMVC", id: id)
     }

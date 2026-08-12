@@ -186,7 +186,9 @@ struct UserBindingIntegrationTests {
             sourceModules: [:],
             consumerModule: nil
         )
-        return (result.source, result.diagnostics.map(\.message.message))
+        // Errors only. A warning is not a failure — mixing the two makes every "no diagnostics" assertion
+        // brittle the moment a new warning is added, which is exactly what happened here.
+        return (result.source, result.diagnostics.filter { $0.message.severity == .error }.map(\.message.message))
     }
 
     private static let formBodyDeclaration = """
@@ -337,6 +339,74 @@ struct UserBindingIntegrationTests {
             """
         )
         #expect(diagnostics.isEmpty, "got: \(diagnostics)")
+    }
+
+    private func renderedClient(
+        _ controllerSource: String, bindings: [String: BindingObligations] = [:]
+    ) -> String? {
+        let file = Parser.parse(source: controllerSource)
+        for statement in file.statements {
+            if let d = statement.item.asProtocol(DeclGroupSyntax.self) as? (any DeclSyntaxProtocol),
+                let c = ControllerDeclaration(d)
+            {
+                return renderControllerClient(controller: c, pathPrefix: "/session", discoveredBindings: bindings)
+            }
+        }
+        return nil
+    }
+
+    /// Warnings, kept apart from errors — `generate` returns only the latter.
+    private func warnings(_ sources: String...) -> [String] {
+        generateRouteContributors(
+            files: sources.enumerated().map { (path: "File\($0.offset).swift", source: $0.element) },
+            testEntry: false, extraImports: [], sourceModules: [:], consumerModule: nil
+        )
+        .diagnostics.filter { $0.message.severity == .warning }.map(\.message.message)
+    }
+
+    private static let sessionController = """
+        @Controller("/session")
+        public struct SessionController {
+            @Post
+            @JSONResponse
+            public func create(@FormBody input: Login) async throws -> Token { Token() }
+        }
+        """
+
+    /// The client half of the seam: a user `.body` binding must reach `sendBody`, or its payload is dropped
+    /// from the request.
+    @Test("a user body binding supplies the body in the generated client")
+    func userBodyBindingReachesTheClient() throws {
+        let bindings = scanRequestBindings(in: [Parser.parse(source: Self.formBodyDeclaration)])
+        let rendered = try #require(renderedClient(Self.sessionController, bindings: bindings))
+        #expect(rendered.contains("let wireMVCBody = try FormBody<Login>.sendBody("))
+        #expect(rendered.contains("body: wireMVCBody.bytes, contentType: wireMVCBody.contentType"))
+    }
+
+    /// Without the declaration the client cannot recognise the binding at all, so the **route is dropped** —
+    /// not merely sent without its body. Asserting `!contains("sendBody")` alone would pass on an empty
+    /// string and prove nothing, which is exactly how this went unnoticed once already.
+    @Test("an unrecognised binding drops the route from the client entirely")
+    func unrecognisedBindingDropsTheRoute() {
+        #expect(renderedClient(Self.sessionController) == nil, "no declaration, no client — and no diagnostic")
+    }
+
+    /// A declared obligation the binding cannot honour. Without this the mismatch surfaces as
+    /// `type 'X' has no member 'sendBody'` inside *generated* code, pointing at emitted text rather than at
+    /// the declaration that is wrong.
+    @Test("a .body binding without RequestBodySendable is warned about")
+    func missingSendConformanceIsWarned() {
+        let found = warnings(Self.formBodyDeclaration, Self.sessionController)
+        #expect(found.contains { $0.contains("does not conform to RequestBodySendable") }, "got: \(found)")
+    }
+
+    @Test("a binding that does conform is not warned about")
+    func conformingBindingIsQuiet() {
+        let found = warnings(
+            Self.formBodyDeclaration + "\nextension FormBody: RequestBodySendable {}",
+            Self.sessionController
+        )
+        #expect(!found.contains { $0.contains("does not conform") }, "got: \(found)")
     }
 
     @Test("an unknown attribute is still diagnosed, not silently bound")

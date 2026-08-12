@@ -175,8 +175,36 @@ public func generateRouteContributors(
     // Scanned over the whole input for the same reason the factory keys are: a binding is declared in one
     // file — usually a dependency's — and used in another.
     let discoveredBindings = scanRequestBindings(in: parsed.map(\.tree))
+    // A declared obligation the binding cannot honour: `.body` without `RequestBodySendable` makes the
+    // generated client call `sendBody` on a type that has no such member. A warning rather than an error
+    // because the scan is syntactic and cannot see a conformance declared in a module this build does not
+    // parse — see `scanConformances(to:in:)`.
+    let bodySendable = scanConformances(to: "RequestBodySendable", in: parsed.map(\.tree))
+    let sendable = scanConformances(to: "RequestSendable", in: parsed.map(\.tree))
+    var bindingWarnings: [RouteCodegenDiagnostic] = []
+    // Anchored at the first parsed file: the declaration's own node is not retained by the scan, and the
+    // message names the binding, so the location is orientation rather than the finding itself.
+    let anchor = parsed.first?.tree
+    for (binding, obligations) in discoveredBindings.sorted(by: { $0.key < $1.key }) where anchor != nil {
+        let required = obligations.contains(.body) ? "RequestBodySendable" : "RequestSendable"
+        let satisfied = obligations.contains(.body) ? bodySendable.contains(binding) : sendable.contains(binding)
+        guard !satisfied else { continue }
+        bindingWarnings.append(
+            RouteCodegenDiagnostic(
+                .bindingMissingSendConformance(binding: binding, conformance: required),
+                at: anchor!
+            )
+        )
+    }
     var composition = analyzeComposedInputs(parsed)
     var located = composition.diagnostics
+    located += bindingWarnings.map {
+        LocatedRouteDiagnostic(
+            message: $0.message,
+            location: SourceLocationConverter(fileName: parsed[0].path, tree: parsed[0].tree)
+                .location(for: parsed[0].tree.position)
+        )
+    }
     // The generated `@main`/`.wiremvc()` entry calls `Wire.bootstrap()`, so the consumer needs `import Wire`;
     // a test consumer's `.wiremvc()` suite-trait factory adds `Testing` + `WireMVCTesting` (a program consumer
     // must not link the test client).
@@ -434,7 +462,11 @@ private func renderControllerExtensions(
             // The typed client is a test-only surface: it exists to be driven by a suite, and a program
             // consumer must not link `TestClient`.
             if testEntry,
-                let client = renderControllerClient(controller: found.declaration, pathPrefix: found.pathPrefix)
+                let client = renderControllerClient(
+                    controller: found.declaration,
+                    pathPrefix: found.pathPrefix,
+                    discoveredBindings: discoveredBindings
+                )
             {
                 clients.append((found.declaration.name, client))
             }

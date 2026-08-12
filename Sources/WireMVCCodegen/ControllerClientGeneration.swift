@@ -66,10 +66,10 @@ struct ClientRouteParameter {
 
     /// Whether this binding supplies the request body, so the client calls `sendBody` rather than `send`.
     ///
-    /// Name-based for now, matching what the emitter did before. It becomes the `.body` obligation once
-    /// `discoveredBindings` is threaded into client generation — the same floor-plus-scan arrangement
-    /// `RouteCodegen.readsRequestBody` already has.
-    var suppliesBody: Bool { wrapper == "JSONBody" }
+    /// The `@RequestBinding(.body)` obligation, with `JSONBody` answered by name as a floor — the same
+    /// arrangement `RouteCodegen.readsRequestBody` has, and for the same reason: WireMVC's own bindings carry
+    /// no attribute, because the `@Controller` macro expands in one file with no whole-graph view to scan.
+    let suppliesBody: Bool
 }
 
 /// The generated client type for a controller — `NotesControllerClient`.
@@ -77,8 +77,12 @@ func controllerClientTypeName(_ controller: String) -> String { controller + "Cl
 
 /// The typed client for one controller, or `nil` when it has no route with a derivable shape (every route
 /// `@RawRoute`, or none annotated) — an empty client is noise, so nothing is emitted.
-func renderControllerClient(controller: ControllerDeclaration, pathPrefix: String) -> String? {
-    let routes = clientRoutes(of: controller, pathPrefix: pathPrefix)
+func renderControllerClient(
+    controller: ControllerDeclaration,
+    pathPrefix: String,
+    discoveredBindings: [String: BindingObligations] = [:]
+) -> String? {
+    let routes = clientRoutes(of: controller, pathPrefix: pathPrefix, discoveredBindings: discoveredBindings)
     guard !routes.isEmpty else { return nil }
 
     let typeName = controllerClientTypeName(controller.name)
@@ -282,7 +286,11 @@ private func queryEntries(_ parameters: [ClientRouteParameter]) -> String? {
 /// Every route on a controller with a derivable client shape, in declaration order. A handler is skipped
 /// when it carries no verb, is `@RawRoute`, or has a parameter with no binding wrapper — the witness
 /// diagnoses those, so skipping here reports nothing twice.
-func clientRoutes(of controller: ControllerDeclaration, pathPrefix: String) -> [ClientRoute] {
+func clientRoutes(
+    of controller: ControllerDeclaration,
+    pathPrefix: String,
+    discoveredBindings: [String: BindingObligations] = [:]
+) -> [ClientRoute] {
     controller.functions.compactMap { function in
         guard let verb = clientVerb(from: function.attributes) else { return nil }
         let pathTemplate = routeJoinPath(pathPrefix, verb.path ?? "")
@@ -302,14 +310,16 @@ func clientRoutes(of controller: ControllerDeclaration, pathPrefix: String) -> [
 
         var parameters: [ClientRouteParameter] = []
         for parameter in function.signature.parameterClause.parameters {
-            guard let binding = clientBinding(from: parameter.attributes) else { return nil }
+            guard let binding = clientBinding(from: parameter.attributes, discoveredBindings: discoveredBindings) else { return nil }
             let name = (parameter.secondName ?? parameter.firstName).text
             parameters.append(
                 ClientRouteParameter(
                     wrapper: binding.wrapper,
                     wireName: binding.name ?? name,
                     name: name,
-                    type: parameter.type.trimmedDescription
+                    type: parameter.type.trimmedDescription,
+                    suppliesBody: binding.wrapper == "JSONBody"
+                        || discoveredBindings[binding.wrapper, default: []].contains(.body)
                 )
             )
         }
@@ -405,7 +415,8 @@ func pathPlaceholderParameters(in template: String) -> [ClientRouteParameter] {
                 wrapper: "Path",
                 wireName: wireName,
                 name: placeholderParameterName(wireName),
-                type: "String"
+                type: "String",
+                suppliesBody: false
             )
         )
     }
@@ -421,10 +432,16 @@ private func clientVerb(from attributes: AttributeListSyntax) -> (method: String
     return nil
 }
 
-private func clientBinding(from attributes: AttributeListSyntax) -> (wrapper: String, name: String?)? {
+/// The client's own recognition of a binding attribute — a *fifth* place the wrapper set was hardcoded,
+/// distinct from `RouteCodegen`'s. Unrecognised meant the whole route was dropped from the client with no
+/// diagnostic, which is how a user binding produced a `nil` client rather than a wrong one.
+private func clientBinding(
+    from attributes: AttributeListSyntax,
+    discoveredBindings: [String: BindingObligations]
+) -> (wrapper: String, name: String?)? {
     for case let .attribute(attribute) in attributes {
         let wrapper = attribute.attributeName.trimmedDescription
-        if routeBindingWrappers.contains(wrapper) {
+        if routeBindingWrappers.contains(wrapper) || discoveredBindings[wrapper] != nil {
             return (wrapper, routeFirstStringLiteral(attribute.arguments))
         }
     }
