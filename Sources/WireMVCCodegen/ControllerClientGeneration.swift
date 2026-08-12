@@ -310,7 +310,9 @@ func clientRoutes(
 
         var parameters: [ClientRouteParameter] = []
         for parameter in function.signature.parameterClause.parameters {
-            guard let binding = clientBinding(from: parameter.attributes, discoveredBindings: discoveredBindings) else { return nil }
+            guard let binding = clientBinding(from: parameter.attributes, discoveredBindings: discoveredBindings) else {
+                return nil
+            }
             let name = (parameter.secondName ?? parameter.firstName).text
             parameters.append(
                 ClientRouteParameter(

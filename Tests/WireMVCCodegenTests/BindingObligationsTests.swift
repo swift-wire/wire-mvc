@@ -342,7 +342,8 @@ struct UserBindingIntegrationTests {
     }
 
     private func renderedClient(
-        _ controllerSource: String, bindings: [String: BindingObligations] = [:]
+        _ controllerSource: String,
+        bindings: [String: BindingObligations] = [:]
     ) -> String? {
         let file = Parser.parse(source: controllerSource)
         for statement in file.statements {
@@ -359,7 +360,10 @@ struct UserBindingIntegrationTests {
     private func warnings(_ sources: String...) -> [String] {
         generateRouteContributors(
             files: sources.enumerated().map { (path: "File\($0.offset).swift", source: $0.element) },
-            testEntry: false, extraImports: [], sourceModules: [:], consumerModule: nil
+            testEntry: false,
+            extraImports: [],
+            sourceModules: [:],
+            consumerModule: nil
         )
         .diagnostics.filter { $0.message.severity == .warning }.map(\.message.message)
     }
