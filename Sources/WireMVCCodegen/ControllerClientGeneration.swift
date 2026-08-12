@@ -63,6 +63,13 @@ struct ClientRouteParameter {
     /// The declared type, `?` included when optional.
     let type: String
     var isOptional: Bool { type.hasSuffix("?") }
+
+    /// Whether this binding supplies the request body, so the client calls `sendBody` rather than `send`.
+    ///
+    /// Name-based for now, matching what the emitter did before. It becomes the `.body` obligation once
+    /// `discoveredBindings` is threaded into client generation — the same floor-plus-scan arrangement
+    /// `RouteCodegen.readsRequestBody` already has.
+    var suppliesBody: Bool { wrapper == "JSONBody" }
 }
 
 /// The generated client type for a controller — `NotesControllerClient`.
@@ -118,30 +125,38 @@ private func renderClientMethod(_ route: ClientRoute) -> String {
             route.responseType.map { " -> \($0)" } ?? ""
         }
 
-    // `@Path`/`@Query`/`@Header` values are converted with `String(_:)`, the exact inverse of the
-    // `LosslessStringConvertible` parse the route's binding does — so what the test passes is what the
-    // handler receives. An optional binding contributes nothing when it is `nil`.
-    let pathParameters = wireEntries(route.parameters.filter { $0.wrapper == "Path" })
-    let queryItems = queryEntries(route.parameters.filter { $0.wrapper == "Query" })
-    let headers = wireEntries(route.parameters.filter { $0.wrapper == "Header" })
+    // Each binding places its own value, through `RequestSendable.send` — the mirror of the `bind` the route
+    // performs. The client no longer knows where a `@Header` goes as opposed to a `@Query`, which is what
+    // lets a binding declared outside WireMVC appear in a request at all.
+    let preamble = route.isRaw ? "" : requestPreamble(route)
+    let bodyParameter = route.isRaw ? nil : route.parameters.first { $0.suppliesBody }
 
     var arguments = ["method: \"\(route.wireMethod)\"", "path: \"\(route.pathTemplate)\""]
-    if let pathParameters { arguments.append("pathParameters: \(pathParameters)") }
-    if let queryItems { arguments.append("query: \(queryItems)") }
     if route.isRaw {
+        // A raw shim takes the request line only: its bindings are roles, not values.
+        if let pathParameters = wireEntries(route.parameters.filter { $0.wrapper == "Path" }) {
+            arguments.append("pathParameters: \(pathParameters)")
+        }
         arguments.append("headers: headers")
         arguments.append("body: body")
         arguments.append("responseHandler: responseHandler")
     } else {
-        arguments.append("headers: \(headerArgument(route.parameters.filter { $0.wrapper == "Header" }))")
-    }
-    if let body = route.parameters.first(where: { $0.wrapper == "JSONBody" }) {
-        arguments.append("json: \(body.name)")
+        arguments.append("pathParameters: \(requestLocal).pathParameters")
+        arguments.append("query: \(requestLocal).query")
+        // A *declared* binding beats the caller's loose `headers:` bag: the route that binds a header gets a
+        // typed parameter for it, so passing both is a contradiction and the typed one is the more specific
+        // statement. Pinned behaviourally by `DeclaredHeaderPrecedenceTests` (#93), because after this rewrite
+        // no golden test can tell this closure from its opposite.
+        arguments.append("headers: \(headersLocal)")
+        if bodyParameter != nil {
+            arguments.append("body: \(bodyLocal).bytes")
+            arguments.append("contentType: \(bodyLocal).contentType")
+        }
     }
 
     let entryPoint = route.isRaw ? "performRawRoute" : "routeResponse"
     let call = "try await client.\(entryPoint)(\(arguments.joined(separator: ", ")))"
-    let body: String
+    var body: String
     if route.isRaw {
         // The raw route owns its response, so the shim forwards the handler's return untouched.
         body = "return \(call)"
@@ -160,6 +175,8 @@ private func renderClientMethod(_ route: ClientRoute) -> String {
         // A `@ResponseStatus` route has no body to decode; `routeResponse` has already thrown for a non-2xx.
         body = "_ = \(call)"
     }
+
+    if !preamble.isEmpty { body = preamble + "\n" + body }
 
     let note =
         route.isRaw
@@ -180,6 +197,39 @@ private func renderClientMethod(_ route: ClientRoute) -> String {
 /// bindings, so a declared binding wins over an extra of the same name. Built as a chain from `headers`
 /// rather than merging a separate literal into it, which keeps the optional case from nesting one merge
 /// inside another.
+/// The local the bindings write into, and the one holding the body a binding supplied.
+let requestLocal = "wireMVCRequest"
+let bodyLocal = "wireMVCBody"
+let headersLocal = "wireMVCHeaders"
+
+/// `var wireMVCRequest = …` plus one `send`/`sendBody` per binding.
+///
+/// `coding: .default` is currently inert — no built-in `send` reads it, and `JSONBody.sendBody` matches what
+/// the old `json:` path did. Threading the app's real `WireMVCCoding` in becomes necessary the first time a
+/// binding actually consumes it (a body codec serialising dates, or `@Query since: Date` once such a binding
+/// is expressible at all); adding the argument now costs nothing and avoids a signature change then.
+private func requestPreamble(_ route: ClientRoute) -> String {
+    var lines = ["var \(requestLocal) = WireMVCOutgoingRequest()"]
+    for parameter in route.parameters {
+        // The generic is the *underlying* type: the route binds `Wrapper<T>` and lets the generated code
+        // decide presence, exactly as the server's `bind`/`bindOptional` split does.
+        let underlying = parameter.type.hasSuffix("?") ? String(parameter.type.dropLast()) : parameter.type
+        let call =
+            parameter.suppliesBody
+            ? "let \(bodyLocal) = try \(parameter.wrapper)<\(underlying)>.sendBody("
+                + "name: \"\(parameter.wireName)\", value: \(parameter.name), into: &\(requestLocal), coding: .default)"
+            : "try \(parameter.wrapper)<\(underlying)>.send("
+                + "name: \"\(parameter.wireName)\", value: \(parameter.name), into: &\(requestLocal), coding: .default)"
+        lines.append(parameter.isOptional ? "if let \(parameter.name) { \(call) }" : call)
+    }
+    // Hoisted rather than inlined into the call: a trailing closure inside a long argument list is
+    // reformatted onto three lines and buries the precedence rule it expresses.
+    lines.append(
+        "let \(headersLocal) = headers.merging(\(requestLocal).headers) { _, declared in declared }"
+    )
+    return lines.joined(separator: "\n")
+}
+
 private func headerArgument(_ parameters: [ClientRouteParameter]) -> String {
     let required = parameters.filter { !$0.isOptional }
     var expression = "headers"
