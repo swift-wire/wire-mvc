@@ -187,6 +187,30 @@ extension TestClient {
         )
     }
 
+    /// The generalised body form — `body` is sent verbatim under `contentType`.
+    ///
+    /// Replaces the `json:` special case for generated clients: a body binding produces its own bytes and
+    /// content type via ``RequestBodySendable/sendBody``, so the client no longer needs to know that JSON is
+    /// the only codec. `json:` remains for hand-written callers.
+    public func routeResponse(
+        method: String,
+        path: String,
+        pathParameters: [String: String] = [:],
+        query: [(name: String, value: String)] = [],
+        headers: [String: String] = [:],
+        body: [UInt8],
+        contentType: String
+    ) async throws -> TestResponse {
+        var merged = headers
+        merged["Content-Type"] = contentType
+        return try await sendRoute(
+            method,
+            resolved: Self.resolve(template: path, pathParameters: pathParameters, query: query),
+            headers: merged,
+            body: Data(body)
+        )
+    }
+
     /// The `@JSONBody` form — `json` is encoded as the request body with `Content-Type: application/json`,
     /// matching what the route's `JSONBody` binding decodes.
     public func routeResponse(
