@@ -1,6 +1,6 @@
 # Extensible bindings and response modes — a design note
 
-> **Status:** design only (2026-08-12). Nothing here is built. The goal is that `@FormBody`, `@YamlBody`,
+> **Status:** design settled, nothing built (2026-08-12). The goal is that `@FormBody`, `@YamlBody`,
 > `@YamlResponse` and their like are written *outside* WireMVC, against a documented seam — with the
 > built-ins (`@Path`, `@Query`, `@Header`, `@JSONBody`, `@JSONResponse`, `@HTMLResponse`) becoming instances
 > of that seam rather than privileged names.
@@ -66,25 +66,79 @@ binding") cannot distinguish a `@FormBody` from a typo'd `@Pth` — it would tur
 type error further from the cause. Reading declarations keeps the distinction: found means binding, absent
 means the same error as today.
 
-## Request side: what a binding must declare
+## Request side: a reverse bind, and two obligations
 
-Two facts beyond its own name:
+Two questions were riding on the word "position", and separating them is what made this converge.
 
-- **that it is a binding** — recognition, replacing the closed set.
-- **whether it wants the collected request body** — replacing the `== "JSONBody"` test.
-
-Sketch, to be checked against the compiler before it is believed:
+**1. Where does the value go on the wire?** Answered by a **reverse bind** — the mirror of `RequestBound.bind`.
+The server turns a request into a value; the client turns a value into a request. The binding writes itself
+into the request under construction, in code the compiler checks, rather than declaring a position in text
+that can drift from what it does.
 
 ```swift
-@RequestBinding(wire: .body)          // read by the plugin off this declaration
-public struct FormBody<Value: Decodable & Sendable>: RequestBound { … }
+public protocol RequestSendable: RequestBound {
+    static func send(
+        name: String, value: Value,
+        into request: inout WireMVCOutgoingRequest,   // path, query, headers — no body slot
+        coding: WireMVCCoding
+    ) throws
+}
+
+public protocol RequestBodySendable: RequestBound {
+    /// Contributes the request body, and may write path/query/header entries alongside it.
+    static func sendBody(
+        name: String, value: Value,
+        into request: inout WireMVCOutgoingRequest,
+        coding: WireMVCCoding
+    ) throws -> (bytes: [UInt8], contentType: String)
+}
 ```
 
-**`@Path` is the one that resists.** The codegen validates it against the route's `{name}` placeholders
-(`pathPlaceholderMissing`), which no other binding gets. Generalising that means a third metadata fact — "this
-binding names a path placeholder" — and a validation hook to go with it. **Recommendation: leave `@Path`
-privileged.** One special case with a good diagnostic beats a general mechanism whose only client is that
-special case. Generalise `@Query`, `@Header` and `@JSONBody`, which need nothing but the two facts above.
+Both take `name`, because `@Query("q") searchTerm` binds a wire name that is not the parameter name. Both take
+`coding`, because `Coding.swift:15` already records why: *"a date is not only a JSON concern: it appears in a
+`@Header` and a `@Query` too, where there is no encoder to configure."* A `@Query since: Date` must serialise
+through the same transcoder it parsed with, or client and server disagree about date format.
+
+Sibling protocols rather than new requirements on `RequestBound`, per that file's own rule
+(`RequestBinding.swift:35`): adding a requirement would break every conformance outside this package. A binding
+that cannot be sent simply does not conform, and its route gets **no typed client method — diagnosed, not
+silently dropped**, which is the failure the client fix was about.
+
+**Why two protocols rather than one method with a body slot.** A single `send` writing into a shared
+`request.setBody(…)` makes "at most one binding supplies the body" a *rule needing enforcement* — two writes,
+second silently overwriting the first. Split, it is **structurally impossible**: `WireMVCOutgoingRequest` has
+no body field, and the codegen asks exactly one binding for a body. `RequestBodySendable` still takes
+`request: inout`, so a binding needing a body *and* a digest header does both in one call. Nothing is given up
+for the guarantee.
+
+**2. What must the code generator do differently?** Exactly two things exist, and neither is inferable from a
+function body the generator cannot read. They go on an attribute — matching every other recognition in this
+toolchain, all of which key off attributes (`@Controller`, `@Scoped`, `@Singleton`, `@Factory`); nothing here
+reads inheritance clauses today.
+
+```swift
+@RequestBinding(.body)   // emit collectBody; this parameter is the request body
+@RequestBinding(.path)   // validate {name} against the route template
+@RequestBinding          // neither
+```
+
+These are **codegen obligations, not positions**. The client learns nothing from them — the reverse bind tells
+it everything. Recognition needs no flag at all: finding the declaration *is* recognition, which keeps today's
+clear diagnostic for a typo'd `@Pth` rather than degrading it into a type error further from the cause.
+
+`.body` is **compiler-checked**: it makes the codegen emit `sendBody`, which only type-checks if the binding
+really conforms to `RequestBodySendable`. So a declaration that lies about being a body binding fails to build.
+`.path` has no conformance to check against, but a mis-declared one only produces a spurious placeholder
+diagnostic, which is harmless.
+
+**`@Path` is not special-cased.** An earlier draft of this note said to leave it privileged, on the grounds
+that only it is validated against the route's `{name}` placeholders (`RouteCodegen.swift:521`). That check is
+just the `.path` obligation, so `@Path` becomes an ordinary binding carrying an ordinary flag. Two intermediate
+drafts got this wrong in both directions — first privileging it, then generalising it via a position enum that
+no longer exists — because "position" was doing two jobs.
+
+A second diagnostic falls out for free: the codegen counts `.body` parameters and rejects two on one route.
+A request has one body, and nothing says so today.
 
 ## Response side: smaller, because of what `@HTMLResponse` turned out to be
 
@@ -108,11 +162,12 @@ cleanly as a third field: the default content type, or none.
 
 ## The client is the constraint — and a defect
 
-The server side needs to know *that* a binding reads the body. The typed client needs to know **where on the
-wire the value goes**, because it constructs the request: a path segment, a query item, a header, or the body.
-That is strictly more metadata, and it is what decides whether the seam is "declare two booleans" or "declare a
-wire position." **Settle this first; it sets the shape of everything else.** The sketch above spells it
-`wire: .body` for that reason.
+The client was the reason this design took several passes: it constructs a request, so it needs to know where
+each value goes, which looked like metadata the server never needs. The reverse bind above dissolves that — the
+binding places itself — but the client remains the constraint in one respect: it needs a generalised
+`routeResponse(…, body:contentType:)` overload to replace today's `json: some Encodable` special case
+(`TypedRouteClient.swift:192`), which bakes position and codec together and is why a `@FormBody` has nowhere to
+put its payload.
 
 The response half of the client is worse than under-general — it is **wrong today**
 (`ControllerClientGeneration.swift:264-269`):
@@ -147,17 +202,26 @@ client would JSON-decode a YAML body. That one is this design's to fix, not a de
 
 ## Order of work
 
-1. **Fix the dropped HTML client.** A defect, independent of this design, and the fixtures should have caught
-   it — no test asserts that every annotated route appears in its controller's client.
-2. **Settle the wire-position vocabulary**, since it constrains the metadata shape.
-3. **Open the request side** — recognition and body collection off declaration metadata. Emission is already
-   generic, so this is smaller than it sounds.
+1. ~~Fix the dropped HTML client.~~ **Done** (2026-08-12). The lasting part is not the fix but
+   `noRouteIsSilentlyDropped`, which asserts every annotated route reaches its client. This design adds
+   response modes and binding kinds; that test is what stops the next one going missing the same way.
+2. ~~Settle the wire vocabulary.~~ **Done** — the reverse bind plus two obligation flags, above. Prototype the
+   attribute-reading path against the compiler before building on it; every design decision in this repo that
+   was reasoned rather than compiled has needed correcting.
+3. **Open the request side** — recognition and the `.body`/`.path` obligations off declaration metadata, plus
+   the generalised `body:contentType:` client overload. Emission is already generic, so this is smaller than
+   it sounds.
 4. **Open the response side** — the (terminal, wrapper, default content type) triple.
 5. **Write `@FormBody` in wire-mvc-examples**, not here. Demonstrating the seam is the point; a `@FormBody`
    inside WireMVC would prove nothing about whether the seam works, and this note exists because the last
    claim that the seam worked was never tested.
 
 ## What this is not
+
+Not a runtime-checked design. Where an invariant can be made structurally impossible it is — the request
+carries no body slot, so two bindings cannot both fill one — rather than made possible and then guarded. An
+earlier draft proposed a `precondition` on `setBody`; it was removed by changing the shape so the case cannot
+arise. A check that defends an invariant the types could have enforced is a design smell, not diligence.
 
 Not a plugin architecture. The mechanism is "the plugin already parses the declaring module, so put the facts
 on the declaration" — no registry, no runtime discovery, no dynamic dispatch. The generated code stays exactly

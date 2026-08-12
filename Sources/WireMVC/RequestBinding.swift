@@ -13,6 +13,18 @@ import Foundation
 /// the logic here (rather than inlining it in the macro) keeps the macro a thin, binding-agnostic
 /// dispatcher and lets users add their own bindings: define a `@propertyWrapper` conforming to
 /// `RequestBound` and `@Controller` uses it uniformly.
+/// What the code generator must do differently for a binding — stated on the binding's *declaration*, where
+/// the plugin can read it (see `Documentation/Notes/ExtensibleBindingsAndResponses.md`).
+///
+/// Deliberately **not** a wire position. Where a value goes is the binding's own behaviour, and nothing the
+/// generator needs to know; these are the two things it cannot infer from a function body it never reads.
+public enum WireMVCBindingObligation: Sendable {
+    /// The route reads the request body, so the terminal must collect it. At most one binding per route.
+    case body
+    /// The binding names a `{name}` path placeholder, so the route template must contain one.
+    case path
+}
+
 public protocol RequestBound {
     /// The value handed to the handler parameter.
     associatedtype Value
