@@ -208,9 +208,10 @@ client would JSON-decode a YAML body. That one is this design's to fix, not a de
 2. ~~Settle the wire vocabulary.~~ **Done** — the reverse bind plus two obligation flags, above. Prototype the
    attribute-reading path against the compiler before building on it; every design decision in this repo that
    was reasoned rather than compiled has needed correcting.
-3. **Open the request side** — recognition and the `.body`/`.path` obligations off declaration metadata, plus
-   the generalised `body:contentType:` client overload. Emission is already generic, so this is smaller than
-   it sounds.
+3. ~~Open the request side.~~ **Server half done.** Recognition, `.body` (body collection) and `.path`
+   (placeholder validation) all come off declaration metadata; emission was already generic. What remains is
+   the *client* half — the reverse bind plus a generalised `body:contentType:` overload — without which a
+   user binding cannot appear in a generated request.
 4. **Open the response side** — the (terminal, wrapper, default content type) triple.
 5. **Write `@FormBody` in wire-mvc-examples**, not here. Demonstrating the seam is the point; a `@FormBody`
    inside WireMVC would prove nothing about whether the seam works, and this note exists because the last

@@ -521,9 +521,11 @@ extension RouteBlockGenerator {
                 return nil
             }
             let bindingName = binding.name ?? (isWildcard ? internalName : param.firstName.text)
-            // `@Path name` must have a matching `{name}` in the route template — otherwise it can only
-            // ever fail at runtime (`missingPathParameter`), so reject it at the seam.
-            if binding.wrapper == "Path", !path.contains("{\(bindingName)}") {
+            // A path binding's name must have a matching `{name}` in the route template — otherwise it can
+            // only ever fail at runtime (`missingPathParameter`), so reject it at the seam. Keyed on the
+            // `.path` obligation rather than the name `Path`, so a binding declared outside WireMVC gets the
+            // same check: the obligation *is* "this one names a placeholder".
+            if namesPathPlaceholder(binding.wrapper), !path.contains("{\(bindingName)}") {
                 diagnostics.append(
                     RouteCodegenDiagnostic(.pathPlaceholderMissing(name: bindingName, path: path), at: param)
                 )
@@ -707,6 +709,15 @@ extension RouteBlockGenerator {
     /// has no whole-graph view to scan. The set is the floor, the scan is the extension.
     func readsRequestBody(_ wrapper: String) -> Bool {
         wrapper == "JSONBody" || discoveredBindings[wrapper, default: []].contains(.body)
+    }
+
+    /// Whether a binding names a `{name}` path placeholder — the `@RequestBinding(.path)` obligation.
+    ///
+    /// `Path` is answered by name as well, for the same reason `JSONBody` is: WireMVC's own bindings carry
+    /// no attribute, because the `@Controller` macro expands in one file and has no whole-graph view to scan
+    /// them from. The set is the floor, the scan is the extension.
+    func namesPathPlaceholder(_ wrapper: String) -> Bool {
+        wrapper == "Path" || discoveredBindings[wrapper, default: []].contains(.path)
     }
 }
 
