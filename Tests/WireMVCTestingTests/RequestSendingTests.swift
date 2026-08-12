@@ -9,7 +9,10 @@ import WireMVC
 struct RequestSendingTests {
 
     private func send<B: RequestSendable>(
-        _ binding: B.Type, name: String, _ value: B.Value, coding: WireMVCCoding = .default
+        _ binding: B.Type,
+        name: String,
+        _ value: B.Value,
+        coding: WireMVCCoding = .default
     ) throws -> WireMVCOutgoingRequest {
         var request = WireMVCOutgoingRequest()
         try B.send(name: name, value: value, into: &request, coding: coding)
@@ -37,7 +40,10 @@ struct RequestSendingTests {
         struct Payload: Codable, Sendable, Equatable { let name: String }
         var request = WireMVCOutgoingRequest()
         let body = try JSONBody<Payload>.sendBody(
-            name: "input", value: Payload(name: "ada"), into: &request, coding: .default
+            name: "input",
+            value: Payload(name: "ada"),
+            into: &request,
+            coding: .default
         )
         #expect(body.contentType == "application/json")
         #expect(try JSONDecoder().decode(Payload.self, from: Data(body.bytes)) == Payload(name: "ada"))
