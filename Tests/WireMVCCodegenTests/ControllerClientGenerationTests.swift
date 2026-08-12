@@ -44,7 +44,12 @@ struct ControllerClientGenerationTests {
 
                     /// `GET /notes/{id}`
                     func fetch(id: String, headers: [String: String] = [:]) async throws -> Note {
-                        let wireMVCResponse = try await client.routeResponse(method: "GET", path: "/notes/{id}", pathParameters: ["id": String(id)], headers: headers)
+                        var wireMVCRequest = WireMVCOutgoingRequest()
+                        try Path<String>.send(name: "id", value: id, into: &wireMVCRequest, coding: .default)
+                        let wireMVCHeaders = headers.merging(wireMVCRequest.headers) { _, declared in
+                            declared
+                        }
+                        let wireMVCResponse = try await client.routeResponse(method: "GET", path: "/notes/{id}", pathParameters: wireMVCRequest.pathParameters, query: wireMVCRequest.query, headers: wireMVCHeaders)
                         return try wireMVCResponse.json(Note.self)
                     }
                 }
@@ -67,8 +72,10 @@ struct ControllerClientGenerationTests {
             """
         )
         let rendered = try! #require(renderControllerClient(controller: declaration, pathPrefix: "/todos"))
-        #expect(rendered.contains(#"(search.map {"#))
-        #expect(rendered.contains(#"} ?? []) + ([(name: "page", value: String(page))])"#))
+        // An optional binding is guarded rather than mapped: presence is the generated code's business,
+        // mirroring the server's `bind`/`bindOptional` split.
+        #expect(rendered.contains("if let search {"))
+        #expect(rendered.contains(#"try Query<Int>.send(name: "page", value: page"#))
         // The required item must not sit inside the `??`'s right-hand side.
         #expect(!rendered.contains(#"?? [] + ["#))
     }
@@ -86,7 +93,10 @@ struct ControllerClientGenerationTests {
             """
         )
         let rendered = try! #require(renderControllerClient(controller: declaration, pathPrefix: "/todos"))
-        #expect(rendered.contains("json: body"))
+        // The body binding supplies its own bytes *and* content type, so the client no longer believes
+        // JSON is the only codec.
+        #expect(rendered.contains("let wireMVCBody = try JSONBody<NewTodo>.sendBody("))
+        #expect(rendered.contains("body: wireMVCBody.bytes, contentType: wireMVCBody.contentType"))
         #expect(
             rendered.contains(
                 "func create(body: NewTodo, session: String, headers: [String: String] = [:]) async throws -> Todo"
@@ -96,7 +106,7 @@ struct ControllerClientGenerationTests {
         // the binding, not over it, so the typed contract can't be silently overridden.
         #expect(
             rendered.contains(
-                #"headers: headers.merging(["x-session": String(session)])"#
+                "let wireMVCHeaders = headers.merging(wireMVCRequest.headers) { _, declared in"
             )
         )
     }
