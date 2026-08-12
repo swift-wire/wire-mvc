@@ -34,7 +34,10 @@ jobs:
           curl -L "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz" | tar zxf -
           ./swiftly init --assume-yes --skip-install
           echo "$HOME/.local/share/swiftly/bin" >> "$GITHUB_PATH"
-          "$HOME/.local/share/swiftly/bin/swiftly" install "$SWIFT_SNAPSHOT" --use --assume-yes
+          # No `--use`: every command below runs through `swiftly run`, which reads `.swift-version` itself.
+          # `--use` would *rewrite* that file (dropping its trailing newline) and dirty the tree, which
+          # the swift-format job's `git diff --exit-code` guard then fails on.
+          "$HOME/.local/share/swiftly/bin/swiftly" install "$SWIFT_SNAPSHOT" --assume-yes
       - name: Build
         run: swiftly run swift build
       - name: Verify the core graph resolves no concrete server
@@ -135,7 +138,10 @@ jobs:
           curl -L "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz" | tar zxf -
           ./swiftly init --assume-yes --skip-install
           echo "$HOME/.local/share/swiftly/bin" >> "$GITHUB_PATH"
-          "$HOME/.local/share/swiftly/bin/swiftly" install "$SWIFT_SNAPSHOT" --use --assume-yes
+          # No `--use`: every command below runs through `swiftly run`, which reads `.swift-version` itself.
+          # `--use` would *rewrite* that file (dropping its trailing newline) and dirty the tree, which
+          # the swift-format job's `git diff --exit-code` guard then fails on.
+          "$HOME/.local/share/swiftly/bin/swiftly" install "$SWIFT_SNAPSHOT" --assume-yes
       - name: Run swift-format
         # From the 6.4 toolchain so it parses the proposal's ~Copyable / consuming sending syntax
         # (a released swift-format can't).
