@@ -8,10 +8,6 @@ public import SwiftSyntax
 // is the only difference; a macro declaration accepts a custom attribute and `MacroDeclSyntax.attributes`
 // exposes it with labelled arguments intact, which was verified against the compiler before this was written.
 //
-// **There is no table of built-ins.** `@JSONResponse`, `@HTMLResponse` and `@ResponseStatus` carry
-// `@ResponseMode` in `Macros.swift` and are found by this scan like anyone else's — see the note in
-// `BindingObligations.swift` for why WireMVC's own sources are always among those scanned.
-//
 // What the declaration must state is what a syntactic generator cannot infer from a handler it never runs:
 // which terminal builds the response, what encodes the return, and what the typed client does with the body.
 
