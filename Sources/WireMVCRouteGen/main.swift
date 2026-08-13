@@ -97,11 +97,17 @@ let result = generateRouteContributors(
     consumerModule: consumerModule
 )
 
-if !result.diagnostics.isEmpty {
-    for diagnostic in result.diagnostics {
-        let location = "\(diagnostic.location.file):\(diagnostic.location.line):\(diagnostic.location.column)"
-        FileHandle.standardError.write(Data("\(location): error: \(diagnostic.message.message)\n".utf8))
-    }
+// Severity decides both the label and whether the build stops. Every diagnostic used to print as `error:`
+// and exit 1, which made `WireMVCDiagnostic.severity` a property nothing read — and made
+// `bindingMissingSendConformance` fatal despite being declared `.warning` and despite its own message
+// ending "if it is declared in a module this build does not parse, ignore this", advice that cannot be
+// taken when the build has already failed.
+for diagnostic in result.diagnostics {
+    let location = "\(diagnostic.location.file):\(diagnostic.location.line):\(diagnostic.location.column)"
+    let label = diagnostic.message.severity == .warning ? "warning" : "error"
+    FileHandle.standardError.write(Data("\(location): \(label): \(diagnostic.message.message)\n".utf8))
+}
+if result.diagnostics.contains(where: { $0.message.severity != .warning }) {
     exit(1)
 }
 
