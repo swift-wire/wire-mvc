@@ -37,12 +37,14 @@ public func renderRegisterWireRoutesWitness(
     globalErrorMappings: [ErrorMapping] = [],
     keyedScopeEntry: KeyedScopeEntry? = nil,
     doublesThreadedFactoryKeys: Set<String> = [],
-    discoveredBindings: [String: BindingObligations] = [:]
+    discoveredBindings: [String: BindingObligations] = [:],
+    discoveredModes: [String: DeclaredResponseMode] = builtInResponseModes
 ) -> (witness: String, diagnostics: [RouteCodegenDiagnostic]) {
     var generator = RouteBlockGenerator(
         subjectAccessor: subjectAccessor,
         factoryKeys: factoryKeys,
         discoveredBindings: discoveredBindings,
+        discoveredModes: discoveredModes,
         globalErrorMappings: globalErrorMappings,
         keyedScopeEntry: keyedScopeEntry,
         doublesThreadedFactoryKeys: doublesThreadedFactoryKeys
@@ -68,7 +70,8 @@ public func renderRouteContributorExtension(
     factoryKeys: Set<String>,
     globalErrorMappings: [ErrorMapping] = [],
     keyedScopeEntry: KeyedScopeEntry? = nil,
-    discoveredBindings: [String: BindingObligations] = [:]
+    discoveredBindings: [String: BindingObligations] = [:],
+    discoveredModes: [String: DeclaredResponseMode] = builtInResponseModes
 ) -> (source: String, diagnostics: [RouteCodegenDiagnostic]) {
     let rendered = renderRegisterWireRoutesWitness(
         access: controller.access,
@@ -78,7 +81,8 @@ public func renderRouteContributorExtension(
         factoryKeys: factoryKeys,
         globalErrorMappings: globalErrorMappings,
         keyedScopeEntry: keyedScopeEntry,
-        discoveredBindings: discoveredBindings
+        discoveredBindings: discoveredBindings,
+        discoveredModes: discoveredModes
     )
     let raw = """
         extension \(controller.proxyTypeName): RouteContributor {
@@ -102,7 +106,8 @@ public func renderVariantRouteContributorExtension(
     variantName: String,
     keyedScopeEntry: KeyedScopeEntry,
     doublesThreadedFactoryKeys: Set<String> = [],
-    discoveredBindings: [String: BindingObligations] = [:]
+    discoveredBindings: [String: BindingObligations] = [:],
+    discoveredModes: [String: DeclaredResponseMode] = builtInResponseModes
 ) -> (source: String, diagnostics: [RouteCodegenDiagnostic]) {
     let rendered = renderRegisterWireRoutesWitness(
         access: controller.access,
@@ -113,7 +118,8 @@ public func renderVariantRouteContributorExtension(
         globalErrorMappings: globalErrorMappings,
         keyedScopeEntry: keyedScopeEntry,
         doublesThreadedFactoryKeys: doublesThreadedFactoryKeys,
-        discoveredBindings: discoveredBindings
+        discoveredBindings: discoveredBindings,
+        discoveredModes: discoveredModes
     )
     let raw = """
         extension \(variantProxyTypeName(variantName: variantName, subject: controller.name)): RouteContributor {
@@ -134,6 +140,36 @@ public let contributorProxySubjectAccessor = "_wireSubject"
 /// `self._wireEnterScope(seed)` per request to construct the controller fresh; restated here so the
 /// domain witness names the same field the structural half declares.
 public let contributorProxyScopeEntryAccessor = "_wireEnterScope"
+
+/// Everything the generator learns by **reading declarations** rather than by being told: request bindings
+/// and their obligations, response modes and their (terminal, codec, client body) triple, and the warnings
+/// that scan produces.
+///
+/// One function because the two scans are one idea — the extension point on each side of a route — and
+/// because they share the input and the "declared in one file, used in another" reasoning: a binding or a
+/// mode is declared in a dependency and used in the consumer, so both must be scanned over the whole input
+/// before any witness is generated.
+private func scanDeclaredExtensions(
+    in parsed: [(path: String, tree: SourceFileSyntax)]
+) -> (
+    bindings: [String: BindingObligations],
+    modes: [String: DeclaredResponseMode],
+    diagnostics: [LocatedRouteDiagnostic]
+) {
+    let trees = parsed.map(\.tree)
+    let bindings = scanRequestBindings(in: trees)
+    // Floor-plus-scan, as the bindings are: the built-ins are known without parsing WireMVC's own
+    // `Macros.swift`, and a declaration found in the sources wins, since it is the actual statement.
+    let modes = builtInResponseModes.merging(scanResponseModes(in: trees)) { _, scanned in scanned }
+    let warnings = sendConformanceWarnings(bindings, in: parsed).map {
+        LocatedRouteDiagnostic(
+            message: $0.message,
+            location: SourceLocationConverter(fileName: parsed[0].path, tree: parsed[0].tree)
+                .location(for: parsed[0].tree.position)
+        )
+    }
+    return (bindings, modes, warnings)
+}
 
 /// Parse each input Swift source, generate a route-contributor `extension` for every `@Controller` type
 /// across them, and return one combined source (the files' imports + `import WireMVC` + the extensions)
@@ -172,19 +208,11 @@ public func generateRouteContributors(
     let parsed = files.map { file -> (path: String, tree: SourceFileSyntax) in
         (file.path, Parser.parse(source: file.source))
     }
-    // Scanned over the whole input for the same reason the factory keys are: a binding is declared in one
-    // file — usually a dependency's — and used in another.
-    let discoveredBindings = scanRequestBindings(in: parsed.map(\.tree))
-    let bindingWarnings = sendConformanceWarnings(discoveredBindings, in: parsed)
+    let declared = scanDeclaredExtensions(in: parsed)
+    let discoveredBindings = declared.bindings
+    let discoveredModes = declared.modes
     var composition = analyzeComposedInputs(parsed)
-    var located = composition.diagnostics
-    located += bindingWarnings.map {
-        LocatedRouteDiagnostic(
-            message: $0.message,
-            location: SourceLocationConverter(fileName: parsed[0].path, tree: parsed[0].tree)
-                .location(for: parsed[0].tree.position)
-        )
-    }
+    var located = composition.diagnostics + declared.diagnostics
     // The generated `@main`/`.wiremvc()` entry calls `Wire.bootstrap()`, so the consumer needs `import Wire`;
     // a test consumer's `.wiremvc()` suite-trait factory adds `Testing` + `WireMVCTesting` (a program consumer
     // must not link the test client).
@@ -232,7 +260,8 @@ public func generateRouteContributors(
         globalErrorMappings: composition.globalErrorMappings,
         harnessKey: harnessKey,
         doublesThreadedFactoryKeys: doublesThreadedFactoryKeys,
-        discoveredBindings: discoveredBindings
+        discoveredBindings: discoveredBindings,
+        discoveredModes: discoveredModes
     )
     located.append(contentsOf: controllerExtensions.diagnostics)
 
@@ -415,7 +444,8 @@ private func renderControllerExtensions(
     globalErrorMappings: [ErrorMapping],
     harnessKey: DiscoveredTestingKey?,
     doublesThreadedFactoryKeys: Set<String>,
-    discoveredBindings: [String: BindingObligations]
+    discoveredBindings: [String: BindingObligations],
+    discoveredModes: [String: DeclaredResponseMode]
 ) -> ControllerExtensionsResult {
     var extensions: [(name: String, source: String)] = []
     var located: [LocatedRouteDiagnostic] = []
@@ -435,7 +465,8 @@ private func renderControllerExtensions(
                 factoryKeys: factoryKeys,
                 globalErrorMappings: globalErrorMappings,
                 keyedScopeEntry: nil,
-                discoveredBindings: discoveredBindings
+                discoveredBindings: discoveredBindings,
+                discoveredModes: discoveredModes
             )
             extensions.append((found.declaration.name, rendered.source))
 
@@ -445,7 +476,8 @@ private func renderControllerExtensions(
                 let client = renderControllerClient(
                     controller: found.declaration,
                     pathPrefix: found.pathPrefix,
-                    discoveredBindings: discoveredBindings
+                    discoveredBindings: discoveredBindings,
+                    discoveredModes: discoveredModes
                 )
             {
                 clients.append((found.declaration.name, client))
@@ -474,7 +506,8 @@ private func renderControllerExtensions(
                 variantName: harnessKey.variantName,
                 keyedScopeEntry: entry,
                 doublesThreadedFactoryKeys: doublesThreadedFactoryKeys,
-                discoveredBindings: discoveredBindings
+                discoveredBindings: discoveredBindings,
+                discoveredModes: discoveredModes
             )
             extensions.append((found.declaration.name + "Variant", variant.source))
         }

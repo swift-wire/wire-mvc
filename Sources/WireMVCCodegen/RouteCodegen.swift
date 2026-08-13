@@ -29,6 +29,12 @@ struct RouteBlockGenerator {
     /// path, which sees only the file it expands in — so the built-in wrappers stay recognised on their own,
     /// and a user binding needs the plugin.
     var discoveredBindings: [String: BindingObligations] = [:]
+    /// Response modes and their (terminal, codec, client body) triple, scanned from `@ResponseMode`
+    /// declarations across the input sources. Defaults to the **built-ins alone**, which is what the
+    /// `@Controller` macro path sees: it expands in one file and has not parsed `Macros.swift`, so a route
+    /// annotated `@JSONResponse` must still generate identically there. A mode declared anywhere else needs
+    /// the plugin, exactly as a user binding does.
+    var discoveredModes: [String: DeclaredResponseMode] = builtInResponseModes
     /// The `@WireMVCBootstrap` composition root's `@ErrorResponse` entries (M5.5 Phase 3) — the **global
     /// default tier**, folded into every route's terminal after the controller's own, before the
     /// binding-error built-in. Empty for the `@Controller` macro path (which has no whole-graph view of
@@ -199,15 +205,15 @@ struct RouteBlockGenerator {
         return blocks.joined(separator: "\n")
     }
 
-    /// A route's response mode: its resolved constant header fields, and whether it is an `@HTMLResponse`
-    /// (streaming) route. `nil` when the route states its mode more than once, which is diagnosed here.
+    /// A route's response mode: its resolved constant header fields, and the mode its annotation declares.
+    /// `nil` when the route states its mode more than once, which is diagnosed here.
     ///
     /// Split out of `routeBlock` for length, along the seam the rest of this file already follows — the
     /// response half is its own concern (see `ResponseCodegen.swift`).
     private mutating func responseMode(
         of function: FunctionDeclSyntax,
         controllerResponseHeaders: [ResponseHeaderEntry]
-    ) -> (staticHeaders: [ResponseHeaderEntry], isHTML: Bool)? {
+    ) -> (staticHeaders: [ResponseHeaderEntry], mode: ResolvedResponseMode?)? {
         // Tier order is application order: controller entries first, the route's after, so the route's
         // `.set` replaces and its `.append` adds. Nothing is filtered out here.
         var staticHeaders =
@@ -227,30 +233,39 @@ struct RouteBlockGenerator {
             )
             return nil
         }
-        let isHTML = annotations.first == "HTMLResponse"
+        // The mode is whatever its declaration says it is. A route with no annotation at all resolves to
+        // `nil` here and is diagnosed further down, where the return shape is known — a bodiless response
+        // tuple states its mode in the signature and legitimately carries no annotation.
+        let mode = annotations.first.flatMap { name in
+            discoveredModes[name].map { ResolvedResponseMode(name: name, declared: $0) }
+        }
         // No content-type seeding here. The producer supplies its own (`WireMVCBodyProducer.contentType`),
         // which is where a codec's content type belongs — the codegen naming `text/html` was a special case
         // that only existed because the producer had nowhere to put it, and it could never have served a
         // response mode WireMVC does not know by name.
-        return (staticHeaders, isHTML)
+        return (staticHeaders, mode)
     }
 
-    /// Which terminal a route needs, and the statements that feed it: the buffered assignment a
-    /// `@JSONResponse`/`@ResponseStatus` route emits, or the outcome expression an `@HTMLResponse` route's
-    /// `building` closure ends in. `nil` when the route was diagnosed.
+    /// Which terminal a route needs, and the statements that feed it: the buffered assignment a `.buffered`
+    /// or `.bodiless` mode emits, or the outcome expression a `.streaming` mode's `building` closure ends in.
+    /// `nil` when the route was diagnosed.
+    ///
+    /// The choice is the mode's `terminal`, read off its declaration — not a test for the two annotation
+    /// names this generator used to know.
     private mutating func responseEmission(
         of function: FunctionDeclSyntax,
         call: String,
         staticHeaders: [ResponseHeaderEntry],
         drainsMiddleware: Bool,
-        isHTML: Bool
+        mode: ResolvedResponseMode?
     ) -> ResponseEmission? {
-        if isHTML {
-            return htmlResponseOutcome(
+        if mode?.terminal == .streaming {
+            return streamingOutcome(
                 from: function,
                 call: call,
                 staticHeaders: staticHeaders,
-                drainsMiddleware: drainsMiddleware
+                drainsMiddleware: drainsMiddleware,
+                mode: mode
             )
             .map(ResponseEmission.streaming)
         }
@@ -258,7 +273,8 @@ struct RouteBlockGenerator {
             from: function,
             call: call,
             staticHeaders: staticHeaders,
-            drainsMiddleware: drainsMiddleware
+            drainsMiddleware: drainsMiddleware,
+            mode: mode
         )
         .map(ResponseEmission.buffered)
     }
@@ -287,7 +303,7 @@ struct RouteBlockGenerator {
         // Tier order is application order: controller entries first, the route's after, so the route's
         // `.set` replaces and its `.append` adds. Nothing is filtered out here.
         guard
-            let (staticHeaders, isHTML) = responseMode(
+            let (staticHeaders, mode) = responseMode(
                 of: function,
                 controllerResponseHeaders: controllerResponseHeaders
             )
@@ -307,7 +323,7 @@ struct RouteBlockGenerator {
                 call: call,
                 staticHeaders: staticHeaders,
                 drainsMiddleware: drainsMiddleware,
-                isHTML: isHTML
+                mode: mode
             )
         else { return nil }
         // Route-scope `@ErrorResponse` is consulted before the controller's (route overrides controller);
@@ -617,7 +633,7 @@ extension RouteBlockGenerator {
     ) -> String {
         let bindsBlock = binds.isEmpty ? "" : binds.joined(separator: "\n") + "\n"
         // `building` ends in the outcome. A single-expression body needs no `return`; a multi-statement one
-        // (a response tuple, a bind, a prologue) supplies its own — `htmlResponseOutcome` writes it.
+        // (a response tuple, a bind, a prologue) supplies its own — `streamingOutcome` writes it.
         let body = "\(scopeEntryPrologue)\(bindsBlock)\(outcome)"
         // A body route takes the collecting overload: `collectBody` consumes the reader, which a closure
         // cannot do, and hoisting the read above the call would take it outside the mapped region.

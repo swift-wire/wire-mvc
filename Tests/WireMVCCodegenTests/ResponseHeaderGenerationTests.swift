@@ -47,11 +47,15 @@ struct ResponseHeaderGenerationTests {
             }
             """
         let emitted = witness(source)
+        // One argument per line, as the emission formats it.
         #expect(
             emitted.contains(
-                "wireMVCOutcome = try WireMVCResponse.json(try await self._wireSubject.get(id: id), "
-                    + "status: .ok, headerFields: WireMVCResponseHeaders.resolved(middleware: try await wireMVCResponseHeaderDrain.drain()), "
-                    + "coding: wireMVCAppCoding)"
+                "try WireMVCJSONCodec.encodeResponseBody(try await self._wireSubject.get(id: id), coding: wireMVCAppCoding)"
+            )
+        )
+        #expect(
+            emitted.contains(
+                "headerFields: WireMVCResponseHeaders.resolved(middleware: try await wireMVCResponseHeaderDrain.drain())"
             )
         )
         #expect(emitted.contains("let wireMVCResponseHeaderDrain = requestContext.responseHeaders"))
@@ -98,8 +102,13 @@ struct ResponseHeaderGenerationTests {
         #expect(emitted.contains("let wireMVCReturn = try await self._wireSubject.get(id: id)"))
         #expect(
             emitted.contains(
-                "WireMVCResponse.json(wireMVCReturn.body, status: wireMVCReturn.status, "
-                    + "headerFields: WireMVCResponseHeaders.resolved("
+                "try WireMVCJSONCodec.encodeResponseBody(wireMVCReturn.body, coding: wireMVCAppCoding)"
+            )
+        )
+        #expect(emitted.contains("status: wireMVCReturn.status"))
+        #expect(
+            emitted.contains(
+                "headerFields: WireMVCResponseHeaders.resolved("
                     + "statics: [.set(.cacheControl, \"no-store\")], returned: wireMVCReturn.headers, middleware: try await wireMVCResponseHeaderDrain.drain())"
             )
         )
@@ -218,7 +227,7 @@ struct ResponseHeaderGenerationTests {
             }
             """
         let emitted = witness(source)
-        #expect(emitted.contains("WireMVCResponse.json(try await self._wireSubject.pair()"))
+        #expect(emitted.contains("encodeResponseBody(try await self._wireSubject.pair()"))
         #expect(!emitted.contains("wireMVCReturn"))
     }
 

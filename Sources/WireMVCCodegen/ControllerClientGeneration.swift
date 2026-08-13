@@ -39,17 +39,17 @@ struct ClientRoute {
     /// The full `{name}`-template path, controller prefix included.
     let pathTemplate: String
     let parameters: [ClientRouteParameter]
-    /// The `@JSONResponse` body type, `nil` for a `@ResponseStatus` (Void) route, an `@HTMLResponse` one,
-    /// or a raw one.
+    /// The handler's body type, `nil` for a bodiless route, a `.text` mode, or a raw one.
     let responseType: String?
     /// A `@RawRoute`: the shim returns `TestResponse` and applies no status rule.
     let isRaw: Bool
-    /// An `@HTMLResponse`: the method returns the rendered markup as a `String`.
-    ///
-    /// There is no type to decode into — the handler's return is `some HTML`, an opaque type the client
-    /// could not name even if markup were decodable. What a test wants to assert on is the markup itself,
-    /// so that is what the method hands back.
-    let isHTML: Bool
+    /// The response mode this route declares — what decides whether the method decodes a value, hands back
+    /// text, or returns nothing. `nil` for a raw route and for a self-describing (bodiless-tuple) return,
+    /// neither of which carries an annotation.
+    let mode: DeclaredResponseMode?
+
+    /// The mode hands back undecoded text — `@HTMLResponse`, and any other mode declared `client: .text`.
+    var isText: Bool { mode?.clientBody == .text }
 }
 
 /// One binding on a typed route, as the generated method exposes it.
@@ -80,9 +80,15 @@ func controllerClientTypeName(_ controller: String) -> String { controller + "Cl
 func renderControllerClient(
     controller: ControllerDeclaration,
     pathPrefix: String,
-    discoveredBindings: [String: BindingObligations] = [:]
+    discoveredBindings: [String: BindingObligations] = [:],
+    discoveredModes: [String: DeclaredResponseMode] = builtInResponseModes
 ) -> String? {
-    let routes = clientRoutes(of: controller, pathPrefix: pathPrefix, discoveredBindings: discoveredBindings)
+    let routes = clientRoutes(
+        of: controller,
+        pathPrefix: pathPrefix,
+        discoveredBindings: discoveredBindings,
+        discoveredModes: discoveredModes
+    )
     guard !routes.isEmpty else { return nil }
 
     let typeName = controllerClientTypeName(controller.name)
@@ -125,7 +131,7 @@ private func renderClientMethod(_ route: ClientRoute) -> String {
     let signature = signatureParts.joined(separator: ", ")
     let generics = route.isRaw ? "<WireMVCRawReturn: ~Copyable>" : ""
     let returns =
-        if route.isRaw { " -> WireMVCRawReturn" } else if route.isHTML { " -> String" } else {
+        if route.isRaw { " -> WireMVCRawReturn" } else if route.isText { " -> String" } else {
             route.responseType.map { " -> \($0)" } ?? ""
         }
 
@@ -164,16 +170,22 @@ private func renderClientMethod(_ route: ClientRoute) -> String {
     if route.isRaw {
         // The raw route owns its response, so the shim forwards the handler's return untouched.
         body = "return \(call)"
-    } else if route.isHTML {
-        // Markup, not a decoded value — `routeResponse` has already thrown for a non-2xx.
+    } else if route.isText {
+        // Undecoded, by the mode's own declaration — `routeResponse` has already thrown for a non-2xx.
         body = """
             let wireMVCResponse = \(call)
             return wireMVCResponse.bodyText
             """
-    } else if let responseType = route.responseType {
+    } else if let responseType = route.responseType, let codec = route.mode?.codec {
+        // Through the mode's **own** codec, not `TestResponse.json`. This is the half that decides whether a
+        // mode declared outside WireMVC produces a working client or one that parses its body as JSON.
+        //
+        // Spelled `Codec<ReturnType>` rather than left to inference: nothing in the argument list mentions
+        // `Value`, so only the explicit type argument can pin it. That is available here for the same reason
+        // the return type is — the client's return type *is* the handler's, by construction.
         body = """
             let wireMVCResponse = \(call)
-            return try wireMVCResponse.json(\(responseType).self)
+            return try \(codec)<\(responseType)>.decodeResponseBody([UInt8](wireMVCResponse.body), coding: .default)
             """
     } else {
         // A `@ResponseStatus` route has no body to decode; `routeResponse` has already thrown for a non-2xx.
@@ -289,7 +301,8 @@ private func queryEntries(_ parameters: [ClientRouteParameter]) -> String? {
 func clientRoutes(
     of controller: ControllerDeclaration,
     pathPrefix: String,
-    discoveredBindings: [String: BindingObligations] = [:]
+    discoveredBindings: [String: BindingObligations] = [:],
+    discoveredModes: [String: DeclaredResponseMode] = builtInResponseModes
 ) -> [ClientRoute] {
     controller.functions.compactMap { function in
         guard let verb = clientVerb(from: function.attributes) else { return nil }
@@ -304,7 +317,7 @@ func clientRoutes(
                 parameters: pathPlaceholderParameters(in: pathTemplate),
                 responseType: nil,
                 isRaw: true,
-                isHTML: false
+                mode: nil
             )
         }
 
@@ -340,16 +353,16 @@ func clientRoutes(
         // to be admitted here explicitly. Falling through to `return nil` would drop the route from the
         // client silently, which is the same failure the tuple projection was added to fix.
         let selfDescribing = projection.isResponseTuple && projection.body == nil
-        // Every response mode must be admitted explicitly. Falling through to `return nil` drops the route
-        // from the client *silently* — the failure the response-tuple projection was added to fix, and the
-        // one `@HTMLResponse` reintroduced by being a fourth mode added to a three-way test.
-        let isHTML = hasAttribute("HTMLResponse", on: function.attributes)
-        if hasAttribute("JSONResponse", on: function.attributes) {
-            guard returnsValue else { return nil }
-        } else if isHTML {
-            guard returnsValue else { return nil }
-        } else if hasAttribute("ResponseStatus", on: function.attributes) {
-            guard !returnsValue else { return nil }
+        // The mode is looked up, not tested for by name. The old four-way `hasAttribute` chain is exactly
+        // how `@HTMLResponse` came to be silently dropped from the client (#87): a fourth mode added to a
+        // three-way test falls through to `return nil`, and a route that disappears reports nothing. A
+        // lookup has no fourth case to forget.
+        let mode = responseAnnotation(on: function.attributes, discoveredModes: discoveredModes)
+        if let mode {
+            switch mode.terminal {
+            case .buffered, .streaming: guard returnsValue else { return nil }
+            case .bodiless: guard !returnsValue else { return nil }
+            }
         } else if !selfDescribing {
             return nil
         }
@@ -359,9 +372,9 @@ func clientRoutes(
             wireMethod: verb.method,
             pathTemplate: pathTemplate,
             parameters: parameters,
-            responseType: (returnsValue && !isHTML) ? returnType : nil,
+            responseType: (returnsValue && mode?.clientBody != .text) ? returnType : nil,
             isRaw: false,
-            isHTML: isHTML
+            mode: mode
         )
     }
 
@@ -423,6 +436,17 @@ func pathPlaceholderParameters(in template: String) -> [ClientRouteParameter] {
         )
     }
     return parameters
+}
+
+/// The response mode a route declares, or `nil` if it declares none.
+private func responseAnnotation(
+    on attributes: AttributeListSyntax,
+    discoveredModes: [String: DeclaredResponseMode]
+) -> DeclaredResponseMode? {
+    for case let .attribute(attribute) in attributes {
+        if let mode = discoveredModes[attribute.attributeName.trimmedDescription] { return mode }
+    }
+    return nil
 }
 
 private func clientVerb(from attributes: AttributeListSyntax) -> (method: String, path: String?)? {

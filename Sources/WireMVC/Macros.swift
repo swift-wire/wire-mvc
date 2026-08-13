@@ -176,8 +176,15 @@ public macro RequestBinding(_ obligations: WireMVCBindingObligation...) =
 // ── Response markers (peer, no-op — read by `@Controller`) ──
 
 /// The route returns an `Encodable` body, encoded as JSON with the given status (default 200).
+///
+/// Declared through the same `@ResponseMode` seam a mode declared outside WireMVC uses. That is the point:
+/// if the built-ins could not be expressed as instances of the extension point, the extension point would be
+/// the wrong shape — the request side settled this when `Path`/`Query`/`Header`/`JSONBody` became ordinary
+/// conformers to `RequestSendable` rather than names the client tested for.
+@ResponseMode(.buffered, codec: "WireMVCJSONCodec")
 @attached(peer)
 public macro JSONResponse() = #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
+@ResponseMode(.buffered, codec: "WireMVCJSONCodec")
 @attached(peer)
 public macro JSONResponse(status: HTTPResponse.Status) =
     #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
@@ -199,13 +206,19 @@ public macro JSONResponse(status: HTTPResponse.Status) =
 /// `WireMVCHTMLProducer`, resolved against the adapter the *controller's own module* imports — `WireMVCElementary`
 /// in practice. WireMVC's core depends on no HTML library, so this annotation names a convention rather than
 /// one. See `Documentation/Notes/StreamingResponseTier.md`.
+/// `codec:` names `WireMVCHTMLProducer` as a **spelling**, which is what lets this declaration stay in
+/// WireMVC: the type lives in `WireMVCElementary`, and is resolved in the controller's own module at the
+/// generated call site. WireMVC still depends on no HTML library.
+@ResponseMode(.streaming, codec: "WireMVCHTMLProducer", client: .text)
 @attached(peer)
 public macro HTMLResponse() = #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
+@ResponseMode(.streaming, codec: "WireMVCHTMLProducer", client: .text)
 @attached(peer)
 public macro HTMLResponse(status: HTTPResponse.Status) =
     #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
 
 /// The route returns no body; the response carries the given status.
+@ResponseMode(.bodiless)
 @attached(peer)
 public macro ResponseStatus(_ status: HTTPResponse.Status) =
     #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")

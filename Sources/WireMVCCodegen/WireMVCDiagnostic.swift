@@ -9,7 +9,7 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
     case unannotatedParameter(String)
     case pathPlaceholderMissing(name: String, path: String)
     case missingResponseAnnotation(String)
-    case jsonResponseOnVoid(String)
+    case responseModeOnVoid(String, annotation: String)
     case responseStatusOnValue(String)
     case unsupportedRawParameter(name: String, type: String)
     case rawRouteMissingSender(String)
@@ -28,7 +28,7 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
     case responseHeaderOnRawRoute(String)
     case responseAnnotationOnSelfDescribingReturn(String, annotation: String)
     case deadResponseStatusArgument(String, annotation: String)
-    case htmlResponseOnVoid(String)
+    case responseModeMissingCodec(String, annotation: String)
     case multipleResponseAnnotations(String, annotations: String)
     case bindingMissingSendConformance(binding: String, conformance: String)
 
@@ -39,9 +39,9 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
         case .pathPlaceholderMissing(let name, let path):
             "@Path '\(name)' has no matching '{\(name)}' placeholder in the route path \"\(path)\""
         case .missingResponseAnnotation(let route):
-            "route '\(route)' needs exactly one response annotation — @JSONResponse or @HTMLResponse (returns a body) or @ResponseStatus (Void)"
-        case .jsonResponseOnVoid(let route):
-            "@JSONResponse on '\(route)' requires a returned value; use @ResponseStatus for a Void handler"
+            "route '\(route)' needs exactly one response annotation — @JSONResponse or @HTMLResponse (returns a body), @ResponseStatus (Void), or any mode declared with @ResponseMode"
+        case .responseModeOnVoid(let route, let annotation):
+            "@\(annotation) on '\(route)' requires a returned value; use @ResponseStatus for a Void handler"
         case .responseStatusOnValue(let route):
             "@ResponseStatus on '\(route)' requires a Void handler; use @JSONResponse to encode the returned value"
         case .unsupportedRawParameter(let name, let type):
@@ -72,8 +72,8 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
             "@ResponseHeader sets '\(field)' more than once at \(scope) scope, so which value was meant is undecidable. To *add* a value to a field that legitimately repeats (Set-Cookie, Vary), pass the verb: @ResponseHeader(\(field), \"…\", .append). To replace, keep one entry (a route entry already overrides a controller entry for the same field)."
         case .responseAnnotationOnSelfDescribingReturn(let route, let annotation):
             "@\(annotation) on '\(route)' declares nothing the return type does not already say — a (status:headers:) tuple carries no body and computes its own status, so the annotation would be read by nobody and could only go out of date. Remove it. (A route that returns a body still needs @JSONResponse: that names the codec.)"
-        case .htmlResponseOnVoid(let route):
-            "@HTMLResponse on '\(route)' requires a returned value; use @ResponseStatus for a Void handler"
+        case .responseModeMissingCodec(let route, let annotation):
+            "@\(annotation) on '\(route)' declares no codec — its @ResponseMode must name one, since a mode that encodes a body has to say what encodes it"
         case .bindingMissingSendConformance(let binding, let conformance):
             "binding '\(binding)' is declared @RequestBinding but does not conform to \(conformance), so the generated typed client cannot send it — add the conformance, or the client's call will fail to compile. (If it is declared in a module this build does not parse, ignore this.)"
         case .multipleResponseAnnotations(let route, let annotations):
@@ -103,7 +103,7 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
         case .unannotatedParameter: id = "unannotatedParameter"
         case .pathPlaceholderMissing: id = "pathPlaceholderMissing"
         case .missingResponseAnnotation: id = "missingResponseAnnotation"
-        case .jsonResponseOnVoid: id = "jsonResponseOnVoid"
+        case .responseModeOnVoid: id = "responseModeOnVoid"
         case .responseStatusOnValue: id = "responseStatusOnValue"
         case .unsupportedRawParameter: id = "unsupportedRawParameter"
         case .rawRouteMissingSender: id = "rawRouteMissingSender"
@@ -122,7 +122,7 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
         case .responseHeaderOnRawRoute: id = "responseHeaderOnRawRoute"
         case .responseAnnotationOnSelfDescribingReturn: id = "responseAnnotationOnSelfDescribingReturn"
         case .deadResponseStatusArgument: id = "deadResponseStatusArgument"
-        case .htmlResponseOnVoid: id = "htmlResponseOnVoid"
+        case .responseModeMissingCodec: id = "responseModeMissingCodec"
         case .multipleResponseAnnotations: id = "multipleResponseAnnotations"
         case .bindingMissingSendConformance: id = "bindingMissingSendConformance"
         }

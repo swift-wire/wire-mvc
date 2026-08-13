@@ -112,6 +112,10 @@ let package = Package(
             dependencies: [
                 .product(name: "WireMVCElementary", package: "wire-mvc"),
                 .product(name: "WireMVC", package: "wire-mvc"),
+                // The macro plugin, so this module can declare its **own** response mode (`@CSVResponse`).
+                // A macro declaration must name the plugin implementing it, and this is the product that
+                // makes one declarable outside wire-mvc at all.
+                .product(name: "WireMVCMacrosPlugin", package: "wire-mvc"),
                 .product(name: "WireMVCRouter", package: "wire-mvc"),
                 .product(name: "Wire", package: "swift-wire"),
                 .product(name: "HTTPAPIs", package: "swift-http-api-proposal"),

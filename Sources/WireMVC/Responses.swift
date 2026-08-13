@@ -213,10 +213,29 @@ public enum WireMVCResponseHeaders {
     }
 }
 
-/// Response encoding the generated witness calls. `@JSONResponse` routes go through `json`;
-/// `@ResponseStatus` routes build `.status` inline in the witness.
+/// Response encoding the generated witness calls. A `.buffered` response mode goes through ``encoded``;
+/// a `.bodiless` one builds `.status` inline in the witness.
 public enum WireMVCResponse {
+    /// Wrap what a codec produced into an outcome — the single buffered emit site, for every mode.
+    ///
+    /// The codec returns `(bytes, contentType)` and this seeds the content type **only when the route named
+    /// none**, so a route's own `@ResponseHeader(.contentType, …)` still wins. That ordering is the whole
+    /// reason this is one function rather than something each codec does for itself: it is a property of the
+    /// response, not of the encoding.
+    public static func encoded(
+        _ encoded: (bytes: [UInt8], contentType: String),
+        status: HTTPResponse.Status,
+        headerFields: HTTPFields = [:]
+    ) -> WireMVCOutcome {
+        var fields = headerFields
+        if fields[.contentType] == nil { fields[.contentType] = encoded.contentType }
+        return WireMVCOutcome(status: status, headerFields: fields, body: encoded.bytes)
+    }
+
     /// `@JSONResponse[(status:)]` — encode an `Encodable` return as a JSON body.
+    ///
+    /// No longer what the generator emits (it goes through ``encoded`` and `WireMVCJSONCodec` like any other
+    /// mode), and kept because it is the spelling an `@ErrorResponse` mapping and hand-written code use.
     public static func json<T: Encodable>(
         _ value: T,
         status: HTTPResponse.Status,

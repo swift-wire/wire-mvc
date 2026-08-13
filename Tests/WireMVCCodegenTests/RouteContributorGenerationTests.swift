@@ -214,7 +214,11 @@ struct RouteContributorGenerationTests {
                             let wireMVCOutcome: WireMVCOutcome
                             do {
                                 let id = try await Path<String>.bind(name: "id", request: request, pathParameters: pathParameters, body: nil, coding: wireMVCAppCoding)
-                                wireMVCOutcome = try WireMVCResponse.json(try await self._wireSubject.get(id: id), status: .ok, headerFields: WireMVCResponseHeaders.resolved(middleware: try await wireMVCResponseHeaderDrain.drain()), coding: wireMVCAppCoding)
+                                wireMVCOutcome = WireMVCResponse.encoded(
+                                    try WireMVCJSONCodec.encodeResponseBody(try await self._wireSubject.get(id: id), coding: wireMVCAppCoding),
+                                    status: .ok,
+                                    headerFields: WireMVCResponseHeaders.resolved(middleware: try await wireMVCResponseHeaderDrain.drain())
+                                )
                             } catch let wireMVCError {
                                 wireMVCOutcome = (
                                     (wireMVCError as? WireMVCBindingError).map {
@@ -833,7 +837,11 @@ struct RouteContributorGenerationTests {
                                 let limit = try await Query<Int>.bindOptional(name: "limit", request: request, pathParameters: pathParameters, body: requestBody, coding: wireMVCAppCoding)
                                 let trace = try await Header<String>.bindOptional(name: "X-Trace", request: request, pathParameters: pathParameters, body: requestBody, coding: wireMVCAppCoding) ?? "none"
                                 let filter = try await JSONBody<Filter>.bind(name: "filter", request: request, pathParameters: pathParameters, body: requestBody, coding: wireMVCAppCoding)
-                                wireMVCOutcome = try WireMVCResponse.json(try await self._wireSubject.run(scope: scope, query: query, limit: limit, trace: trace, filter: filter), status: .created, headerFields: WireMVCResponseHeaders.resolved(middleware: try await wireMVCResponseHeaderDrain.drain()), coding: wireMVCAppCoding)
+                                wireMVCOutcome = WireMVCResponse.encoded(
+                                    try WireMVCJSONCodec.encodeResponseBody(try await self._wireSubject.run(scope: scope, query: query, limit: limit, trace: trace, filter: filter), coding: wireMVCAppCoding),
+                                    status: .created,
+                                    headerFields: WireMVCResponseHeaders.resolved(middleware: try await wireMVCResponseHeaderDrain.drain())
+                                )
                             } catch let wireMVCError {
                                 wireMVCOutcome = (
                                     (wireMVCError as? WireMVCBindingError).map {

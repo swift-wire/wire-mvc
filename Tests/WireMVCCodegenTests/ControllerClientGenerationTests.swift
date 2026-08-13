@@ -50,7 +50,7 @@ struct ControllerClientGenerationTests {
                             declared
                         }
                         let wireMVCResponse = try await client.routeResponse(method: "GET", path: "/notes/{id}", pathParameters: wireMVCRequest.pathParameters, query: wireMVCRequest.query, headers: wireMVCHeaders)
-                        return try wireMVCResponse.json(Note.self)
+                        return try WireMVCJSONCodec<Note>.decodeResponseBody([UInt8](wireMVCResponse.body), coding: .default)
                     }
                 }
                 """
