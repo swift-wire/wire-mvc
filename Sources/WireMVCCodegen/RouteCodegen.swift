@@ -28,7 +28,7 @@ struct RouteBlockGenerator {
     /// input sources (the consumer's and every Wire-aware dependency's). Empty for the `@Controller` macro
     /// path, which sees only the file it expands in — so the built-in wrappers stay recognised on their own,
     /// and a user binding needs the plugin.
-    var discoveredBindings: [String: BindingObligations] = [:]
+    var discoveredBindings: [String: BindingObligations] = builtInRequestBindings
     /// Response modes and their (terminal, codec, client body) triple, scanned from `@ResponseMode`
     /// declarations across the input sources. Defaults to the **built-ins alone**, which is what the
     /// `@Controller` macro path sees: it expands in one file and has not parsed `Macros.swift`, so a route
@@ -689,7 +689,7 @@ extension RouteBlockGenerator {
     private func binding(from attributes: AttributeListSyntax) -> Binding? {
         for case let .attribute(attr) in attributes {
             let name = attr.attributeName.trimmedDescription
-            if routeBindingWrappers.contains(name) || discoveredBindings[name] != nil {
+            if discoveredBindings[name] != nil {
                 return Binding(wrapper: name, name: routeFirstStringLiteral(attr.arguments))
             }
         }
@@ -706,27 +706,19 @@ extension RouteBlockGenerator {
     }
 }
 
-/// The binding-wrapper attribute names a handler parameter can carry. File-scope (not a stored property)
-/// so the generator's methods can live in extensions.
-let routeBindingWrappers: Set<String> = ["Path", "Query", "JSONBody", "Header"]
-
 extension RouteBlockGenerator {
     /// Whether a binding reads the request body — the `@RequestBinding(.body)` obligation.
     ///
-    /// `JSONBody` is answered by name as well, because WireMVC's own bindings carry no attribute: adding one
-    /// would make the built-ins depend on a macro the `@Controller` expansion cannot see, and the macro path
-    /// has no whole-graph view to scan. The set is the floor, the scan is the extension.
+    /// One rule, not a name test plus a lookup. WireMVC's own `@JSONBody` states `.body` on its declaration
+    /// like any other binding; `builtInRequestBindings` restates it as a floor only because the
+    /// `@Controller` macro path cannot parse that declaration.
     func readsRequestBody(_ wrapper: String) -> Bool {
-        wrapper == "JSONBody" || discoveredBindings[wrapper, default: []].contains(.body)
+        discoveredBindings[wrapper, default: []].contains(.body)
     }
 
     /// Whether a binding names a `{name}` path placeholder — the `@RequestBinding(.path)` obligation.
-    ///
-    /// `Path` is answered by name as well, for the same reason `JSONBody` is: WireMVC's own bindings carry
-    /// no attribute, because the `@Controller` macro expands in one file and has no whole-graph view to scan
-    /// them from. The set is the floor, the scan is the extension.
     func namesPathPlaceholder(_ wrapper: String) -> Bool {
-        wrapper == "Path" || discoveredBindings[wrapper, default: []].contains(.path)
+        discoveredBindings[wrapper, default: []].contains(.path)
     }
 }
 

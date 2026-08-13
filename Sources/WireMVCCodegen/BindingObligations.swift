@@ -151,3 +151,23 @@ private final class RequestBindingScanner: SyntaxVisitor {
         return result
     }
 }
+
+/// The request bindings WireMVC itself ships, as a **floor** under the scan.
+///
+/// The exact counterpart of `builtInResponseModes`, for the exact same reason: the `@Controller` macro
+/// expands in one file with no whole-graph view, so it has not parsed `RequestBinding.swift` and cannot see
+/// the built-ins' own `@RequestBinding` attributes. Floor-plus-scan means a route annotated `@JSONBody`
+/// generates identically whether the plugin ran or not, while a binding declared anywhere else is picked up
+/// by the scan.
+///
+/// Before this the floor was a bare `Set<String>` of names plus two `wrapper == "JSONBody"` /
+/// `wrapper == "Path"` tests scattered across the generator — the same shape of hardcode that hid a silently
+/// dropped route on the response side, and invisible to a test suite made of the framework's own bindings.
+/// These entries and the attributes in `RequestBinding.swift` are checked against each other by
+/// `BindingObligationsTests.builtInFloorMatchesTheDeclarations`.
+public let builtInRequestBindings: [String: BindingObligations] = [
+    "Path": .path,
+    "Query": [],
+    "Header": [],
+    "JSONBody": .body,
+]

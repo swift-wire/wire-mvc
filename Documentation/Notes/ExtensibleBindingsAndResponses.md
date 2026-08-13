@@ -40,11 +40,13 @@ binding needs no emission change at all**, which is why this is worth doing: mos
 let routeBindingWrappers: Set<String> = ["Path", "Query", "JSONBody", "Header"]
 ```
 
-**Now:** still present, as a *floor* under `scanRequestBindings`. Not a residual hardcode but a requirement —
-the `@Controller` macro expands in one file with no whole-graph view, so it cannot see any declaration but
-the ones in front of it, and a route annotated `@JSONBody` has to generate identically either way. The
-response side needed the same floor (`builtInResponseModes`) for the same reason, with a test that parses
-`Macros.swift` and compares, so the two statements of one fact cannot drift.
+**Now:** replaced by `builtInRequestBindings`, a *floor* under `scanRequestBindings` (2026-08-13). Not a
+residual hardcode but a requirement — the `@Controller` macro expands in one file with no whole-graph view,
+so it cannot see any declaration but the ones in front of it, and a route annotated `@JSONBody` has to
+generate identically either way. The difference from the old `Set<String>` is that the built-ins now carry
+`@RequestBinding` on their own declarations, so the floor *restates* a fact rather than being its only
+statement, and a test that parses `RequestBinding.swift` and compares stops the two drifting. Same
+arrangement as `builtInResponseModes`.
 
 **3. Body collection is hardcoded to one name** (`RouteCodegen.swift:638`):
 
@@ -55,8 +57,8 @@ if let binding = binding(from: param.attributes), binding.wrapper == "JSONBody" 
 That decides whether `let requestBody = try await WireMVCRequest.collectBody(reader)` appears. So even if a
 `@FormBody` were recognised, it would be handed `body: nil`.
 
-**Now:** the `.body` obligation, read off `@RequestBinding`. `JSONBody` is answered by name as a floor, per
-hardcode 2.
+**Now:** the `.body` obligation, read off `@RequestBinding` — and *only* that. `JSONBody` states `.body` on
+its own declaration, so `readsRequestBody` is one lookup rather than a name test plus a lookup.
 
 **4. The typed client hardcodes wire position and response codec**
 (`ControllerClientGeneration.swift:120-141`): it filters parameters by `$0.wrapper == "Header"` to build
@@ -337,12 +339,22 @@ call site, and facts read off a declaration the build plugin already parses.
    of a route and WireMVC names neither (2026-08-13). Demonstrating the seam is the point; a `@FormBody`
    inside WireMVC would prove nothing about whether the seam works, and this note exists because the last
    claim that the seam worked was never tested.
-6. **Generalise the built-in request bindings.** *(The only item left.)* `@Path`/`@Query`/`@Header`/
-   `@JSONBody` are still recognised by name as a floor under the scan — the response side needs the same
-   floor for the same reason (the `@Controller` macro path parses one file), so this is not a defect. But
-   `readsRequestBody` and `namesPathPlaceholder` still name `JSONBody` and `Path` specifically, which the
-   response side no longer has an equivalent of. Worth doing under the lesson above: a hardcode that only the
-   framework's own instances exercise is invisible to a test suite made of them.
+6. ~~Generalise the built-in request bindings.~~ **Done** (2026-08-13). `@Path`, `@Query`, `@Header` and
+   `@JSONBody` carry `@RequestBinding` on their own declarations, so `readsRequestBody` and
+   `namesPathPlaceholder` are one lookup each and no generator code names a binding. `builtInRequestBindings`
+   remains as the floor the macro path needs, checked against the declarations by a test — mutation-checked
+   in both directions, since a floor nothing depends on and a floor nothing verifies fail the same way
+   silently.
+
+   One thing the merge changed that was not obvious: `sendConformanceWarnings` must run over the **scanned**
+   bindings, not the merged set. WireMVC's own `RequestSendable` conformances live in `RequestSending.swift`,
+   which that scan has not parsed, so including the floor warns that every built-in binding cannot be sent.
+
+**Nothing is left on this list.** What the seam still does not cover is a *streaming request body*:
+`RequestBound.bind` takes `body: [UInt8]?`, collected whole before any binding runs, so a binding cannot
+stream. `@RawRoute(.reader)` is the only way, and it gives up typed binding entirely. That is the mirror of
+what `@HTMLResponse` exposed on the response side, and it is what a real `multipart/form-data` binding
+needs — a file upload buffered into an array is the wrong shape, however well the seam accepts it.
 
 ## What this is not
 

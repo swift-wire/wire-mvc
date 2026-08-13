@@ -37,7 +37,7 @@ public func renderRegisterWireRoutesWitness(
     globalErrorMappings: [ErrorMapping] = [],
     keyedScopeEntry: KeyedScopeEntry? = nil,
     doublesThreadedFactoryKeys: Set<String> = [],
-    discoveredBindings: [String: BindingObligations] = [:],
+    discoveredBindings: [String: BindingObligations] = builtInRequestBindings,
     discoveredModes: [String: DeclaredResponseMode] = builtInResponseModes
 ) -> (witness: String, diagnostics: [RouteCodegenDiagnostic]) {
     var generator = RouteBlockGenerator(
@@ -70,7 +70,7 @@ public func renderRouteContributorExtension(
     factoryKeys: Set<String>,
     globalErrorMappings: [ErrorMapping] = [],
     keyedScopeEntry: KeyedScopeEntry? = nil,
-    discoveredBindings: [String: BindingObligations] = [:],
+    discoveredBindings: [String: BindingObligations] = builtInRequestBindings,
     discoveredModes: [String: DeclaredResponseMode] = builtInResponseModes
 ) -> (source: String, diagnostics: [RouteCodegenDiagnostic]) {
     let rendered = renderRegisterWireRoutesWitness(
@@ -106,7 +106,7 @@ public func renderVariantRouteContributorExtension(
     variantName: String,
     keyedScopeEntry: KeyedScopeEntry,
     doublesThreadedFactoryKeys: Set<String> = [],
-    discoveredBindings: [String: BindingObligations] = [:],
+    discoveredBindings: [String: BindingObligations] = builtInRequestBindings,
     discoveredModes: [String: DeclaredResponseMode] = builtInResponseModes
 ) -> (source: String, diagnostics: [RouteCodegenDiagnostic]) {
     let rendered = renderRegisterWireRoutesWitness(
@@ -157,11 +157,16 @@ private func scanDeclaredExtensions(
     diagnostics: [LocatedRouteDiagnostic]
 ) {
     let trees = parsed.map(\.tree)
-    let bindings = scanRequestBindings(in: trees)
+    // Floor-plus-scan, as the modes are.
+    let scannedBindings = scanRequestBindings(in: trees)
+    let bindings = builtInRequestBindings.merging(scannedBindings) { _, scanned in scanned }
     // Floor-plus-scan, as the bindings are: the built-ins are known without parsing WireMVC's own
     // `Macros.swift`, and a declaration found in the sources wins, since it is the actual statement.
     let modes = builtInResponseModes.merging(scanResponseModes(in: trees)) { _, scanned in scanned }
-    let warnings = sendConformanceWarnings(bindings, in: parsed).map {
+    // The **scanned** bindings, not the merged set. The floor is WireMVC's own, whose `RequestSendable`
+    // conformances live in `RequestSending.swift` — a file this scan has not parsed, so including them would
+    // warn that every built-in binding cannot be sent.
+    let warnings = sendConformanceWarnings(scannedBindings, in: parsed).map {
         LocatedRouteDiagnostic(
             message: $0.message,
             location: SourceLocationConverter(fileName: parsed[0].path, tree: parsed[0].tree)

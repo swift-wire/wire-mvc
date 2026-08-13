@@ -130,7 +130,7 @@ private final class ResponseModeScanner: SyntaxVisitor {
 
 /// The response modes WireMVC itself ships, as a **floor** under the scan.
 ///
-/// The same arrangement `routeBindingWrappers` is on the request side, and for the same reason: the
+/// The same arrangement `builtInRequestBindings` is on the request side, and for the same reason: the
 /// `@Controller` macro expands in one file with no whole-graph view, so when the generator runs as a macro
 /// rather than as `WireMVCRouteGen` it has not parsed `Macros.swift` and cannot see the built-ins' own
 /// `@ResponseMode` attributes. Floor-plus-scan means a route annotated `@JSONResponse` behaves identically

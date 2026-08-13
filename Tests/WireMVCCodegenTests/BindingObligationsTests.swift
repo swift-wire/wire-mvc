@@ -1,3 +1,4 @@
+import Foundation
 import SwiftParser
 import SwiftSyntax
 import Testing
@@ -38,6 +39,23 @@ struct BindingObligationsTests {
             """
         )
         #expect(found["FormBody"] == .body)
+    }
+
+    /// `builtInRequestBindings` restates what `RequestBinding.swift` declares, because the `@Controller`
+    /// macro path has not parsed that file. Two statements of one fact drift, so this reads the real file
+    /// and compares — the same guard `ResponseModeScanTests` puts on the response side's floor.
+    @Test("the built-in floor matches the declarations in RequestBinding.swift")
+    func builtInFloorMatchesTheDeclarations() throws {
+        let declarations = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // WireMVCCodegenTests
+            .deletingLastPathComponent()  // Tests
+            .deletingLastPathComponent()  // package root
+            .appendingPathComponent("Sources/WireMVC/RequestBinding.swift")
+        let declared = scanRequestBindings(
+            in: [Parser.parse(source: try String(contentsOf: declarations, encoding: .utf8))]
+        )
+        #expect(!declared.isEmpty, "the declarations are annotated at all")
+        #expect(declared == builtInRequestBindings)
     }
 
     @Test("the obligations are read, not guessed")
@@ -172,9 +190,9 @@ struct BindingObligationsTests {
 
 /// The seam, exercised through `generateRouteContributors` — the entry point `WireMVCRouteGen` calls.
 ///
-/// The two hardcodes this replaces are `routeBindingWrappers` (recognition) and `== "JSONBody"` (body
-/// collection). Both are answered here by a binding WireMVC has never heard of, declared in a *different
-/// file* — which is how the plugin passes a dependency's sources.
+/// The two hardcodes this replaced were a `Set<String>` of wrapper names (recognition) and `== "JSONBody"`
+/// (body collection). Both are answered here by a binding WireMVC has never heard of, declared in a
+/// *different file* — which is how the plugin passes a dependency's sources.
 @Suite("User-declared bindings, end to end")
 struct UserBindingIntegrationTests {
 
