@@ -36,7 +36,12 @@ struct ControllerClientGenerationTests {
             """
         )
         #expect(
-            renderControllerClient(controller: declaration, pathPrefix: "/notes") == """
+            renderControllerClient(
+                controller: declaration,
+                pathPrefix: "/notes",
+                discoveredBindings: WireMVCBuiltIns.bindings,
+                discoveredModes: WireMVCBuiltIns.modes
+            ) == """
                 /// Typed access to `NotesController`'s routes, derived from its verb annotations. Each method
                 /// returns the route's decoded response and throws `WireMVCRouteError` for a non-2xx.
                 struct NotesControllerClient {
@@ -71,7 +76,14 @@ struct ControllerClientGenerationTests {
             }
             """
         )
-        let rendered = try! #require(renderControllerClient(controller: declaration, pathPrefix: "/todos"))
+        let rendered = try! #require(
+            renderControllerClient(
+                controller: declaration,
+                pathPrefix: "/todos",
+                discoveredBindings: WireMVCBuiltIns.bindings,
+                discoveredModes: WireMVCBuiltIns.modes
+            )
+        )
         // An optional binding is guarded rather than mapped: presence is the generated code's business,
         // mirroring the server's `bind`/`bindOptional` split.
         #expect(rendered.contains("if let search {"))
@@ -92,7 +104,14 @@ struct ControllerClientGenerationTests {
             }
             """
         )
-        let rendered = try! #require(renderControllerClient(controller: declaration, pathPrefix: "/todos"))
+        let rendered = try! #require(
+            renderControllerClient(
+                controller: declaration,
+                pathPrefix: "/todos",
+                discoveredBindings: WireMVCBuiltIns.bindings,
+                discoveredModes: WireMVCBuiltIns.modes
+            )
+        )
         // The body binding supplies its own bytes *and* content type, so the client no longer believes
         // JSON is the only codec.
         #expect(rendered.contains("let wireMVCBody = try JSONBody<NewTodo>.sendBody("))
@@ -124,7 +143,14 @@ struct ControllerClientGenerationTests {
             }
             """
         )
-        let rendered = try! #require(renderControllerClient(controller: declaration, pathPrefix: "/todos"))
+        let rendered = try! #require(
+            renderControllerClient(
+                controller: declaration,
+                pathPrefix: "/todos",
+                discoveredBindings: WireMVCBuiltIns.bindings,
+                discoveredModes: WireMVCBuiltIns.modes
+            )
+        )
         #expect(rendered.contains("func remove(id: Int, headers: [String: String] = [:]) async throws {"))
         #expect(rendered.contains("_ = try await client.routeResponse("))
         #expect(!rendered.contains(".json("))
@@ -149,7 +175,14 @@ struct ControllerClientGenerationTests {
             }
             """
         )
-        let rendered = try! #require(renderControllerClient(controller: declaration, pathPrefix: "/exports"))
+        let rendered = try! #require(
+            renderControllerClient(
+                controller: declaration,
+                pathPrefix: "/exports",
+                discoveredBindings: WireMVCBuiltIns.bindings,
+                discoveredModes: WireMVCBuiltIns.modes
+            )
+        )
         #expect(rendered.contains("func fetch(id: String, headers: [String: String] = [:]) async throws -> Export"))
         #expect(rendered.contains("func stream<WireMVCRawReturn: ~Copyable>("))
         #expect(
@@ -178,7 +211,14 @@ struct ControllerClientGenerationTests {
             }
             """
         )
-        let rendered = try! #require(renderControllerClient(controller: declaration, pathPrefix: "/exports"))
+        let rendered = try! #require(
+            renderControllerClient(
+                controller: declaration,
+                pathPrefix: "/exports",
+                discoveredBindings: WireMVCBuiltIns.bindings,
+                discoveredModes: WireMVCBuiltIns.modes
+            )
+        )
         #expect(rendered.contains("func part<WireMVCRawReturn: ~Copyable>(id: String, part: String,"))
         #expect(rendered.contains(#"pathParameters: ["id": String(id), "part": String(part)]"#))
     }
@@ -204,7 +244,14 @@ struct ControllerClientGenerationTests {
             }
             """
         )
-        #expect(renderControllerClient(controller: declaration, pathPrefix: "/exports") == nil)
+        #expect(
+            renderControllerClient(
+                controller: declaration,
+                pathPrefix: "/exports",
+                discoveredBindings: WireMVCBuiltIns.bindings,
+                discoveredModes: WireMVCBuiltIns.modes
+            ) == nil
+        )
     }
 
     /// The client is a test-only surface: a program consumer must not link `TestClient`, so `--test-entry`
@@ -223,10 +270,16 @@ struct ControllerClientGenerationTests {
                 func fetch(@Path("id") id: String) async throws -> Note { fatalError() }
             }
             """
-        let program = generateRouteContributors(files: [("App.swift", source)], testEntry: false)
+        let program = generateRouteContributors(
+            files: WireMVCBuiltIns.declarationFiles + [("App.swift", source)],
+            testEntry: false
+        )
         #expect(!program.source.contains("NotesControllerClient"))
 
-        let test = generateRouteContributors(files: [("App.swift", source)], testEntry: true)
+        let test = generateRouteContributors(
+            files: WireMVCBuiltIns.declarationFiles + [("App.swift", source)],
+            testEntry: true
+        )
         #expect(test.source.contains("struct NotesControllerClient {"))
         // No free-floating module-scope accessor: a suite receives the client from `withClient(supplying:)`
         // a keyless one reaches it through the type's own `.current`.

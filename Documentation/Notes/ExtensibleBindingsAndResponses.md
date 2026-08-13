@@ -40,11 +40,19 @@ binding needs no emission change at all**, which is why this is worth doing: mos
 let routeBindingWrappers: Set<String> = ["Path", "Query", "JSONBody", "Header"]
 ```
 
-**Now:** still present, as a *floor* under `scanRequestBindings`. Not a residual hardcode but a requirement —
-the `@Controller` macro expands in one file with no whole-graph view, so it cannot see any declaration but
-the ones in front of it, and a route annotated `@JSONBody` has to generate identically either way. The
-response side needed the same floor (`builtInResponseModes`) for the same reason, with a test that parses
-`Macros.swift` and compares, so the two statements of one fact cannot drift.
+**Now:** gone entirely (2026-08-13). It was replaced by a `builtInRequestBindings` table first, justified by
+a `@Controller` macro expansion path — and that justification was **false**: `ControllerMacro.expansion`
+returns `[]`, route generation is entirely the plugin's, and the plugin already passes WireMVC's own sources
+because it is Wire-aware. Emptying the table changed nothing in a real build; only unit tests calling the
+renderers with default arguments failed. Both tables were deleted the same day they were written.
+
+The claim was checked, not reasoned: a target that depends on a Wire-aware library but *not* on the WireMVC
+product directly fails to build at all — WireGen never sees the adapter directives and the error names a
+missing contributor proxy — so there is no configuration where the built-ins are needed but absent.
+
+`discoveredBindings` and `discoveredModes` are now **required** parameters on the public renderers rather than
+defaulted. A forgotten argument was previously an empty set and a silently route-free witness; it is now a
+compile error, which is the shape this file has twice needed and twice lacked.
 
 **3. Body collection is hardcoded to one name** (`RouteCodegen.swift:638`):
 
@@ -55,8 +63,8 @@ if let binding = binding(from: param.attributes), binding.wrapper == "JSONBody" 
 That decides whether `let requestBody = try await WireMVCRequest.collectBody(reader)` appears. So even if a
 `@FormBody` were recognised, it would be handed `body: nil`.
 
-**Now:** the `.body` obligation, read off `@RequestBinding`. `JSONBody` is answered by name as a floor, per
-hardcode 2.
+**Now:** the `.body` obligation, read off `@RequestBinding` — and *only* that. `JSONBody` states `.body` on
+its own declaration, so `readsRequestBody` is one lookup, over one source of truth.
 
 **4. The typed client hardcodes wire position and response codec**
 (`ControllerClientGeneration.swift:120-141`): it filters parameters by `$0.wrapper == "Header"` to build
@@ -337,12 +345,21 @@ call site, and facts read off a declaration the build plugin already parses.
    of a route and WireMVC names neither (2026-08-13). Demonstrating the seam is the point; a `@FormBody`
    inside WireMVC would prove nothing about whether the seam works, and this note exists because the last
    claim that the seam worked was never tested.
-6. **Generalise the built-in request bindings.** *(The only item left.)* `@Path`/`@Query`/`@Header`/
-   `@JSONBody` are still recognised by name as a floor under the scan — the response side needs the same
-   floor for the same reason (the `@Controller` macro path parses one file), so this is not a defect. But
-   `readsRequestBody` and `namesPathPlaceholder` still name `JSONBody` and `Path` specifically, which the
-   response side no longer has an equivalent of. Worth doing under the lesson above: a hardcode that only the
-   framework's own instances exercise is invisible to a test suite made of them.
+6. ~~Generalise the built-in request bindings.~~ **Done** (2026-08-13). `@Path`, `@Query`, `@Header` and
+   `@JSONBody` carry `@RequestBinding` on their own declarations, so `readsRequestBody` and
+   `namesPathPlaceholder` are one lookup each and no generator code names a binding.
+
+   The tables of built-ins that briefly replaced the hardcodes are gone too — see hardcode 2 above. They
+   existed for a reason that had stopped being true, and the reason survived being written into three
+   places because nobody asked it the obvious question. **The question that dissolved it was "what breaks if
+   I delete this?", asked of the real build rather than of the unit tests.** A mutation that fails only the
+   tests calling a renderer with default arguments proves the default matters, not the product.
+
+**Nothing is left on this list.** What the seam still does not cover is a *streaming request body*:
+`RequestBound.bind` takes `body: [UInt8]?`, collected whole before any binding runs, so a binding cannot
+stream. `@RawRoute(.reader)` is the only way, and it gives up typed binding entirely. That is the mirror of
+what `@HTMLResponse` exposed on the response side, and it is what a real `multipart/form-data` binding
+needs — a file upload buffered into an array is the wrong shape, however well the seam accepts it.
 
 ## What this is not
 

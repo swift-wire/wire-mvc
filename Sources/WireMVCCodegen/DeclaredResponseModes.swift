@@ -127,20 +127,3 @@ private final class ResponseModeScanner: SyntaxVisitor {
         return DeclaredResponseMode(terminal: terminal, codec: codec, clientBody: clientBody)
     }
 }
-
-/// The response modes WireMVC itself ships, as a **floor** under the scan.
-///
-/// The same arrangement `routeBindingWrappers` is on the request side, and for the same reason: the
-/// `@Controller` macro expands in one file with no whole-graph view, so when the generator runs as a macro
-/// rather than as `WireMVCRouteGen` it has not parsed `Macros.swift` and cannot see the built-ins' own
-/// `@ResponseMode` attributes. Floor-plus-scan means a route annotated `@JSONResponse` behaves identically
-/// either way, while a mode declared anywhere else is picked up by the scan.
-///
-/// These entries and the attributes in `Macros.swift` must agree. They are checked against each other by
-/// `ResponseModeScanTests.builtInFloorMatchesTheDeclarations`, which parses `Macros.swift` and compares —
-/// so the duplication cannot drift silently.
-public let builtInResponseModes: [String: DeclaredResponseMode] = [
-    "JSONResponse": DeclaredResponseMode(terminal: .buffered, codec: "WireMVCJSONCodec"),
-    "HTMLResponse": DeclaredResponseMode(terminal: .streaming, codec: "WireMVCHTMLProducer", clientBody: .text),
-    "ResponseStatus": DeclaredResponseMode(terminal: .bodiless, codec: nil),
-]

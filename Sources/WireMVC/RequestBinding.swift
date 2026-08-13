@@ -154,6 +154,11 @@ public enum WireMVCBindingError: Error {
 
 /// `@Path name: T` — binds a `{name}` path template placeholder, converting via
 /// `LosslessStringConvertible`.
+///
+/// Carries `@RequestBinding` like any binding declared outside this package. WireMVC's own bindings being
+/// exempt is what let the generator keep naming them: `.path` here is the same obligation a user binding
+/// states, read the same way, so `namesPathPlaceholder` has one rule rather than a name test plus a lookup.
+@RequestBinding(.path)
 @propertyWrapper
 public struct Path<T> {
     public var wrappedValue: T
@@ -179,6 +184,10 @@ extension Path: RequestBound where T: LosslessStringConvertible {
 }
 
 /// `@Query name: T` — binds a query-string item, converting via `LosslessStringConvertible`.
+///
+/// The bare form: a binding with no obligation on the generator. Recognition needs no argument — a binding
+/// is recognised by *having* this attribute.
+@RequestBinding
 @propertyWrapper
 public struct Query<T> {
     public var wrappedValue: T
@@ -243,6 +252,7 @@ private func hexNibble(_ byte: UInt8) -> UInt8? {
 }
 
 /// `@Header name: T` — binds an HTTP header value, converting via `LosslessStringConvertible`.
+@RequestBinding
 @propertyWrapper
 public struct Header<T> {
     public var wrappedValue: T
@@ -269,6 +279,10 @@ extension Header: RequestBound where T: LosslessStringConvertible {
 
 /// `@JSONBody name: T` — decodes the JSON request body into `T`. Content-type rules: 415 on a
 /// contradictory `Content-Type`, lenient on a missing one, 422 on malformed JSON.
+///
+/// `.body`, so the terminal collects the request body for it and the typed client asks it for one — the
+/// same two consequences a `@FormBody` or `@YAMLBody` gets from the same word.
+@RequestBinding(.body)
 @propertyWrapper
 public struct JSONBody<T> {
     public var wrappedValue: T

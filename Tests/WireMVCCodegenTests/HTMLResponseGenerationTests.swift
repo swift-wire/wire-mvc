@@ -27,7 +27,9 @@ struct HTMLResponseGenerationTests {
             controller: controller(source),
             pathPrefix: "/pages",
             subjectAccessor: "_wireSubject",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         ).witness
     }
 
@@ -37,7 +39,9 @@ struct HTMLResponseGenerationTests {
             controller: controller(source),
             pathPrefix: "/pages",
             subjectAccessor: "_wireSubject",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         ).diagnostics.map(\.message.message)
     }
 
@@ -306,7 +310,12 @@ struct HTMLResponseClientTests {
             if let declaration = statement.item.asProtocol(DeclGroupSyntax.self) as? (any DeclSyntaxProtocol),
                 let controller = ControllerDeclaration(declaration)
             {
-                return renderControllerClient(controller: controller, pathPrefix: "/pages") ?? ""
+                return renderControllerClient(
+                    controller: controller,
+                    pathPrefix: "/pages",
+                    discoveredBindings: WireMVCBuiltIns.bindings,
+                    discoveredModes: WireMVCBuiltIns.modes
+                ) ?? ""
             }
         }
         fatalError("fixture has no controller")

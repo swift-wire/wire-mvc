@@ -37,8 +37,8 @@ public func renderRegisterWireRoutesWitness(
     globalErrorMappings: [ErrorMapping] = [],
     keyedScopeEntry: KeyedScopeEntry? = nil,
     doublesThreadedFactoryKeys: Set<String> = [],
-    discoveredBindings: [String: BindingObligations] = [:],
-    discoveredModes: [String: DeclaredResponseMode] = builtInResponseModes
+    discoveredBindings: [String: BindingObligations],
+    discoveredModes: [String: DeclaredResponseMode]
 ) -> (witness: String, diagnostics: [RouteCodegenDiagnostic]) {
     var generator = RouteBlockGenerator(
         subjectAccessor: subjectAccessor,
@@ -70,8 +70,8 @@ public func renderRouteContributorExtension(
     factoryKeys: Set<String>,
     globalErrorMappings: [ErrorMapping] = [],
     keyedScopeEntry: KeyedScopeEntry? = nil,
-    discoveredBindings: [String: BindingObligations] = [:],
-    discoveredModes: [String: DeclaredResponseMode] = builtInResponseModes
+    discoveredBindings: [String: BindingObligations],
+    discoveredModes: [String: DeclaredResponseMode]
 ) -> (source: String, diagnostics: [RouteCodegenDiagnostic]) {
     let rendered = renderRegisterWireRoutesWitness(
         access: controller.access,
@@ -106,8 +106,8 @@ public func renderVariantRouteContributorExtension(
     variantName: String,
     keyedScopeEntry: KeyedScopeEntry,
     doublesThreadedFactoryKeys: Set<String> = [],
-    discoveredBindings: [String: BindingObligations] = [:],
-    discoveredModes: [String: DeclaredResponseMode] = builtInResponseModes
+    discoveredBindings: [String: BindingObligations],
+    discoveredModes: [String: DeclaredResponseMode]
 ) -> (source: String, diagnostics: [RouteCodegenDiagnostic]) {
     let rendered = renderRegisterWireRoutesWitness(
         access: controller.access,
@@ -157,10 +157,11 @@ private func scanDeclaredExtensions(
     diagnostics: [LocatedRouteDiagnostic]
 ) {
     let trees = parsed.map(\.tree)
+    // No floor. WireMVC is a Wire-aware dependency of every consumer that can use its macros, so its own
+    // sources are among `trees` and its `@RequestBinding` / `@ResponseMode` declarations are read exactly
+    // like a user's. See the note in `BindingObligations.swift`.
     let bindings = scanRequestBindings(in: trees)
-    // Floor-plus-scan, as the bindings are: the built-ins are known without parsing WireMVC's own
-    // `Macros.swift`, and a declaration found in the sources wins, since it is the actual statement.
-    let modes = builtInResponseModes.merging(scanResponseModes(in: trees)) { _, scanned in scanned }
+    let modes = scanResponseModes(in: trees)
     let warnings = sendConformanceWarnings(bindings, in: parsed).map {
         LocatedRouteDiagnostic(
             message: $0.message,

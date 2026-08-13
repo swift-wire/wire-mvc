@@ -80,8 +80,8 @@ func controllerClientTypeName(_ controller: String) -> String { controller + "Cl
 func renderControllerClient(
     controller: ControllerDeclaration,
     pathPrefix: String,
-    discoveredBindings: [String: BindingObligations] = [:],
-    discoveredModes: [String: DeclaredResponseMode] = builtInResponseModes
+    discoveredBindings: [String: BindingObligations],
+    discoveredModes: [String: DeclaredResponseMode]
 ) -> String? {
     let routes = clientRoutes(
         of: controller,
@@ -301,8 +301,8 @@ private func queryEntries(_ parameters: [ClientRouteParameter]) -> String? {
 func clientRoutes(
     of controller: ControllerDeclaration,
     pathPrefix: String,
-    discoveredBindings: [String: BindingObligations] = [:],
-    discoveredModes: [String: DeclaredResponseMode] = builtInResponseModes
+    discoveredBindings: [String: BindingObligations],
+    discoveredModes: [String: DeclaredResponseMode]
 ) -> [ClientRoute] {
     controller.functions.compactMap { function in
         guard let verb = clientVerb(from: function.attributes) else { return nil }
@@ -333,8 +333,7 @@ func clientRoutes(
                     wireName: binding.name ?? name,
                     name: name,
                     type: parameter.type.trimmedDescription,
-                    suppliesBody: binding.wrapper == "JSONBody"
-                        || discoveredBindings[binding.wrapper, default: []].contains(.body)
+                    suppliesBody: discoveredBindings[binding.wrapper, default: []].contains(.body)
                 )
             )
         }
@@ -467,7 +466,7 @@ private func clientBinding(
 ) -> (wrapper: String, name: String?)? {
     for case let .attribute(attribute) in attributes {
         let wrapper = attribute.attributeName.trimmedDescription
-        if routeBindingWrappers.contains(wrapper) || discoveredBindings[wrapper] != nil {
+        if discoveredBindings[wrapper] != nil {
             return (wrapper, routeFirstStringLiteral(attribute.arguments))
         }
     }
