@@ -148,3 +148,138 @@ struct ResponseModeScanTests {
         #expect(declared == builtInResponseModes)
     }
 }
+
+/// Every mode kind, declared **outside** WireMVC, reaches both the witness and the client.
+///
+/// The counterpart of `noRouteIsSilentlyDropped`, which pins the same property for the built-ins. It exists
+/// because the first cut of the response seam failed it: a `.bodiless` mode declared outside WireMVC emitted
+/// an **empty witness and no diagnostic**, because the status read still named `@ResponseStatus` while every
+/// other decision had moved to a lookup. A route that disappears reports nothing, so only a test that asserts
+/// presence can catch it.
+@Suite("User-declared modes reach the generated code")
+struct UserDeclaredModeCoverageTests {
+
+    /// One mode of each terminal, none of them WireMVC's.
+    private static let source = """
+        @ResponseMode(.buffered, codec: "CSVCodec")
+        @attached(peer)
+        public macro CSVResponse() = #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
+        @ResponseMode(.buffered, codec: "CSVCodec")
+        @attached(peer)
+        public macro CSVResponse(status: HTTPResponse.Status) =
+            #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
+
+        @ResponseMode(.streaming, codec: "SSEProducer", client: .text)
+        @attached(peer)
+        public macro EventStream() = #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
+
+        @ResponseMode(.bodiless)
+        @attached(peer)
+        public macro NoContent(_ status: HTTPResponse.Status) =
+            #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
+
+        @ResponseMode(.bodiless)
+        @attached(peer)
+        public macro Accepted(status: HTTPResponse.Status) =
+            #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
+
+        @Singleton @Controller("/things")
+        struct Things {
+            @Get("/ledger") @CSVResponse
+            func ledger() async throws -> Ledger { Ledger() }
+            @Get("/events") @EventStream
+            func events() async throws -> EventSource { EventSource() }
+            @Delete("/{id}") @NoContent(.noContent)
+            func remove(@Path id: String) async throws {}
+            @Post("/queue") @Accepted(status: .accepted)
+            func queue() async throws {}
+        }
+        """
+
+    private static func generated() -> (witness: String, client: String, diagnostics: [String]) {
+        let parsed = Parser.parse(source: source)
+        let modes = builtInResponseModes.merging(scanResponseModes(in: [parsed])) { _, scanned in scanned }
+        for statement in parsed.statements {
+            guard let declaration = statement.item.as(StructDeclSyntax.self),
+                let controller = ControllerDeclaration(declaration)
+            else { continue }
+            let witness = renderRouteContributorExtension(
+                controller: controller,
+                pathPrefix: "/things",
+                factoryKeys: [],
+                discoveredModes: modes
+            )
+            let client = renderControllerClient(
+                controller: controller,
+                pathPrefix: "/things",
+                discoveredModes: modes
+            )
+            return (witness.source, client ?? "", witness.diagnostics.map { $0.message.message })
+        }
+        Issue.record("no controller in the fixture source")
+        return ("", "", [])
+    }
+
+    @Test("every user-declared mode registers a route")
+    func everyModeReachesTheWitness() {
+        let generated = Self.generated()
+        #expect(generated.diagnostics.isEmpty, "\(generated.diagnostics)")
+        for path in ["/things/ledger", "/things/events", "/things/{id}", "/things/queue"] {
+            #expect(generated.witness.contains(#"path: "\#(path)""#), "'\(path)' is missing from the witness")
+        }
+    }
+
+    @Test("every user-declared mode reaches the typed client")
+    func everyModeReachesTheClient() {
+        let client = Self.generated().client
+        for route in ["ledger", "events", "remove", "queue"] {
+            #expect(client.contains("func \(route)("), "route '\(route)' is missing from the client")
+        }
+    }
+
+    /// Each terminal emits its own shape, through the mode's own codec.
+    @Test("each terminal emits through the mode's declaration")
+    func eachTerminalEmitsItsOwnShape() {
+        let generated = Self.generated()
+        #expect(generated.witness.contains("try CSVCodec.encodeResponseBody(try await self._wireSubject.ledger()"))
+        #expect(generated.witness.contains("producer: SSEProducer(try await self._wireSubject.events())"))
+        #expect(generated.witness.contains("wireMVCOutcome = .status(.noContent"))
+        #expect(generated.witness.contains("wireMVCOutcome = .status(.accepted"), "the labelled spelling too")
+
+        #expect(generated.client.contains("try CSVCodec<Ledger>.decodeResponseBody("))
+        #expect(generated.client.contains("return wireMVCResponse.bodyText"), "a `.text` mode hands back markup")
+    }
+
+    /// A bodiless mode that names no status is **diagnosed**, not dropped. The route carrying nothing but a
+    /// status has to say which one, and the old behaviour was to emit nothing and report nothing.
+    @Test("a bodiless mode with no status is reported")
+    func bodilessWithoutStatusIsDiagnosed() {
+        let source = """
+            @ResponseMode(.bodiless)
+            @attached(peer)
+            public macro Done() = #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
+
+            @Singleton @Controller("/things")
+            struct Things {
+                @Delete("/{id}") @Done
+                func remove(@Path id: String) async throws {}
+            }
+            """
+        let parsed = Parser.parse(source: source)
+        let modes = builtInResponseModes.merging(scanResponseModes(in: [parsed])) { _, scanned in scanned }
+        for statement in parsed.statements {
+            guard let declaration = statement.item.as(StructDeclSyntax.self),
+                let controller = ControllerDeclaration(declaration)
+            else { continue }
+            let rendered = renderRouteContributorExtension(
+                controller: controller,
+                pathPrefix: "/things",
+                factoryKeys: [],
+                discoveredModes: modes
+            )
+            #expect(rendered.diagnostics.contains { $0.message.message.contains("names no status") })
+            return
+        }
+        Issue.record("no controller in the fixture source")
+    }
+}
