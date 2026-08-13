@@ -220,6 +220,48 @@ extension RouteBlockGenerator {
             """
     }
 
+    /// The terminal for a **streaming** route (`@HTMLResponse`).
+    ///
+    /// `wireMVCStreamingTerminal` discriminates inside its own `do`/`catch` and consumes the sender once,
+    /// afterwards — the same single-consume-site invariant the buffered terminal above maintains. Sending
+    /// inside the `do` does not compile (`'responseSender' consumed more than once`), so the shape is the
+    /// checker's choice rather than a preference.
+    ///
+    /// Everything that can fail *before* the head goes out — scope entry, body collection, parameter
+    /// binding, the handler call, the header drain — sits inside `building`, so all of it still maps
+    /// through the same `@ErrorResponse` chain a buffered route uses. Nothing after the first byte can be
+    /// mapped; that is inherent to streaming, and is why the producer is only reached once `building`
+    /// returns. The generated code never names the producer type: it is inferred from `building`.
+    func streamingClosureBody(
+        hasBinds: Bool,
+        hasBody: Bool,
+        binds: [String],
+        outcome: String,
+        scopeEntryPreamble: String,
+        scopeEntryPrologue: String,
+        errorMappings: [ErrorMapping]
+    ) -> String {
+        let bindsBlock = binds.isEmpty ? "" : binds.joined(separator: "\n") + "\n"
+        // `building` ends in the outcome. A single-expression body needs no `return`; a multi-statement one
+        // (a response tuple, a bind, a prologue) supplies its own — `streamingOutcome` writes it.
+        let body = "\(scopeEntryPrologue)\(bindsBlock)\(outcome)"
+        // A body route takes the collecting overload: `collectBody` consumes the reader, which a closure
+        // cannot do, and hoisting the read above the call would take it outside the mapped region.
+        let readerArgument = hasBody ? "\ncollectingBodyFrom: reader," : ""
+        let buildingParameter = hasBody ? " requestBody in" : ""
+        return """
+            \(scopeEntryPreamble)try await wireMVCStreamingTerminal(
+            responseSender: responseSender,\(readerArgument)
+            building: {\(buildingParameter)
+            \(body)
+            },
+            errorMapping: { wireMVCError in
+            \(errorChainExpression(mappings: errorMappings, includeBindingBuiltin: hasBinds))
+            }
+            )
+            """
+    }
+
     /// The name of whichever response annotation is written on this route, or `nil` if none is.
     private func responseAnnotationName(on attributes: AttributeListSyntax) -> String? {
         responseAnnotationNames(on: attributes).first

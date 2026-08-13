@@ -309,6 +309,9 @@ struct RouteBlockGenerator {
             )
         else { return nil }
         let hasBody = routeHasBody(function)
+        guard let streamsBody = validatedBodyObligations(of: function, hasBody: hasBody, mode: mode) else {
+            return nil
+        }
         guard let (binds, callArgs) = parameterBindings(of: function, path: path, hasBody: hasBody)
         else { return nil }
         let hasBinds = !binds.isEmpty
@@ -326,19 +329,8 @@ struct RouteBlockGenerator {
                 mode: mode
             )
         else { return nil }
-        // Route-scope `@ErrorResponse` is consulted before the controller's (route overrides controller);
-        // the Bootstrap's global tier is the default, consulted last (M5.5 Phase 3).
-        let errorMappings =
-            self.errorMappings(from: function.attributes, scopeLabel: "route")
-            + controllerErrorMappings
-            + globalErrorMappings
-        // A scoped controller's terminal always needs `request` — it is the scope-entry seed.
-        // A keyed variant witness needs `request` too — its preamble correlates the per-request doubles off
-        // it. Without this a parameterless route on a *seedless* @TestScopable controller binds `_` and the
-        // preamble references a name that is not in scope.
-        let requestName = (hasBinds || scopedSeedType != nil || keyedScopeEntry != nil) ? "request" : "_"
-        let parametersName = hasBinds ? "pathParameters" : "_"
-        let readerName = hasBody ? "reader" : "_"
+        let errorMappings = tieredErrorMappings(of: function, controller: controllerErrorMappings)
+        let names = registerClosureParameters(hasBinds: hasBinds, hasBody: hasBody, streamsBody: streamsBody)
         // When the fold threads doubles (a mock-consuming variant factory), the doubles correlation must bind
         // `wireMVCDoubles` *above* the fold — the fold's `create(doubles:)` reads it. So hoist the preamble to
         // the register-closure top and drop it from the terminal (which still enters scope off the hoisted
@@ -372,12 +364,12 @@ struct RouteBlockGenerator {
             path: path,
             middleware: middleware,
             hoistedPreamble: foldThreadsDoubles ? scopeEntryPreamble : "",
-            requestName: requestName,
+            requestName: names.request,
             // Only the fold-less path reads the registry off the register closure's context; through a fold
             // it comes off the final box, and the terminal has no use for the unwrapped context.
             contextName: middleware.isEmpty ? "requestContext" : "_",
-            parametersName: parametersName,
-            readerName: readerName,
+            parametersName: names.pathParameters,
+            readerName: names.reader,
             drainsResponseHeaders: drainsMiddleware,
             terminalBody: terminalBody
         )
@@ -558,6 +550,14 @@ extension RouteBlockGenerator {
         hasBody: Bool
     ) -> String {
         let type = param.type.trimmedDescription
+        // A streaming binding is handed the reader rather than a collected body, and there is no optional
+        // form: `bindOptional` exists because a *header* or *query* item may be absent, and a request body
+        // reader is always present — an empty body is a stream that ends immediately, not a missing one.
+        if streamsRequestBody(binding.wrapper) {
+            return "try await \(binding.wrapper)<\(type)>.bindStreaming("
+                + "name: \"\(name)\", request: request, pathParameters: pathParameters, reader: reader, "
+                + "coding: \(codingExpression))"
+        }
         let bodyArgument = hasBody ? "requestBody" : "nil"
         let args =
             "name: \"\(name)\", request: request, pathParameters: pathParameters, body: \(bodyArgument), "
@@ -610,46 +610,37 @@ extension RouteBlockGenerator {
             """
     }
 
-    /// The terminal for a **streaming** route (`@HTMLResponse`).
+    /// The `@ErrorResponse` tiers a route's terminal consults, innermost first: the route's own, then the
+    /// controller's, then the Bootstrap's global default (M5.5 Phase 3). Order *is* the rule — the fold
+    /// takes the first match — so this is one place rather than a concatenation repeated at each call.
+    fileprivate mutating func tieredErrorMappings(
+        of function: FunctionDeclSyntax,
+        controller: [ErrorMapping]
+    ) -> [ErrorMapping] {
+        errorMappings(from: function.attributes, scopeLabel: "route") + controller + globalErrorMappings
+    }
+
+    /// Which of the register closure's parameters this route actually binds, and which are `_`.
     ///
-    /// `wireMVCStreamingTerminal` discriminates inside its own `do`/`catch` and consumes the sender once,
-    /// afterwards — the same single-consume-site invariant the buffered terminal above maintains. Sending
-    /// inside the `do` does not compile (`'responseSender' consumed more than once`), so the shape is the
-    /// checker's choice rather than a preference.
+    /// Each is `_` unless something in the terminal names it, because an unused closure parameter is a
+    /// warning in generated code the consumer cannot silence.
     ///
-    /// Everything that can fail *before* the head goes out — scope entry, body collection, parameter
-    /// binding, the handler call, the header drain — sits inside `building`, so all of it still maps
-    /// through the same `@ErrorResponse` chain a buffered route uses. Nothing after the first byte can be
-    /// mapped; that is inherent to streaming, and is why the producer is only reached once `building`
-    /// returns. The generated code never names the producer type: it is inferred from `building`.
-    func streamingClosureBody(
+    /// - `request`: any binding needs it, and so does a scoped controller (it is the scope-entry seed) and a
+    ///   keyed variant witness (its preamble correlates per-request doubles off it). Without the last two, a
+    ///   parameterless route on a seedless `@TestScopable` controller binds `_` and the preamble then
+    ///   references a name that is not in scope.
+    /// - `reader`: a route that collects its body *or* streams it. The two tiers differ in what happens to
+    ///   the reader, not in whether it is named.
+    fileprivate func registerClosureParameters(
         hasBinds: Bool,
         hasBody: Bool,
-        binds: [String],
-        outcome: String,
-        scopeEntryPreamble: String,
-        scopeEntryPrologue: String,
-        errorMappings: [ErrorMapping]
-    ) -> String {
-        let bindsBlock = binds.isEmpty ? "" : binds.joined(separator: "\n") + "\n"
-        // `building` ends in the outcome. A single-expression body needs no `return`; a multi-statement one
-        // (a response tuple, a bind, a prologue) supplies its own — `streamingOutcome` writes it.
-        let body = "\(scopeEntryPrologue)\(bindsBlock)\(outcome)"
-        // A body route takes the collecting overload: `collectBody` consumes the reader, which a closure
-        // cannot do, and hoisting the read above the call would take it outside the mapped region.
-        let readerArgument = hasBody ? "\ncollectingBodyFrom: reader," : ""
-        let buildingParameter = hasBody ? " requestBody in" : ""
-        return """
-            \(scopeEntryPreamble)try await wireMVCStreamingTerminal(
-            responseSender: responseSender,\(readerArgument)
-            building: {\(buildingParameter)
-            \(body)
-            },
-            errorMapping: { wireMVCError in
-            \(errorChainExpression(mappings: errorMappings, includeBindingBuiltin: hasBinds))
-            }
-            )
-            """
+        streamsBody: Bool
+    ) -> (request: String, pathParameters: String, reader: String) {
+        (
+            request: (hasBinds || scopedSeedType != nil || keyedScopeEntry != nil) ? "request" : "_",
+            pathParameters: hasBinds ? "pathParameters" : "_",
+            reader: (hasBody || streamsBody) ? "reader" : "_"
+        )
     }
 
     fileprivate func routeHasBody(_ function: FunctionDeclSyntax) -> Bool {
@@ -660,6 +651,7 @@ extension RouteBlockGenerator {
         }
         return false
     }
+
 }
 
 // MARK: - Attribute reading
@@ -671,7 +663,8 @@ extension RouteBlockGenerator {
         let path: String?
     }
 
-    private struct Binding {
+    // Read by the streaming half in RequestStreamingCodegen.swift, so not private.
+    struct Binding {
         let wrapper: String  // e.g. "Path"
         let name: String?
     }
@@ -686,7 +679,8 @@ extension RouteBlockGenerator {
         return nil
     }
 
-    private func binding(from attributes: AttributeListSyntax) -> Binding? {
+    // Read by the streaming half in RequestStreamingCodegen.swift, so not private.
+    func binding(from attributes: AttributeListSyntax) -> Binding? {
         for case let .attribute(attr) in attributes {
             let name = attr.attributeName.trimmedDescription
             if discoveredBindings[name] != nil {
@@ -719,6 +713,7 @@ extension RouteBlockGenerator {
     func namesPathPlaceholder(_ wrapper: String) -> Bool {
         discoveredBindings[wrapper, default: []].contains(.path)
     }
+
 }
 
 /// The labels a route's **response tuple** return may carry, in canonical order. A handler returns either

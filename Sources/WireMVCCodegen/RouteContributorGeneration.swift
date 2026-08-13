@@ -582,7 +582,12 @@ private func sendConformanceWarnings(
     let bodySendable = scanConformances(to: "RequestBodySendable", in: trees)
     let sendable = scanConformances(to: "RequestSendable", in: trees)
     return discoveredBindings.sorted { $0.key < $1.key }.compactMap { binding, obligations in
-        let wantsBody = obligations.contains(.body)
+        // `.streamingBody` counts as supplying the body here. The two differ in how the *server* reads the
+        // request — collected versus walked — and not at all in what the client does: it holds whatever it
+        // is sending, so it buffers either way. A streaming binding therefore conforms to
+        // `RequestBodySendable` like a collecting one, and asking it for `RequestSendable` instead would be
+        // asking for a conformance that could not carry a body.
+        let wantsBody = !obligations.isDisjoint(with: [.body, .streamingBody])
         let required = wantsBody ? "RequestBodySendable" : "RequestSendable"
         let satisfied = wantsBody ? bodySendable.contains(binding) : sendable.contains(binding)
         guard !satisfied else { return nil }

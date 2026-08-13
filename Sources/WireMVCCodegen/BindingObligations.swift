@@ -24,6 +24,11 @@ public struct BindingObligations: OptionSet, Sendable {
     /// The binding names a `{name}` placeholder, so the route template must contain one
     /// (`RouteCodegen.swift:521`). Today only `@Path` is checked, by name; this is that check generalised.
     public static let path = BindingObligations(rawValue: 1 << 1)
+
+    /// The route streams the request body: the terminal hands this binding the reader rather than collecting
+    /// the body first. Mutually exclusive with ``body`` on one route, and at most one per route — the reader
+    /// is consumed, so a second is `'reader' consumed more than once` even if the codegen let it through.
+    public static let streamingBody = BindingObligations(rawValue: 1 << 2)
 }
 
 /// Every conformance to `name` declared in `files`, by conforming type — read off the inheritance clause of
@@ -145,6 +150,7 @@ private final class RequestBindingScanner: SyntaxVisitor {
             switch argument.expression.trimmedDescription.split(separator: ".").last {
             case "body": result.insert(.body)
             case "path": result.insert(.path)
+            case "streamingBody": result.insert(.streamingBody)
             default: break
             }
         }

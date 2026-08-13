@@ -56,6 +56,19 @@ let package = Package(
         //
         // Here rather than in wire-mvc proper because it is test support, not framework surface. No
         // `WireMVCBuildPlugin`: it declares no `@Controller`, so there is nothing to generate.
+        // A compiler probe for the *request* streaming tier. Same role `StreamingBodyProducers` played for
+        // the response one: find out what compiles before proposing a shape.
+        .target(
+            name: "RequestStreamingPrototype",
+            dependencies: [
+                .product(name: "WireMVC", package: "wire-mvc"),
+                .product(name: "HTTPAPIs", package: "swift-http-api-proposal"),
+                .product(name: "HTTPTypes", package: "swift-http-types"),
+                .product(name: "AsyncStreaming", package: "swift-async-algorithms"),
+                .product(name: "BasicContainers", package: "swift-collections"),
+            ],
+            swiftSettings: proposalSettings
+        ),
         .target(
             name: "StreamingBodyProducers",
             dependencies: [

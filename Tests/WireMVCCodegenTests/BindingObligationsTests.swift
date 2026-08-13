@@ -467,3 +467,90 @@ struct UserBindingIntegrationTests {
         #expect(diagnostics.contains { $0.contains("needs a binding annotation") })
     }
 }
+
+/// The streaming request tier's codegen: what the terminal does differently, and the three combinations it
+/// refuses. Driven through `generateRouteContributors`, so a binding declared in one file reaches a route in
+/// another exactly as the plugin delivers it.
+@Suite("Streaming request bindings")
+struct StreamingBindingTests {
+
+    private static let binding = """
+        @RequestBinding(.streamingBody)
+        public struct Upload<Value>: RequestBodyStreaming {}
+        """
+
+    private func generate(_ controller: String) -> (source: String, diagnostics: [String]) {
+        let result = generateRouteContributors(
+            files: WireMVCBuiltIns.declarationFiles + [
+                ("Upload.swift", Self.binding), ("Controller.swift", controller),
+            ]
+        )
+        return (result.source, result.diagnostics.filter { $0.message.severity == .error }.map { $0.message.message })
+    }
+
+    /// The whole behavioural difference: the reader goes to the binding, and no body is collected.
+    @Test("a streaming binding is handed the reader, and nothing is collected")
+    func handsOverTheReader() {
+        let (source, diagnostics) = generate(
+            """
+            @Singleton @Controller("/files")
+            public struct Files {
+                @Post @JSONResponse
+                public func receive(@Upload file: Receipt) async throws -> Receipt { file }
+            }
+            """
+        )
+        #expect(diagnostics.isEmpty, "\(diagnostics)")
+        #expect(source.contains("Upload<Receipt>.bindStreaming("))
+        #expect(source.contains("reader: reader"))
+        #expect(!source.contains("collectBody"), "a streamed route must not collect its body")
+        // The reader is bound in the register closure rather than discarded as `_`.
+        #expect(source.contains("pathParameters, reader, responseSender in"))
+    }
+
+    @Test("two streaming bindings on one route are refused")
+    func twoStreamsRefused() {
+        let (_, diagnostics) = generate(
+            """
+            @Singleton @Controller("/files")
+            public struct Files {
+                @Post @JSONResponse
+                public func receive(@Upload a: Receipt, @Upload b: Receipt) async throws -> Receipt { a }
+            }
+            """
+        )
+        #expect(diagnostics.contains { $0.contains("stream the request body") }, "\(diagnostics)")
+    }
+
+    /// Streaming and collecting on one route cannot both happen — collecting consumes the reader.
+    @Test("streaming beside a collected body is refused")
+    func streamBesideCollectRefused() {
+        let (_, diagnostics) = generate(
+            """
+            @Singleton @Controller("/files")
+            public struct Files {
+                @Post @JSONResponse
+                public func receive(@Upload a: Receipt, @JSONBody b: Receipt) async throws -> Receipt { a }
+            }
+            """
+        )
+        #expect(diagnostics.contains { $0.contains("both streams and collects") }, "\(diagnostics)")
+    }
+
+    /// A streaming request on a streaming *response* route: the streaming terminal takes the reader itself,
+    /// so there is none left to hand the binding. Diagnosed rather than emitted and left to fail as
+    /// `'reader' consumed more than once` in generated code.
+    @Test("streaming a request body on a streaming response route is refused")
+    func streamingBothWaysRefused() {
+        let (_, diagnostics) = generate(
+            """
+            @Singleton @Controller("/files")
+            public struct Files {
+                @Post @HTMLResponse
+                public func receive(@Upload a: Receipt) async throws -> some HTML { Page() }
+            }
+            """
+        )
+        #expect(diagnostics.contains { $0.contains("streaming-response route") }, "\(diagnostics)")
+    }
+}

@@ -333,7 +333,12 @@ func clientRoutes(
                     wireName: binding.name ?? name,
                     name: name,
                     type: parameter.type.trimmedDescription,
-                    suppliesBody: discoveredBindings[binding.wrapper, default: []].contains(.body)
+                    // `.streamingBody` supplies the body here too. The two tiers differ only in how the
+                    // *server* reads the request; a client holds what it is sending either way, so both go
+                    // through `sendBody`. Checking `.body` alone generated a `send` call on a streaming
+                    // binding, which has no such member.
+                    suppliesBody: !discoveredBindings[binding.wrapper, default: []]
+                        .isDisjoint(with: [.body, .streamingBody])
                 )
             )
         }
