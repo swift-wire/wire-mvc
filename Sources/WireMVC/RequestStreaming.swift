@@ -43,6 +43,10 @@ public protocol RequestBodyStreaming {
     /// framework enforces: a second call is `'reader' consumed more than once` from the move-only checker.
     /// The codegen diagnoses the same thing earlier only so the message names the route rather than a line
     /// of generated code.
+    ///
+    /// The negative — that two calls really do fail — was checked by compiling it during development and is
+    /// **not** machine-verified: this repo has no compile-failure harness, and asserting otherwise would be
+    /// the same trap as a commented-out line that looks like a test.
     static func bindStreaming<Reader: AsyncReader & ~Copyable>(
         name: String,
         request: HTTPRequest,
