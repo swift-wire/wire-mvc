@@ -8,17 +8,6 @@ public import SwiftSyntax
 // (`WireMVCBuildPlugin.swift:33`, and the flat `--module`-grouped source list in `WireMVCRouteGen/main.swift`),
 // so the declaration is already in front of it.
 //
-// **There is no table of built-ins.** `@Path`, `@Query`, `@Header` and `@JSONBody` carry `@RequestBinding`
-// on their own declarations and are found by this scan like anyone else's, because WireMVC is a Wire-aware
-// dependency of every consumer that can use its macros — the plugin re-parses it, so its declarations are
-// among the sources scanned. A target that does *not* depend on the WireMVC product directly cannot use
-// `@Controller` at all: WireGen never sees the adapter directives and the build fails on a missing
-// contributor proxy, loudly, before any of this is reached.
-//
-// A hardcoded floor stood here until 2026-08-13, justified by a `@Controller` macro expansion path that no
-// longer exists — the macro expands to nothing and route generation is entirely the plugin's. Removing it
-// took nothing with it: the plugin path was already reading the real declarations.
-//
 // What the declaration must state is only what a syntactic generator cannot infer from a function body it
 // never reads. That is two things — see `Documentation/Notes/ExtensibleBindingsAndResponses.md`. Where the
 // value goes on the wire is *not* among them: the reverse bind places it, in code the compiler checks.
