@@ -38,7 +38,9 @@ struct RouteContributorGenerationTests {
             controller: controller(source),
             pathPrefix: pathPrefix,
             subjectAccessor: subjectAccessor,
-            factoryKeys: factoryKeys
+            factoryKeys: factoryKeys,
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         ).witness
     }
 
@@ -64,7 +66,9 @@ struct RouteContributorGenerationTests {
         let rendered = renderRouteContributorExtension(
             controller: controller(source),
             pathPrefix: "/todos",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         // Per route, not per file: asserting only that both expressions appear somewhere would pass with
         // the two swapped, or with both on one route.
@@ -99,7 +103,9 @@ struct RouteContributorGenerationTests {
                 """
             ),
             pathPrefix: "/todos",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(rendered.source.contains("coding: self._wireWireMVCCoding"))
         // The by-type field, not the keyed one: a key reference would sanitise its dots to underscores.
@@ -127,7 +133,9 @@ struct RouteContributorGenerationTests {
                 """
             ),
             pathPrefix: "/todos",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(
             rendered.diagnostics.contains {
@@ -153,7 +161,9 @@ struct RouteContributorGenerationTests {
                 """
             ),
             pathPrefix: "/todos",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(rendered.diagnostics.isEmpty)
         #expect(rendered.source.contains("coding: self._wireWireMVCCoding_reports"))
@@ -173,7 +183,9 @@ struct RouteContributorGenerationTests {
         let rendered = renderRouteContributorExtension(
             controller: controller(source),
             pathPrefix: "/todos",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(rendered.source.contains("coding: wireMVCAppCoding"))
         #expect(!rendered.source.contains("_wireWireMVCCoding"))
@@ -193,7 +205,9 @@ struct RouteContributorGenerationTests {
         let rendered = renderRouteContributorExtension(
             controller: controller(source),
             pathPrefix: "/todos",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(rendered.diagnostics.isEmpty)
         #expect(
@@ -576,7 +590,7 @@ struct RouteContributorGenerationTests {
                 func createServer() throws -> NIOHTTPServer { fatalError() }
             }
             """
-        let rendered = generateRouteContributors(files: [("App.swift", source)])
+        let rendered = generateRouteContributors(files: WireMVCBuiltIns.declarationFiles + [("App.swift", source)])
         #expect(rendered.diagnostics.isEmpty)
         #expect(rendered.source.contains("struct _WireMVCBootstrapEntry {"))
         #expect(rendered.source.contains("let bootstrap = graph.appBootstrap"))
@@ -600,7 +614,7 @@ struct RouteContributorGenerationTests {
             }
             """
         let rendered = generateRouteContributors(
-            files: [("App.swift", source)],
+            files: WireMVCBuiltIns.declarationFiles + [("App.swift", source)],
             testEntry: true,
             extraImports: ["WireMVCBootstrapExample"]
         )
@@ -644,7 +658,7 @@ struct RouteContributorGenerationTests {
             }
             """
         let rendered = generateRouteContributors(
-            files: [("Bootstrap.swift", bootstrap), ("Things.swift", controller)]
+            files: WireMVCBuiltIns.declarationFiles + [("Bootstrap.swift", bootstrap), ("Things.swift", controller)]
         )
         #expect(rendered.diagnostics.isEmpty)
         // The route has no local map, but the Bootstrap's global tier folds into its `catch`, ahead of
@@ -670,7 +684,7 @@ struct RouteContributorGenerationTests {
                 ) async throws where Sender.Writer: ~Copyable { fatalError() }
             }
             """
-        let rendered = generateRouteContributors(files: [("App.swift", source)])
+        let rendered = generateRouteContributors(files: WireMVCBuiltIns.declarationFiles + [("App.swift", source)])
         #expect(rendered.diagnostics.isEmpty)
         #expect(rendered.source.contains("builder.registerNotFound"))
         #expect(
@@ -694,7 +708,7 @@ struct RouteContributorGenerationTests {
                 func handleNotFound() -> Greeting { fatalError() }
             }
             """
-        let rendered = generateRouteContributors(files: [("App.swift", source)])
+        let rendered = generateRouteContributors(files: WireMVCBuiltIns.declarationFiles + [("App.swift", source)])
         #expect(
             rendered.diagnostics.contains { if case .notFoundNotRaw = $0.message { return true } else { return false } }
         )
@@ -718,7 +732,9 @@ struct RouteContributorGenerationTests {
         let rendered = renderRouteContributorExtension(
             controller: controller(source),
             pathPrefix: "/sessions",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(rendered.diagnostics.isEmpty)
         #expect(
@@ -747,7 +763,9 @@ struct RouteContributorGenerationTests {
         let rendered = renderRouteContributorExtension(
             controller: controller(source),
             pathPrefix: "/x",
-            factoryKeys: ["Keys.session"]
+            factoryKeys: ["Keys.session"],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(
             rendered.source == """
@@ -811,7 +829,9 @@ struct RouteContributorGenerationTests {
         let rendered = renderRouteContributorExtension(
             controller: controller(source),
             pathPrefix: "/search",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(rendered.diagnostics.isEmpty)
         #expect(
@@ -877,7 +897,9 @@ struct RouteContributorGenerationTests {
         let rendered = renderRouteContributorExtension(
             controller: controller(source),
             pathPrefix: "/users",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(rendered.diagnostics.isEmpty)
         // No catch-all → the mapping chain, ending in the built-in 500 terminal (never a rethrow).
@@ -911,7 +933,9 @@ struct RouteContributorGenerationTests {
         let rendered = renderRouteContributorExtension(
             controller: controller(source),
             pathPrefix: "/users",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(rendered.diagnostics.isEmpty)
         let generated = rendered.source
@@ -942,7 +966,9 @@ struct RouteContributorGenerationTests {
         let rendered = renderRouteContributorExtension(
             controller: controller(source),
             pathPrefix: "/users",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(rendered.diagnostics.isEmpty)
         #expect(rendered.source.contains("wireMVCRespond(to: wireMVCError, ({ (e: ValidationError) in"))
@@ -965,7 +991,9 @@ struct RouteContributorGenerationTests {
         let rendered = renderRouteContributorExtension(
             controller: controller(source),
             pathPrefix: "/users",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(rendered.diagnostics.isEmpty)
         #expect(rendered.source.contains("wireMVCRespondAny(to: wireMVCError, ({ (e: Swift.Error) in"))
@@ -991,7 +1019,9 @@ struct RouteContributorGenerationTests {
         let rendered = renderRouteContributorExtension(
             controller: controller(source),
             pathPrefix: "/users",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(rendered.diagnostics.isEmpty)
         #expect(rendered.source.contains("do {"))
@@ -1018,7 +1048,9 @@ struct RouteContributorGenerationTests {
         let rendered = renderRouteContributorExtension(
             controller: controller(source),
             pathPrefix: "/me",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(rendered.diagnostics.isEmpty)
         let generated = rendered.source
@@ -1044,7 +1076,9 @@ struct RouteContributorGenerationTests {
         let rendered = renderRouteContributorExtension(
             controller: controller(source),
             pathPrefix: "/users",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(
             rendered.diagnostics.contains {
@@ -1065,7 +1099,9 @@ struct RouteContributorGenerationTests {
         let rendered = renderRouteContributorExtension(
             controller: controller(source),
             pathPrefix: "/users",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(
             rendered.diagnostics.contains {
@@ -1087,7 +1123,9 @@ struct RouteContributorGenerationTests {
         let rendered = renderRouteContributorExtension(
             controller: controller(source),
             pathPrefix: "/users",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(
             rendered.diagnostics.contains {
@@ -1109,7 +1147,9 @@ struct RouteContributorGenerationTests {
         let rendered = renderRouteContributorExtension(
             controller: controller(source),
             pathPrefix: "/users",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(
             rendered.diagnostics.contains {
@@ -1137,7 +1177,9 @@ struct RouteContributorGenerationTests {
         let rendered = renderRouteContributorExtension(
             controller: controller(source),
             pathPrefix: "/x",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(rendered.source.contains("self._wireControllerGate"))
         #expect(rendered.source.contains("self._wireRouteGate"))
@@ -1164,7 +1206,9 @@ struct RouteContributorGenerationTests {
         let rendered = renderRouteContributorExtension(
             controller: controller(source),
             pathPrefix: "/x",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(rendered.source.contains("self._wireGates_primary"))
         #expect(!rendered.source.contains("_wireFactory_"))
@@ -1186,7 +1230,9 @@ struct RouteContributorGenerationTests {
         let rendered = renderRouteContributorExtension(
             controller: controller(source),
             pathPrefix: "/users",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(rendered.diagnostics.isEmpty)
         #expect(
@@ -1219,7 +1265,9 @@ struct RouteContributorGenerationTests {
         let rendered = renderRouteContributorExtension(
             controller: controller(source),
             pathPrefix: "/uploads",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(rendered.diagnostics.isEmpty)
         #expect(
@@ -1247,7 +1295,9 @@ struct RouteContributorGenerationTests {
         let rendered = renderRouteContributorExtension(
             controller: controller(source),
             pathPrefix: "/uploads",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(rendered.diagnostics.isEmpty)
         // request is used (not `_`) since a role names it; the call binds both by their labels.
@@ -1275,7 +1325,9 @@ struct RouteContributorGenerationTests {
         let rendered = renderRouteContributorExtension(
             controller: controller(source),
             pathPrefix: "/uploads",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(
             rendered.diagnostics.contains {
@@ -1324,7 +1376,9 @@ struct RouteContributorGenerationTests {
                 """
             ),
             pathPrefix: "",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(rendered.diagnostics.count == 1)
         #expect(
@@ -1346,7 +1400,9 @@ struct RouteContributorGenerationTests {
                 """
             ),
             pathPrefix: "/users",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(
             rendered.diagnostics.first?.message.message
@@ -1368,7 +1424,9 @@ struct RouteContributorGenerationTests {
                 """
             ),
             pathPrefix: "",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(
             rendered.diagnostics.first?.message.message
@@ -1379,24 +1437,26 @@ struct RouteContributorGenerationTests {
     // MARK: - File-level generation (the tool's core)
 
     @Test func generatesSortedExtensionsWithImports() {
-        let result = generateRouteContributors(files: [
-            (
-                "Controllers.swift",
-                """
-                import Domain
+        let result = generateRouteContributors(
+            files: WireMVCBuiltIns.declarationFiles + [
+                (
+                    "Controllers.swift",
+                    """
+                    import Domain
 
-                @Controller("/b")
-                struct Beta {
-                    @Get @JSONResponse func g() -> Int { 0 }
-                }
+                    @Controller("/b")
+                    struct Beta {
+                        @Get @JSONResponse func g() -> Int { 0 }
+                    }
 
-                @Controller("/a")
-                struct Alpha {
-                    @Get @JSONResponse func g() -> Int { 0 }
-                }
-                """
-            )
-        ])
+                    @Controller("/a")
+                    struct Alpha {
+                        @Get @JSONResponse func g() -> Int { 0 }
+                    }
+                    """
+                )
+            ]
+        )
         #expect(result.diagnostics.isEmpty)
         // Header + propagated import + WireMVC import.
         #expect(result.source.hasPrefix("// Generated by WireMVCRouteGen — do not edit."))
@@ -1413,26 +1473,28 @@ struct RouteContributorGenerationTests {
     /// factory keys across every input source before folding any witness, so the cross-file `@Middleware`
     /// still classifies as a factory (its `create` call), not a graph binding.
     @Test func factoryKeyDeclaredInAnotherFileIsClassifiedAsFactory() {
-        let result = generateRouteContributors(files: [
-            (
-                "Middleware.swift",
-                """
-                @Factory(Keys.session)
-                @MiddlewareFactory
-                struct SessionMiddleware {}
-                """
-            ),
-            (
-                "Controller.swift",
-                """
-                @Controller("/x")
-                @Middleware(Keys.session)
-                struct C {
-                    @Get @ResponseStatus(.noContent) func f() async throws {}
-                }
-                """
-            ),
-        ])
+        let result = generateRouteContributors(
+            files: WireMVCBuiltIns.declarationFiles + [
+                (
+                    "Middleware.swift",
+                    """
+                    @Factory(Keys.session)
+                    @MiddlewareFactory
+                    struct SessionMiddleware {}
+                    """
+                ),
+                (
+                    "Controller.swift",
+                    """
+                    @Controller("/x")
+                    @Middleware(Keys.session)
+                    struct C {
+                        @Get @ResponseStatus(.noContent) func f() async throws {}
+                    }
+                    """
+                ),
+            ]
+        )
         #expect(result.diagnostics.isEmpty)
         #expect(
             result.source.contains(
@@ -1442,26 +1504,30 @@ struct RouteContributorGenerationTests {
     }
 
     @Test func fileWithNoControllersEmitsHeaderOnly() {
-        let result = generateRouteContributors(files: [("Empty.swift", "struct NotAController {}")])
+        let result = generateRouteContributors(
+            files: WireMVCBuiltIns.declarationFiles + [("Empty.swift", "struct NotAController {}")]
+        )
         #expect(result.diagnostics.isEmpty)
         #expect(!result.source.contains("extension"))
         #expect(result.source.contains("import WireMVC"))
     }
 
     @Test func fileLevelDiagnosticCarriesLocation() {
-        let result = generateRouteContributors(files: [
-            (
-                "Bad.swift",
-                """
-                @Controller
-                struct C {
-                    @Get("/x")
-                    @JSONResponse
-                    func f(id: String) -> Int { 0 }
-                }
-                """
-            )
-        ])
+        let result = generateRouteContributors(
+            files: WireMVCBuiltIns.declarationFiles + [
+                (
+                    "Bad.swift",
+                    """
+                    @Controller
+                    struct C {
+                        @Get("/x")
+                        @JSONResponse
+                        func f(id: String) -> Int { 0 }
+                    }
+                    """
+                )
+            ]
+        )
         #expect(result.diagnostics.count == 1)
         #expect(result.diagnostics.first?.location.line == 5)
     }
@@ -1525,7 +1591,10 @@ struct RouteContributorGenerationTests {
     /// A `TestingKey` `@BindType`ing a slot a `@Scoped(seed:)` controller injects, in a test consumer, makes
     /// that controller's route dispatch doubles-aware and emits the keyed factory + statics + `withClient(supplying:)`.
     @Test func keyedHarnessEmitsDoublesAwareDispatchAndFactory() {
-        let rendered = generateRouteContributors(files: [("App.swift", keyedHarnessFixture)], testEntry: true)
+        let rendered = generateRouteContributors(
+            files: WireMVCBuiltIns.declarationFiles + [("App.swift", keyedHarnessFixture)],
+            testEntry: true
+        )
         #expect(rendered.diagnostics.isEmpty)
         // The keyed dispatch lives on a variant witness emitted on the variant proxy type: correlate the
         // request's doubles from the per-key store (else 500), then enter request scope via the variant proxy
@@ -1591,7 +1660,10 @@ struct RouteContributorGenerationTests {
     /// The same fixture as a program consumer (`testEntry: false`) — no keyed harness is discovered, so the
     /// scoped controller's dispatch is the byte-for-byte production scope entry, with no doubles-aware branch.
     @Test func productionDispatchIsUnchangedWithoutTestEntry() {
-        let rendered = generateRouteContributors(files: [("App.swift", keyedHarnessFixture)], testEntry: false)
+        let rendered = generateRouteContributors(
+            files: WireMVCBuiltIns.declarationFiles + [("App.swift", keyedHarnessFixture)],
+            testEntry: false
+        )
         #expect(
             rendered.source.contains(
                 "let (wireMVCController, wireMVCScopeTeardown) = try await self._wireEnterScope(request)"
@@ -1608,7 +1680,7 @@ struct RouteContributorGenerationTests {
     /// some other module's key would be served this variant silently.
     @Test func keyedFactoryAssertsTheKeyItWasBuiltFor() {
         let rendered = generateRouteContributors(
-            files: [("App.swift", keyedHarnessFixture)],
+            files: WireMVCBuiltIns.declarationFiles + [("App.swift", keyedHarnessFixture)],
             testEntry: true,
             sourceModules: ["App.swift": "MyTests"]
         )
@@ -1622,14 +1694,20 @@ struct RouteContributorGenerationTests {
     /// The keyed factory names `TestingKey` in its signature, and `WireTesting` vends it rather than `Wire`
     /// — so a keyed harness must import it. A keyless test consumer must not, since it declares no variant.
     @Test func keyedHarnessImportsWireTestingAndKeylessDoesNot() {
-        let keyed = generateRouteContributors(files: [("App.swift", keyedHarnessFixture)], testEntry: true)
+        let keyed = generateRouteContributors(
+            files: WireMVCBuiltIns.declarationFiles + [("App.swift", keyedHarnessFixture)],
+            testEntry: true
+        )
         #expect(keyed.source.contains("import WireTesting"))
 
         // Drop the whole `enum Binds { … }` block — renaming it would leave the `TestingKey()` inside.
         let withoutKey = String(
             keyedHarnessFixture.prefix(upTo: keyedHarnessFixture.range(of: "enum Binds {")!.lowerBound)
         )
-        let keyless = generateRouteContributors(files: [("App.swift", withoutKey)], testEntry: true)
+        let keyless = generateRouteContributors(
+            files: WireMVCBuiltIns.declarationFiles + [("App.swift", withoutKey)],
+            testEntry: true
+        )
         #expect(!keyless.source.contains("TestingKey"))
         #expect(!keyless.source.contains("import WireTesting"))
     }
@@ -1638,7 +1716,10 @@ struct RouteContributorGenerationTests {
     /// would be guessing — and a wrong guess fails every suite that passes the *right* key. Skipping is the
     /// safe direction: it restores the prior behaviour rather than breaking a correct call.
     @Test func noKeyIdentityAssertionWithoutModuleAttribution() {
-        let rendered = generateRouteContributors(files: [("App.swift", keyedHarnessFixture)], testEntry: true)
+        let rendered = generateRouteContributors(
+            files: WireMVCBuiltIns.declarationFiles + [("App.swift", keyedHarnessFixture)],
+            testEntry: true
+        )
         #expect(rendered.diagnostics.isEmpty)
         // The keyed factory is still emitted — only the assertion is absent.
         #expect(rendered.source.contains("_ key: TestingKey,"))
@@ -1675,7 +1756,10 @@ struct RouteContributorGenerationTests {
                 static let mock = TestingKey()
             }
             """
-        let rendered = generateRouteContributors(files: [("App.swift", source)], testEntry: true)
+        let rendered = generateRouteContributors(
+            files: WireMVCBuiltIns.declarationFiles + [("App.swift", source)],
+            testEntry: true
+        )
         #expect(rendered.diagnostics.isEmpty)
         // The mock-ignoring seed-scoped `PingController` is keyed: a variant witness on its variant proxy type,
         // and the factory hand-registers the variant proxy the facade swift-wire emits for every seed-scoped subject.
@@ -1710,7 +1794,10 @@ struct RouteContributorGenerationTests {
                 enum Binds {
                 """
         )
-        let rendered = generateRouteContributors(files: [("App.swift", source)], testEntry: true)
+        let rendered = generateRouteContributors(
+            files: WireMVCBuiltIns.declarationFiles + [("App.swift", source)],
+            testEntry: true
+        )
         let messages = rendered.diagnostics.map(\.message.message)
         #expect(messages.count == 1)
         #expect(messages[0].contains("OtherBinds.mock") || messages[0].contains("Binds.mock"))
@@ -1730,7 +1817,7 @@ struct RouteContributorGenerationTests {
             }
             """
         let rendered = generateRouteContributors(
-            files: [("Lib.swift", libSource), ("App.swift", keyedHarnessFixture)],
+            files: WireMVCBuiltIns.declarationFiles + [("Lib.swift", libSource), ("App.swift", keyedHarnessFixture)],
             testEntry: true,
             sourceModules: ["Lib.swift": "SharedLib", "App.swift": "MyTests"],
             consumerModule: "MyTests"
@@ -1752,7 +1839,7 @@ struct RouteContributorGenerationTests {
             }
             """
         let rendered = generateRouteContributors(
-            files: [("Lib.swift", libSource), ("App.swift", keyedHarnessFixture)],
+            files: WireMVCBuiltIns.declarationFiles + [("Lib.swift", libSource), ("App.swift", keyedHarnessFixture)],
             testEntry: true
         )
         let messages = rendered.diagnostics.map(\.message.message)
@@ -1767,7 +1854,12 @@ struct RouteContributorGenerationTests {
             @WireMVCBootstrap
             struct AppBootstrap {}
             """
-        #expect(generateRouteContributors(files: [("App.swift", source)], testEntry: true).diagnostics.isEmpty)
+        #expect(
+            generateRouteContributors(
+                files: WireMVCBuiltIns.declarationFiles + [("App.swift", source)],
+                testEntry: true
+            ).diagnostics.isEmpty
+        )
     }
 
     private let keyedHarnessFixture = """
@@ -1828,7 +1920,10 @@ struct RouteContributorGenerationTests {
     /// swift-wire re-emits it as a variant factory whose mock rides the call. The production witness's fold is
     /// box-role-only, and the doubles correlation is hoisted above the fold so `wireMVCDoubles` is in scope.
     @Test func mockConsumingFactoryFoldThreadsDoublesToCreate() {
-        let rendered = generateRouteContributors(files: [("App.swift", mockConsumingFactoryFixture)], testEntry: true)
+        let rendered = generateRouteContributors(
+            files: WireMVCBuiltIns.declarationFiles + [("App.swift", mockConsumingFactoryFixture)],
+            testEntry: true
+        )
         #expect(rendered.diagnostics.isEmpty)
         // The variant witness threads the per-request doubles ahead of the box-role metatypes.
         #expect(
@@ -1898,7 +1993,10 @@ struct RouteContributorGenerationTests {
     /// spelled as the generic param `Repository`, matched via its constraint `TodoRepository`. The variant fold
     /// threads doubles to its `create`, agreeing with swift-wire's constraint-based variant factory.
     @Test func genericMockConsumingFactoryFoldThreadsDoubles() {
-        let rendered = generateRouteContributors(files: [("App.swift", phaseCFixture)], testEntry: true)
+        let rendered = generateRouteContributors(
+            files: WireMVCBuiltIns.declarationFiles + [("App.swift", phaseCFixture)],
+            testEntry: true
+        )
         #expect(rendered.diagnostics.isEmpty)
         #expect(
             rendered.source.contains(
@@ -1912,7 +2010,10 @@ struct RouteContributorGenerationTests {
     /// `wireMVCController` after `_wireEnterScope(wireMVCDoubles)`, not the held `_wireSubject` (which a seedless
     /// variant proxy doesn't have). The production witness keeps `self._wireSubject`.
     @Test func rawRouteOnVariantWitnessEntersSeedlessScope() {
-        let rendered = generateRouteContributors(files: [("App.swift", phaseCFixture)], testEntry: true)
+        let rendered = generateRouteContributors(
+            files: WireMVCBuiltIns.declarationFiles + [("App.swift", phaseCFixture)],
+            testEntry: true
+        )
         #expect(rendered.diagnostics.isEmpty)
         #expect(
             rendered.source.contains(
@@ -1936,7 +2037,10 @@ struct RouteContributorGenerationTests {
     ///
     /// Asserted as an absence so the construction can't quietly return.
     @Test func noDoublesStructIsConstructedByCodegen() {
-        let rendered = generateRouteContributors(files: [("App.swift", phaseCFixture)], testEntry: true)
+        let rendered = generateRouteContributors(
+            files: WireMVCBuiltIns.declarationFiles + [("App.swift", phaseCFixture)],
+            testEntry: true
+        )
         #expect(rendered.diagnostics.isEmpty)
         // No key-wide construction, in either ordering.
         #expect(!rendered.source.contains("_Binds_mockDoubles("))

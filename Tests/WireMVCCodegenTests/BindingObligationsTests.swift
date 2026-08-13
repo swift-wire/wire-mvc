@@ -41,21 +41,35 @@ struct BindingObligationsTests {
         #expect(found["FormBody"] == .body)
     }
 
-    /// `builtInRequestBindings` restates what `RequestBinding.swift` declares, because the `@Controller`
-    /// macro path has not parsed that file. Two statements of one fact drift, so this reads the real file
-    /// and compares — the same guard `ResponseModeScanTests` puts on the response side's floor.
-    @Test("the built-in floor matches the declarations in RequestBinding.swift")
-    func builtInFloorMatchesTheDeclarations() throws {
-        let declarations = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()  // WireMVCCodegenTests
-            .deletingLastPathComponent()  // Tests
-            .deletingLastPathComponent()  // package root
-            .appendingPathComponent("Sources/WireMVC/RequestBinding.swift")
-        let declared = scanRequestBindings(
-            in: [Parser.parse(source: try String(contentsOf: declarations, encoding: .utf8))]
+    /// WireMVC's own bindings are found by this scan, not by a table.
+    ///
+    /// The invariant that replaced the hardcoded floor: `@Path`, `@Query`, `@Header` and `@JSONBody` state
+    /// their obligations on their own declarations, and a real build reads them because WireMVC is a
+    /// Wire-aware dependency of every consumer. If the attributes were ever dropped, every route binding in
+    /// every consumer would stop being recognised — so this asserts the source of truth is annotated, which
+    /// is the whole of what the floor used to guarantee, without restating it.
+    @Test("WireMVC's own bindings declare their obligations")
+    func theBuiltInsAreAnnotated() {
+        #expect(WireMVCBuiltIns.bindings["Path"] == .path)
+        #expect(WireMVCBuiltIns.bindings["JSONBody"] == .body)
+        #expect(WireMVCBuiltIns.bindings["Query"] == [])
+        #expect(WireMVCBuiltIns.bindings["Header"] == [])
+        #expect(WireMVCBuiltIns.bindings.count == 4, "\(WireMVCBuiltIns.bindings.keys.sorted())")
+    }
+
+    /// The same for the response side, so both live next to the tests that depend on them.
+    @Test("WireMVC's own response modes declare their pair")
+    func theBuiltInModesAreAnnotated() {
+        #expect(
+            WireMVCBuiltIns.modes["JSONResponse"]
+                == DeclaredResponseMode(terminal: .buffered, codec: "WireMVCJSONCodec")
         )
-        #expect(!declared.isEmpty, "the declarations are annotated at all")
-        #expect(declared == builtInRequestBindings)
+        #expect(
+            WireMVCBuiltIns.modes["HTMLResponse"]
+                == DeclaredResponseMode(terminal: .streaming, codec: "WireMVCHTMLProducer", clientBody: .text)
+        )
+        #expect(WireMVCBuiltIns.modes["ResponseStatus"] == DeclaredResponseMode(terminal: .bodiless, codec: nil))
+        #expect(WireMVCBuiltIns.modes.count == 3, "\(WireMVCBuiltIns.modes.keys.sorted())")
     }
 
     @Test("the obligations are read, not guessed")
@@ -198,7 +212,8 @@ struct UserBindingIntegrationTests {
 
     private func generate(_ sources: String...) -> (source: String, diagnostics: [String]) {
         let result = generateRouteContributors(
-            files: sources.enumerated().map { (path: "File\($0.offset).swift", source: $0.element) },
+            files: WireMVCBuiltIns.declarationFiles
+                + sources.enumerated().map { (path: "File\($0.offset).swift", source: $0.element) },
             testEntry: false,
             extraImports: [],
             sourceModules: [:],
@@ -368,7 +383,12 @@ struct UserBindingIntegrationTests {
             if let d = statement.item.asProtocol(DeclGroupSyntax.self) as? (any DeclSyntaxProtocol),
                 let c = ControllerDeclaration(d)
             {
-                return renderControllerClient(controller: c, pathPrefix: "/session", discoveredBindings: bindings)
+                return renderControllerClient(
+                    controller: c,
+                    pathPrefix: "/session",
+                    discoveredBindings: bindings,
+                    discoveredModes: WireMVCBuiltIns.modes
+                )
             }
         }
         return nil
@@ -377,7 +397,8 @@ struct UserBindingIntegrationTests {
     /// Warnings, kept apart from errors — `generate` returns only the latter.
     private func warnings(_ sources: String...) -> [String] {
         generateRouteContributors(
-            files: sources.enumerated().map { (path: "File\($0.offset).swift", source: $0.element) },
+            files: WireMVCBuiltIns.declarationFiles
+                + sources.enumerated().map { (path: "File\($0.offset).swift", source: $0.element) },
             testEntry: false,
             extraImports: [],
             sourceModules: [:],

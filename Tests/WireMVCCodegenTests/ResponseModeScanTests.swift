@@ -131,22 +131,6 @@ struct ResponseModeScanTests {
         #expect(found.isEmpty, "a mode WireMVC cannot act on must not be half-registered")
     }
 
-    // MARK: - The floor and the declarations cannot drift
-
-    /// `builtInResponseModes` restates what `Macros.swift` declares, because the `@Controller` macro path has
-    /// not parsed that file. Two statements of one fact drift, so this reads the real file and compares.
-    @Test("the built-in floor matches the declarations in Macros.swift")
-    func builtInFloorMatchesTheDeclarations() throws {
-        let macros = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()  // WireMVCCodegenTests
-            .deletingLastPathComponent()  // Tests
-            .deletingLastPathComponent()  // package root
-            .appendingPathComponent("Sources/WireMVC/Macros.swift")
-        let declared = scanResponseModes(in: [Parser.parse(source: try String(contentsOf: macros, encoding: .utf8))])
-
-        #expect(!declared.isEmpty, "the declarations are annotated at all")
-        #expect(declared == builtInResponseModes)
-    }
 }
 
 /// Every mode kind, declared **outside** WireMVC, reaches both the witness and the client.
@@ -198,7 +182,7 @@ struct UserDeclaredModeCoverageTests {
 
     private static func generated() -> (witness: String, client: String, diagnostics: [String]) {
         let parsed = Parser.parse(source: source)
-        let modes = builtInResponseModes.merging(scanResponseModes(in: [parsed])) { _, scanned in scanned }
+        let modes = WireMVCBuiltIns.modes.merging(scanResponseModes(in: [parsed])) { _, scanned in scanned }
         for statement in parsed.statements {
             guard let declaration = statement.item.as(StructDeclSyntax.self),
                 let controller = ControllerDeclaration(declaration)
@@ -207,11 +191,13 @@ struct UserDeclaredModeCoverageTests {
                 controller: controller,
                 pathPrefix: "/things",
                 factoryKeys: [],
+                discoveredBindings: WireMVCBuiltIns.bindings,
                 discoveredModes: modes
             )
             let client = renderControllerClient(
                 controller: controller,
                 pathPrefix: "/things",
+                discoveredBindings: WireMVCBuiltIns.bindings,
                 discoveredModes: modes
             )
             return (witness.source, client ?? "", witness.diagnostics.map { $0.message.message })
@@ -266,7 +252,7 @@ struct UserDeclaredModeCoverageTests {
             }
             """
         let parsed = Parser.parse(source: source)
-        let modes = builtInResponseModes.merging(scanResponseModes(in: [parsed])) { _, scanned in scanned }
+        let modes = WireMVCBuiltIns.modes.merging(scanResponseModes(in: [parsed])) { _, scanned in scanned }
         for statement in parsed.statements {
             guard let declaration = statement.item.as(StructDeclSyntax.self),
                 let controller = ControllerDeclaration(declaration)
@@ -275,6 +261,7 @@ struct UserDeclaredModeCoverageTests {
                 controller: controller,
                 pathPrefix: "/things",
                 factoryKeys: [],
+                discoveredBindings: WireMVCBuiltIns.bindings,
                 discoveredModes: modes
             )
             #expect(rendered.diagnostics.contains { $0.message.message.contains("names no status") })

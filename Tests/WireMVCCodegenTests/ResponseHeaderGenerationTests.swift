@@ -28,7 +28,9 @@ struct ResponseHeaderGenerationTests {
             controller: controller(source),
             pathPrefix: pathPrefix,
             subjectAccessor: "_wireSubject",
-            factoryKeys: []
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
         ).witness
     }
 
@@ -244,7 +246,14 @@ struct ResponseHeaderGenerationTests {
                     -> (status: HTTPResponse.Status, headers: HTTPFields, body: Thing) { fatalError() }
             }
             """
-        let client = try #require(renderControllerClient(controller: controller(source), pathPrefix: "/things"))
+        let client = try #require(
+            renderControllerClient(
+                controller: controller(source),
+                pathPrefix: "/things",
+                discoveredBindings: WireMVCBuiltIns.bindings,
+                discoveredModes: WireMVCBuiltIns.modes
+            )
+        )
         #expect(client.contains("async throws -> Thing"))
         #expect(!client.contains("status: HTTPResponse.Status"))
     }
@@ -260,7 +269,14 @@ struct ResponseHeaderGenerationTests {
                 func moved() async throws -> (status: HTTPResponse.Status, headers: HTTPFields) { fatalError() }
             }
             """
-        let client = try #require(renderControllerClient(controller: controller(source), pathPrefix: "/things"))
+        let client = try #require(
+            renderControllerClient(
+                controller: controller(source),
+                pathPrefix: "/things",
+                discoveredBindings: WireMVCBuiltIns.bindings,
+                discoveredModes: WireMVCBuiltIns.modes
+            )
+        )
         #expect(client.contains("func moved("))
         #expect(!client.contains("-> (status:"))
     }
@@ -268,7 +284,9 @@ struct ResponseHeaderGenerationTests {
     // MARK: - Diagnostics
 
     private func diagnostics(_ source: String) -> [WireMVCDiagnostic] {
-        generateRouteContributors(files: [("Things.swift", source)]).diagnostics.map(\.message)
+        generateRouteContributors(files: WireMVCBuiltIns.declarationFiles + [("Things.swift", source)]).diagnostics.map(
+            \.message
+        )
     }
 
     /// A near-miss on the labels is far more likely a typo than an intended payload, so it is rejected

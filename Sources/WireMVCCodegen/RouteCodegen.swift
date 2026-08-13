@@ -28,13 +28,13 @@ struct RouteBlockGenerator {
     /// input sources (the consumer's and every Wire-aware dependency's). Empty for the `@Controller` macro
     /// path, which sees only the file it expands in — so the built-in wrappers stay recognised on their own,
     /// and a user binding needs the plugin.
-    var discoveredBindings: [String: BindingObligations] = builtInRequestBindings
+    var discoveredBindings: [String: BindingObligations] = [:]
     /// Response modes and their (terminal, codec, client body) triple, scanned from `@ResponseMode`
     /// declarations across the input sources. Defaults to the **built-ins alone**, which is what the
     /// `@Controller` macro path sees: it expands in one file and has not parsed `Macros.swift`, so a route
     /// annotated `@JSONResponse` must still generate identically there. A mode declared anywhere else needs
     /// the plugin, exactly as a user binding does.
-    var discoveredModes: [String: DeclaredResponseMode] = builtInResponseModes
+    var discoveredModes: [String: DeclaredResponseMode] = [:]
     /// The `@WireMVCBootstrap` composition root's `@ErrorResponse` entries (M5.5 Phase 3) — the **global
     /// default tier**, folded into every route's terminal after the controller's own, before the
     /// binding-error built-in. Empty for the `@Controller` macro path (which has no whole-graph view of
@@ -709,9 +709,8 @@ extension RouteBlockGenerator {
 extension RouteBlockGenerator {
     /// Whether a binding reads the request body — the `@RequestBinding(.body)` obligation.
     ///
-    /// One rule, not a name test plus a lookup. WireMVC's own `@JSONBody` states `.body` on its declaration
-    /// like any other binding; `builtInRequestBindings` restates it as a floor only because the
-    /// `@Controller` macro path cannot parse that declaration.
+    /// One rule, and one source of truth. WireMVC's own `@JSONBody` states `.body` on its declaration like
+    /// any other binding, and the scan reads it from there — nothing restates it.
     func readsRequestBody(_ wrapper: String) -> Bool {
         discoveredBindings[wrapper, default: []].contains(.body)
     }

@@ -40,13 +40,19 @@ binding needs no emission change at all**, which is why this is worth doing: mos
 let routeBindingWrappers: Set<String> = ["Path", "Query", "JSONBody", "Header"]
 ```
 
-**Now:** replaced by `builtInRequestBindings`, a *floor* under `scanRequestBindings` (2026-08-13). Not a
-residual hardcode but a requirement — the `@Controller` macro expands in one file with no whole-graph view,
-so it cannot see any declaration but the ones in front of it, and a route annotated `@JSONBody` has to
-generate identically either way. The difference from the old `Set<String>` is that the built-ins now carry
-`@RequestBinding` on their own declarations, so the floor *restates* a fact rather than being its only
-statement, and a test that parses `RequestBinding.swift` and compares stops the two drifting. Same
-arrangement as `builtInResponseModes`.
+**Now:** gone entirely (2026-08-13). It was replaced by a `builtInRequestBindings` table first, justified by
+a `@Controller` macro expansion path — and that justification was **false**: `ControllerMacro.expansion`
+returns `[]`, route generation is entirely the plugin's, and the plugin already passes WireMVC's own sources
+because it is Wire-aware. Emptying the table changed nothing in a real build; only unit tests calling the
+renderers with default arguments failed. Both tables were deleted the same day they were written.
+
+The claim was checked, not reasoned: a target that depends on a Wire-aware library but *not* on the WireMVC
+product directly fails to build at all — WireGen never sees the adapter directives and the error names a
+missing contributor proxy — so there is no configuration where the built-ins are needed but absent.
+
+`discoveredBindings` and `discoveredModes` are now **required** parameters on the public renderers rather than
+defaulted. A forgotten argument was previously an empty set and a silently route-free witness; it is now a
+compile error, which is the shape this file has twice needed and twice lacked.
 
 **3. Body collection is hardcoded to one name** (`RouteCodegen.swift:638`):
 
@@ -58,7 +64,7 @@ That decides whether `let requestBody = try await WireMVCRequest.collectBody(rea
 `@FormBody` were recognised, it would be handed `body: nil`.
 
 **Now:** the `.body` obligation, read off `@RequestBinding` — and *only* that. `JSONBody` states `.body` on
-its own declaration, so `readsRequestBody` is one lookup rather than a name test plus a lookup.
+its own declaration, so `readsRequestBody` is one lookup, over one source of truth.
 
 **4. The typed client hardcodes wire position and response codec**
 (`ControllerClientGeneration.swift:120-141`): it filters parameters by `$0.wrapper == "Header"` to build
@@ -341,14 +347,13 @@ call site, and facts read off a declaration the build plugin already parses.
    claim that the seam worked was never tested.
 6. ~~Generalise the built-in request bindings.~~ **Done** (2026-08-13). `@Path`, `@Query`, `@Header` and
    `@JSONBody` carry `@RequestBinding` on their own declarations, so `readsRequestBody` and
-   `namesPathPlaceholder` are one lookup each and no generator code names a binding. `builtInRequestBindings`
-   remains as the floor the macro path needs, checked against the declarations by a test — mutation-checked
-   in both directions, since a floor nothing depends on and a floor nothing verifies fail the same way
-   silently.
+   `namesPathPlaceholder` are one lookup each and no generator code names a binding.
 
-   One thing the merge changed that was not obvious: `sendConformanceWarnings` must run over the **scanned**
-   bindings, not the merged set. WireMVC's own `RequestSendable` conformances live in `RequestSending.swift`,
-   which that scan has not parsed, so including the floor warns that every built-in binding cannot be sent.
+   The tables of built-ins that briefly replaced the hardcodes are gone too — see hardcode 2 above. They
+   existed for a reason that had stopped being true, and the reason survived being written into three
+   places because nobody asked it the obvious question. **The question that dissolved it was "what breaks if
+   I delete this?", asked of the real build rather than of the unit tests.** A mutation that fails only the
+   tests calling a renderer with default arguments proves the default matters, not the product.
 
 **Nothing is left on this list.** What the seam still does not cover is a *streaming request body*:
 `RequestBound.bind` takes `body: [UInt8]?`, collected whole before any binding runs, so a binding cannot
