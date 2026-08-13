@@ -1,9 +1,14 @@
 # Extensible bindings and response modes — a design note
 
-> **Status:** design settled, nothing built (2026-08-12). The goal is that `@FormBody`, `@YamlBody`,
-> `@YamlResponse` and their like are written *outside* WireMVC, against a documented seam — with the
-> built-ins (`@Path`, `@Query`, `@Header`, `@JSONBody`, `@JSONResponse`, `@HTMLResponse`) becoming instances
-> of that seam rather than privileged names.
+> **Status:** built (2026-08-13). `@FormBody`, `@YAMLBody` and `@YAMLResponse` are written *outside*
+> WireMVC, in `wire-mvc-examples`, against the seam below. Every response annotation — `@JSONResponse`,
+> `@HTMLResponse`, `@ResponseStatus` — is now an instance of it rather than a privileged name, and the
+> generator has no annotation-name test left. The request side's built-ins (`@Path`, `@Query`, `@Header`,
+> `@JSONBody`) are recognised through the same lookup but still named individually by two obligation
+> helpers; see *Order of work*, item 6.
+>
+> Read the sections below as a record of the reasoning, not of the current source: several of them describe
+> what was true before the work and are marked where that matters.
 >
 > **It corrects a claim this repo has been repeating.** The earlier assessment — "`RequestBound` is public
 > and user-extensible, so a `@FormBody` is writable without touching WireMVC" — is false. The *runtime*
@@ -15,7 +20,9 @@
 
 ## Where the seam actually stops
 
-Four hardcodes, all verified against the current source. The first is the good news.
+*As of 2026-08-12, before the work.* Four hardcodes, all verified against the source at the time. The first
+is the good news. Hardcodes 2–4 are gone (2026-08-12 / 08-13); what replaced each is noted inline, and there
+turned out to be a fifth nobody had counted.
 
 **1. Binding emission is already fully generic** (`RouteCodegen.swift:556`):
 
@@ -33,6 +40,12 @@ binding needs no emission change at all**, which is why this is worth doing: mos
 let routeBindingWrappers: Set<String> = ["Path", "Query", "JSONBody", "Header"]
 ```
 
+**Now:** still present, as a *floor* under `scanRequestBindings`. Not a residual hardcode but a requirement —
+the `@Controller` macro expands in one file with no whole-graph view, so it cannot see any declaration but
+the ones in front of it, and a route annotated `@JSONBody` has to generate identically either way. The
+response side needed the same floor (`builtInResponseModes`) for the same reason, with a test that parses
+`Macros.swift` and compares, so the two statements of one fact cannot drift.
+
 **3. Body collection is hardcoded to one name** (`RouteCodegen.swift:638`):
 
 ```swift
@@ -42,10 +55,22 @@ if let binding = binding(from: param.attributes), binding.wrapper == "JSONBody" 
 That decides whether `let requestBody = try await WireMVCRequest.collectBody(reader)` appears. So even if a
 `@FormBody` were recognised, it would be handed `body: nil`.
 
+**Now:** the `.body` obligation, read off `@RequestBinding`. `JSONBody` is answered by name as a floor, per
+hardcode 2.
+
 **4. The typed client hardcodes wire position and response codec**
 (`ControllerClientGeneration.swift:120-141`): it filters parameters by `$0.wrapper == "Header"` to build
 `headers:`, by `"JSONBody"` to build `json:`, and decodes every response with
 `wireMVCResponse.json(T.self)`.
+
+**Now:** the reverse bind places each value (`RequestSendable.send` / `RequestBodySendable.sendBody`), and the
+response is decoded through the mode's own `WireMVCResponseDecoding`.
+
+**5. The one nobody counted.** `clientBinding` had a *separate* copy of the wrapper set, and an unrecognised
+binding made it return `nil` — dropping the **whole route** from the client, not just the body. Found late,
+and only because a negative assertion (`!rendered.contains("sendBody")`) turned out to be vacuous on an empty
+string. Worth recording as a counting error: "four hardcodes, all verified against the current source" was
+written after reading the source, and was still wrong.
 
 ## The objection that turned out not to apply
 
@@ -245,8 +270,51 @@ in its controller's client.** `noRouteIsSilentlyDropped` now does, over all four
 fails for any future mode that forgets to admit itself. That is the test this design needs in place before it
 starts adding modes.
 
-`wireMVCResponse.json(T.self)` (`:141`) remains the same hardcode one layer down — a `@YamlResponse` route's
-client would JSON-decode a YAML body. That one is this design's to fix, not a defect in shipped behaviour.
+`wireMVCResponse.json(T.self)` (`:141`) remained the same hardcode one layer down — a `@YAMLResponse` route's
+client would JSON-decode a YAML body. **Fixed 2026-08-13**: a mode declares what its client does
+(`client: .decoded` through the codec's `WireMVCResponseDecoding`, or `.text`), and `YAMLConfig`'s round trip
+in `wire-mvc-examples` is the proof.
+
+## Two things only building it found
+
+**A regression test is only as wide as the thing it walks.** Item 1 below says `noRouteIsSilentlyDropped`
+"is what stops the next one going missing the same way". It did not. Opening the response side moved every
+decision to a lookup except one — the status a `.bodiless` mode names was still read off the literal
+attribute `@ResponseStatus` — so a bodiless mode declared outside WireMVC produced an **empty witness and no
+diagnostic**, the same failure class as the `@HTMLResponse` client drop, in code written to eliminate it.
+
+`noRouteIsSilentlyDropped` could not catch it for two reasons, both worth stating because they generalise:
+it walks the **client** and this defect was in the **witness**, and it uses the **built-in** modes, which by
+construction are the ones a hardcode still works for. A test that exercises only the framework's own
+instances of an extension point cannot detect that the extension point is closed. `UserDeclaredModeCoverageTests`
+now covers all three terminals, declared outside WireMVC, over both witness and client — and was
+mutation-checked by reinstating the defect.
+
+The grep that found the residue was not what proved it mattered. "No annotation-name test left" was true of
+every branch but one, and only running a `.bodiless` mode through the generator showed which one.
+
+**A binding declared outside the framework owns its error vocabulary.** `YAMLBody.bind` first let Yams' own
+error escape, so a malformed document was an unmapped **500** — `@ErrorResponse(YAMLError.self, .badRequest)`
+never matched, because a route can only name a type it can see and a controller should not have to import the
+parser to say "a malformed document is a 400". The binding has to translate. `FormBody.malformedEncoding`
+had already got this right; `YAMLError.malformedDocument` is the same call, arrived at the second time by
+watching a test fail rather than by noticing the pattern.
+
+This is a rule for the seam, not an accident of YAML: **every codec failure a binding does not translate is
+an unmapped 500 at the use site.** It belongs next to the `RequestBound` contract in anyone's mental model of
+writing a binding.
+
+## What is left asymmetric
+
+A request binding is a **type** carrying `@RequestBinding`; a response mode is a **macro** carrying
+`@ResponseMode`. That is not a design choice — an attribute on a parameter can be a property wrapper, and an
+attribute on a function cannot be anything but a macro. It has one consequence worth knowing before writing a
+mode: a macro declaration must name the plugin implementing it, so declaring a response mode requires
+depending on the exported `WireMVCMacrosPlugin` product, where declaring a binding requires nothing.
+
+Everything else about the two is deliberately the same shape: a codec generic over its value with
+conditional conformances in each direction, a spelling resolved in the consumer's module at the generated
+call site, and facts read off a declaration the build plugin already parses.
 
 ## Order of work
 
@@ -264,14 +332,17 @@ client would JSON-decode a YAML body. That one is this design's to fix, not a de
    client's decode. Every response annotation, the built-ins included, is now an instance of the seam; the
    generator's last annotation-name test is gone. `@CSVResponse` in `Fixtures` is a mode declared outside
    WireMVC, served over real HTTP and driven through the generated client.
-5. ~~Write `@FormBody` in wire-mvc-examples~~, not here. **Done** (2026-08-12), and `html-form` on top of it
-   (2026-08-13). Demonstrating the seam is the point; a `@FormBody` inside WireMVC would prove nothing about
-   whether the seam works, and this note exists because the last claim that the seam worked was never tested.
-6. **Generalise the built-in request bindings.** `@Path`/`@Query`/`@Header`/`@JSONBody` are still recognised
-   by name as a floor under the scan — the response side needs the same floor for the same reason (the
-   `@Controller` macro path parses one file), so this is not a defect. But `readsRequestBody` and
-   `namesPathPlaceholder` still name `JSONBody` and `Path` specifically, which the response side no longer
-   has an equivalent of.
+5. ~~Write `@FormBody` in wire-mvc-examples~~, not here. **Done** (2026-08-12), then `html-form` on top of it
+   and `YAMLConfig` — `@YAMLBody` *and* `@YAMLResponse` around one codec, so one package supplies both halves
+   of a route and WireMVC names neither (2026-08-13). Demonstrating the seam is the point; a `@FormBody`
+   inside WireMVC would prove nothing about whether the seam works, and this note exists because the last
+   claim that the seam worked was never tested.
+6. **Generalise the built-in request bindings.** *(The only item left.)* `@Path`/`@Query`/`@Header`/
+   `@JSONBody` are still recognised by name as a floor under the scan — the response side needs the same
+   floor for the same reason (the `@Controller` macro path parses one file), so this is not a defect. But
+   `readsRequestBody` and `namesPathPlaceholder` still name `JSONBody` and `Path` specifically, which the
+   response side no longer has an equivalent of. Worth doing under the lesson above: a hardcode that only the
+   framework's own instances exercise is invisible to a test suite made of them.
 
 ## What this is not
 
