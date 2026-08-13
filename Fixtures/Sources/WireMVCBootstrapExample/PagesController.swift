@@ -85,6 +85,55 @@ package struct PagesController {
     package func gone() -> some HTML {
         TodoListPage(heading: "Gone", rows: [])
     }
+
+    /// A **response mode** WireMVC has never heard of. `@CSVResponse` is declared in this module with
+    /// `@ResponseMode(.buffered, codec: "CSVCodec")`, and the plugin reads that off the declaration exactly
+    /// as it reads `@TextBody`'s obligation above — so this one route exercises both ends of the extension
+    /// point, with the framework naming neither.
+    ///
+    /// Buffered, unlike every other route here, which is the point: `@HTMLResponse` proved the streaming
+    /// terminal, and a mode has to be able to pick the other one.
+    @Get("/ledger")
+    @CSVResponse
+    package func ledger() -> Ledger {
+        Ledger(entries: [Ledger.Entry(day: "mon", amount: 12), Ledger.Entry(day: "tue", amount: 34)])
+    }
+
+    /// The same mode with an annotated status, read through the generic `status:` path rather than a
+    /// per-annotation one — a user mode is not second-class about it.
+    @Post("/ledger")
+    @CSVResponse(status: .created)
+    package func recordLedger(@TextBody note: String) -> Ledger {
+        Ledger(entries: [Ledger.Entry(day: note, amount: 1)])
+    }
+}
+
+/// The CSV route's payload. `Codable`-free on purpose: it can travel *only* through `CSVCodec`, so a client
+/// that fell back to JSON would not compile rather than failing at runtime — which is the difference between
+/// this fixture proving the seam and merely exercising it.
+package struct Ledger: CSVRepresentable, CSVReadable {
+    package struct Entry {
+        package let day: String
+        package let amount: Int
+        package init(day: String, amount: Int) {
+            self.day = day
+            self.amount = amount
+        }
+    }
+
+    package let entries: [Entry]
+    package init(entries: [Entry]) { self.entries = entries }
+
+    package static var csvHeader: String { "day,amount" }
+    package var csvRows: [String] { entries.map { "\($0.day),\($0.amount)" } }
+
+    package init(csvRows: [String]) throws {
+        entries = try csvRows.map { row in
+            let fields = row.split(separator: ",", maxSplits: 1)
+            guard fields.count == 2, let amount = Int(fields[1]) else { throw CSVError.badField(row) }
+            return Entry(day: String(fields[0]), amount: amount)
+        }
+    }
 }
 
 package struct PageTooLarge: Error {

@@ -50,6 +50,18 @@ let package = Package(
         // controller's own module, so a different HTML library can supply the same type and `@HTMLResponse`
         // stays a convention rather than a dependency.
         .library(name: "WireMVCElementary", targets: ["WireMVCElementary"]),
+        // The macro plugin, exported so a **consumer** can declare its own response mode:
+        //
+        //     @ResponseMode(.buffered, codec: "YAMLCodec")
+        //     @attached(peer)
+        //     public macro YAMLResponse() = #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
+        //
+        // A macro declaration must name the plugin module implementing it, and `#externalMacro` resolves only
+        // against a target the consumer depends on — so without a product here, a response mode (or a request
+        // binding wanting its own marker) is declarable *only* inside this package, which is exactly the
+        // limitation the extension point exists to remove. `RouteMarkerMacro` expands to nothing; what a
+        // marker does is be *readable*, and the generator reads it off the declaration.
+        .library(name: "WireMVCMacrosPlugin", targets: ["WireMVCMacros"]),
         // Test support for a `@WireMVCBootstrap` app — the generated `.wiremvc(_:)` suite trait stands the app
         // up on the server its mode carries and points `TestClient.current` at it. The generated
         // `_WireRoutes.swift` emits that factory (and imports this) for a test consumer, so a

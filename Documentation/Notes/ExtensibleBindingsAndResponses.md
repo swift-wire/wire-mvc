@@ -158,21 +158,57 @@ keeps a route's own `@ResponseHeader(.contentType, …)` winning, as the static 
 codegen names no content type at all now, and could not have served a mode it does not know by name while it
 did.
 
-| mode | terminal | wrapper |
-| --- | --- | --- |
-| `@JSONResponse` | buffered | `WireMVCResponse.json` |
-| `@HTMLResponse` | streaming | `WireMVCHTMLProducer` |
-| `@YamlResponse` (hypothetical) | buffered | `WireMVCResponse.yaml` |
+**Built** (2026-08-13). A mode states its pair on its own **macro declaration**, and `ResponseCodegen` looks
+it up instead of switching on annotation names:
 
-That is the entire extension point on this side. It is small *because* `@HTMLResponse` shipped as a second
-**terminal** rather than a second codec — had it been buffered like JSON, the streaming tier would still be
-unbuilt and this table would have one column and no seam.
+| mode | terminal | codec | client |
+| --- | --- | --- | --- |
+| `@JSONResponse` | buffered | `WireMVCJSONCodec` | `.decoded` |
+| `@HTMLResponse` | streaming | `WireMVCHTMLProducer` | `.text` |
+| `@ResponseStatus` | bodiless | — | — |
+| `@CSVResponse` (a fixture, declared outside WireMVC) | buffered | `CSVCodec` | `.decoded` |
 
-A mode declares its pair; `ResponseCodegen` stops switching on annotation names and looks the pair up. The
-content-type seeding `@HTMLResponse` does (a `.setIfAbsent` static, first in the tier list) generalises
-cleanly as a third field: the default content type, or none.
+It is small *because* `@HTMLResponse` shipped as a second **terminal** rather than a second codec — had it
+been buffered like JSON, the streaming tier would still be unbuilt and this table would have one column and
+no seam.
+
+Three things the building changed from the draft above.
+
+**A pair became a triple, but not the one the draft feared.** The third field is not a content type — that
+does belong to the codec, and `WireMVCBodyProducer.contentType` / `WireMVCResponseEncoding`'s
+`(bytes, contentType)` return still carry it. It is what the *client* does with the body: `.decoded` (through
+the mode's own codec) or `.text` (undecoded). Two cases, not an open set, because there genuinely are two —
+markup is not decodable and `some HTML` is not nameable, so `@HTMLResponse`'s client hands back a `String`.
+
+**`@ResponseStatus` became a mode too**, with a `.bodiless` terminal. It was going to stay a special case;
+making it an instance means the generator has **no annotation-name test left anywhere** — recognition, the
+"exactly one response annotation" rule, terminal choice, and the client's return shape are all one lookup.
+
+**The codec is a spelling, not a metatype.** `@ResponseMode(.buffered, codec: "CSVCodec")` — checked, at the
+generated call site, in the consumer's module. A typed `codec:` parameter was tried first and does not work:
+a codec is generic over the value it encodes (`CSVCodec<Value>`, conforming conditionally — the shape
+`FormBody<Value>` has on the request side) and an unbound generic metatype is not a legal expression, so
+`CSVCodec.self` fails to infer and every mode would have to write a meaningless `CSVCodec<Never>.self`. It
+would also buy nothing the call site does not already buy. The request side had settled this too and it went
+unnoticed: `RouteCodegen` emits `FormBody<Login>.bind(…)` as a spelling as well.
+
+The protocols still exist and are worth having — `WireMVCResponseEncoding`, `WireMVCResponseDecoding` — but
+as something a *codec author* conforms to so the compiler checks their signature at their own declaration,
+rather than as something the attribute requires.
+
+One thing had to be given away to make any of it usable: `WireMVCMacros` is now exported as the
+`WireMVCMacrosPlugin` library product. A macro declaration must name the plugin implementing it, and
+`#externalMacro` resolves only against a target the consumer depends on — so without that product a response
+mode was declarable *only* inside this package, which is precisely the limitation being removed.
 
 ## The client is the constraint — and a defect
+
+**The response half of this section was, itself, the defect.** As first written it described a server-side
+pair and stopped there — and that omission is not neutral: with the server side alone, a `@CSVResponse` route
+generates a typed client that parses its body as JSON. The client half is now part of the mode
+(`WireMVCResponseDecoding`, selected by `client: .decoded`), mirroring `RequestBodySendable` on the way in.
+The fixture pins it by making `Ledger` deliberately **not** `Codable`, so a JSON fallback would fail to
+compile rather than fail late.
 
 The client was the reason this design took several passes: it constructs a request, so it needs to know where
 each value goes, which looked like metadata the server never needs. The reverse bind above dissolves that — the
@@ -224,13 +260,18 @@ client would JSON-decode a YAML body. That one is this design's to fix, not a de
    (placeholder validation) all come off declaration metadata; emission was already generic. What remains is
    the *client* half — the reverse bind plus a generalised `body:contentType:` overload — without which a
    user binding cannot appear in a generated request.
-4. **Open the response side** — the (terminal, wrapper) pair, read off the mode's *macro* declaration.
-   Verified viable: a macro declaration accepts a custom attribute, and `MacroDeclSyntax.attributes` exposes
-   it with labelled arguments intact, so the same declaration-scanning mechanism serves both sides. The
-   content-type half is already done — the producer supplies its own.
-5. **Write `@FormBody` in wire-mvc-examples**, not here. Demonstrating the seam is the point; a `@FormBody`
-   inside WireMVC would prove nothing about whether the seam works, and this note exists because the last
-   claim that the seam worked was never tested.
+4. ~~Open the response side.~~ **Done** (2026-08-13). Both halves — the server's (terminal, codec) and the
+   client's decode. Every response annotation, the built-ins included, is now an instance of the seam; the
+   generator's last annotation-name test is gone. `@CSVResponse` in `Fixtures` is a mode declared outside
+   WireMVC, served over real HTTP and driven through the generated client.
+5. ~~Write `@FormBody` in wire-mvc-examples~~, not here. **Done** (2026-08-12), and `html-form` on top of it
+   (2026-08-13). Demonstrating the seam is the point; a `@FormBody` inside WireMVC would prove nothing about
+   whether the seam works, and this note exists because the last claim that the seam worked was never tested.
+6. **Generalise the built-in request bindings.** `@Path`/`@Query`/`@Header`/`@JSONBody` are still recognised
+   by name as a floor under the scan — the response side needs the same floor for the same reason (the
+   `@Controller` macro path parses one file), so this is not a defect. But `readsRequestBody` and
+   `namesPathPlaceholder` still name `JSONBody` and `Path` specifically, which the response side no longer
+   has an equivalent of.
 
 ## What this is not
 
