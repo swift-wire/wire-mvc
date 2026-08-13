@@ -99,6 +99,18 @@ package struct PagesController {
         Ledger(entries: [Ledger.Entry(day: "mon", amount: 12), Ledger.Entry(day: "tue", amount: 34)])
     }
 
+    /// A **streamed** request body, through a binding declared in this module. The handler never sees the
+    /// bytes — only what the binding reduced them to while walking the reader.
+    ///
+    /// `@JSONResponse`, not `@HTMLResponse`: a streaming request on a streaming-response route is diagnosed,
+    /// because the streaming terminal takes the reader itself to collect the body before the head goes out.
+    @Post("/digest")
+    @JSONResponse
+    @ErrorResponse(DigestError.self, .contentTooLarge)
+    package func digest(@DigestBody digest: BodyDigest) -> BodyDigest {
+        digest
+    }
+
     /// The same mode with an annotated status, read through the generic `status:` path rather than a
     /// per-annotation one — a user mode is not second-class about it.
     @Post("/ledger")

@@ -23,6 +23,10 @@ public enum WireMVCBindingObligation: Sendable {
     case body
     /// The binding names a `{name}` path placeholder, so the route template must contain one.
     case path
+    /// The binding reads the request body **incrementally**, so the terminal hands it the reader instead of
+    /// collecting the body first. At most one binding per route, and never alongside `.body` — the reader
+    /// cannot be both collected and streamed. See ``RequestBodyStreaming``.
+    case streamingBody
 }
 
 public protocol RequestBound {

@@ -38,7 +38,13 @@ public struct WireMVCOutgoingRequest: Sendable {
 /// Opt-in, and separate from ``RequestBound``: adding a requirement there would break every conformance
 /// outside this package (see `RequestBinding.swift`). A binding that does not conform simply cannot be sent
 /// by the generated typed client, and its route is reported rather than silently dropped.
-public protocol RequestSendable: RequestBound {
+public protocol RequestSendable {
+    /// The value this binding sends. Declared here rather than inherited from ``RequestBound``, so a
+    /// **streaming** binding — which implements ``RequestBodyStreaming`` and never ``RequestBound`` — can
+    /// still be sent by the generated client. The inheritance carried nothing but this associated type; the
+    /// codegen emits `Wrapper<T>.send(…)` and never requires the two protocols to travel together.
+    associatedtype Value
+
     /// Place `value` into `request` under `name` — the wire name, which is the attribute's argument
     /// (`@Query("q")`) when given and the parameter's own name otherwise.
     ///
@@ -58,7 +64,11 @@ public protocol RequestSendable: RequestBound {
 /// One protocol rather than two calls, so a binding needing a body *and* a header (a signed payload with its
 /// digest in a header) does both in one place. The body is *returned* rather than written into the request,
 /// which is what makes a second body unrepresentable.
-public protocol RequestBodySendable: RequestBound {
+public protocol RequestBodySendable {
+    /// The value this binding sends as the request body. See ``RequestSendable/Value`` for why it is
+    /// declared here rather than inherited.
+    associatedtype Value
+
     static func sendBody(
         name: String,
         value: Value,
