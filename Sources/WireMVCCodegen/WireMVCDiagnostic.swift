@@ -29,6 +29,7 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
     case responseAnnotationOnSelfDescribingReturn(String, annotation: String)
     case deadResponseStatusArgument(String, annotation: String)
     case responseModeMissingCodec(String, annotation: String)
+    case bodilessModeNeedsStatus(String, annotation: String)
     case multipleResponseAnnotations(String, annotations: String)
     case bindingMissingSendConformance(binding: String, conformance: String)
 
@@ -72,6 +73,8 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
             "@ResponseHeader sets '\(field)' more than once at \(scope) scope, so which value was meant is undecidable. To *add* a value to a field that legitimately repeats (Set-Cookie, Vary), pass the verb: @ResponseHeader(\(field), \"…\", .append). To replace, keep one entry (a route entry already overrides a controller entry for the same field)."
         case .responseAnnotationOnSelfDescribingReturn(let route, let annotation):
             "@\(annotation) on '\(route)' declares nothing the return type does not already say — a (status:headers:) tuple carries no body and computes its own status, so the annotation would be read by nobody and could only go out of date. Remove it. (A route that returns a body still needs @JSONResponse: that names the codec.)"
+        case .bodilessModeNeedsStatus(let route, let annotation):
+            "@\(annotation) on '\(route)' names no status — a bodiless mode carries nothing but one, so it must say which. Write it as @\(annotation)(.noContent) or @\(annotation)(status: .noContent)"
         case .responseModeMissingCodec(let route, let annotation):
             "@\(annotation) on '\(route)' declares no codec — its @ResponseMode must name one, since a mode that encodes a body has to say what encodes it"
         case .bindingMissingSendConformance(let binding, let conformance):
@@ -123,6 +126,7 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
         case .responseAnnotationOnSelfDescribingReturn: id = "responseAnnotationOnSelfDescribingReturn"
         case .deadResponseStatusArgument: id = "deadResponseStatusArgument"
         case .responseModeMissingCodec: id = "responseModeMissingCodec"
+        case .bodilessModeNeedsStatus: id = "bodilessModeNeedsStatus"
         case .multipleResponseAnnotations: id = "multipleResponseAnnotations"
         case .bindingMissingSendConformance: id = "bindingMissingSendConformance"
         }

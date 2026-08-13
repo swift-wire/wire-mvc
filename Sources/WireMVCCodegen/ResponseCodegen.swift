@@ -47,56 +47,29 @@ extension RouteBlockGenerator {
                 """
         }
 
-        // A `.buffered` mode: the handler's return goes through the mode's own codec. Every mode emits the
-        // same shape — the generator no longer knows that JSON is JSON.
-        if let mode, mode.terminal == .buffered, let codec = mode.codec {
-            guard let annotatedStatus = annotatedStatus(from: attributes, annotation: mode.name) else {
-                return nil
-            }
-            guard shape.hasBody else {
-                record(RouteCodegenDiagnostic(.responseModeOnVoid(route, annotation: mode.name), at: function.name))
-                return nil
-            }
-            // A returned status wins, so an annotated one could never be read. Rejecting the argument makes
-            // the dead value unwritable rather than merely diagnosed; the bare annotation is still required,
-            // because it names the codec.
-            if shape.hasStatus, explicitStatusArgument(from: attributes, annotation: mode.name) != nil {
-                record(
-                    RouteCodegenDiagnostic(
-                        .deadResponseStatusArgument(route, annotation: mode.name),
-                        at: function.name
-                    )
-                )
-                return nil
-            }
-            let fields = headerExpression(shape: shape, statics: staticsLiteral, drainsMiddleware: drainsMiddleware)
-            // The codec is called on its *unbound* generic type: `Value` is inferred from the argument, so
-            // this spelling serves a handler whose return type is opaque (`some Encodable`) as well as a
-            // named one — which a `Codec<ReturnType>` spelling could not.
-            guard shape.isTuple else {
-                return """
-                    wireMVCOutcome = WireMVCResponse.encoded(
-                    try \(codec).encodeResponseBody(\(call), coding: \(codingExpression)),
-                    status: \(annotatedStatus),
-                    headerFields: \(fields)
-                    )
-                    """
-            }
-            let value = shape.hasStatus ? "\(returnLocal).\(responseTupleStatusLabel)" : annotatedStatus
-            return """
-                let \(returnLocal) = \(call)
-                wireMVCOutcome = WireMVCResponse.encoded(
-                try \(codec).encodeResponseBody(\(returnLocal).\(responseTupleBodyLabel), coding: \(codingExpression)),
-                status: \(value),
-                headerFields: \(fields)
-                )
-                """
+        if let mode, mode.terminal == .buffered {
+            return bufferedOutcome(
+                from: function,
+                call: call,
+                shape: shape,
+                staticsLiteral: staticsLiteral,
+                drainsMiddleware: drainsMiddleware,
+                mode: mode
+            )
         }
 
         // A `.bodiless` mode — `@ResponseStatus`. Only `Void` reaches here: a body-carrying tuple is rejected
         // below, and the bodiless one returned above.
         if let mode, mode.terminal == .bodiless {
-            guard let annotatedStatus = responseStatus(from: attributes) else { return nil }
+            guard let annotatedStatus = bodilessStatus(from: attributes, annotation: mode.name) else {
+                record(
+                    RouteCodegenDiagnostic(
+                        .bodilessModeNeedsStatus(route, annotation: mode.name),
+                        at: function.name
+                    )
+                )
+                return nil
+            }
             guard !shape.hasBody else {
                 record(RouteCodegenDiagnostic(.responseStatusOnValue(route), at: function.name))
                 return nil
@@ -108,14 +81,80 @@ extension RouteBlockGenerator {
             return "\(call)\nwireMVCOutcome = .status(\(annotatedStatus)\(fields))"
         }
 
-        // A `.buffered` mode that declared no codec is a malformed declaration rather than a missing
-        // annotation, and saying "add an annotation" to someone who wrote one would send them the wrong way.
+        // Only `.streaming` can reach here, and it never does — `responseEmission` routes it to
+        // `streamingOutcome` before this is called. Reported rather than fallen through to "needs an
+        // annotation", which would send someone who wrote one looking in the wrong place.
         if let mode {
             record(RouteCodegenDiagnostic(.responseModeMissingCodec(route, annotation: mode.name), at: function.name))
             return nil
         }
         record(RouteCodegenDiagnostic(.missingResponseAnnotation(route), at: function.name))
         return nil
+    }
+
+    /// The buffered terminal's assignment: the handler's return, through the mode's own codec.
+    ///
+    /// The counterpart of ``streamingOutcome(from:call:staticHeaders:drainsMiddleware:mode:)``, and shaped
+    /// like it deliberately — one function per terminal, each reading the same mode. Every mode emits the
+    /// same shape here; the generator no longer knows that JSON is JSON.
+    private mutating func bufferedOutcome(
+        from function: FunctionDeclSyntax,
+        call: String,
+        shape: ResponseReturnShape,
+        staticsLiteral: String?,
+        drainsMiddleware: Bool,
+        mode: ResolvedResponseMode
+    ) -> String? {
+        let route = function.name.text
+        let attributes = function.attributes
+        guard let codec = mode.codec else {
+            record(RouteCodegenDiagnostic(.responseModeMissingCodec(route, annotation: mode.name), at: function.name))
+            return nil
+        }
+        // Unreachable: `mode.name` is the name of an attribute this route carries, so the lookup that
+        // produced it is the same one this reads. Guarded rather than force-unwrapped, and it returns
+        // without a diagnostic only because there is nothing true to say.
+        guard let annotatedStatus = annotatedStatus(from: attributes, annotation: mode.name) else {
+            return nil
+        }
+        guard shape.hasBody else {
+            record(RouteCodegenDiagnostic(.responseModeOnVoid(route, annotation: mode.name), at: function.name))
+            return nil
+        }
+        // A returned status wins, so an annotated one could never be read. Rejecting the argument makes
+        // the dead value unwritable rather than merely diagnosed; the bare annotation is still required,
+        // because it names the codec.
+        if shape.hasStatus, explicitStatusArgument(from: attributes, annotation: mode.name) != nil {
+            record(
+                RouteCodegenDiagnostic(
+                    .deadResponseStatusArgument(route, annotation: mode.name),
+                    at: function.name
+                )
+            )
+            return nil
+        }
+        let fields = headerExpression(shape: shape, statics: staticsLiteral, drainsMiddleware: drainsMiddleware)
+        // The codec is called on its *unbound* generic type: `Value` is inferred from the argument, so
+        // this spelling serves a handler whose return type is opaque (`some Encodable`) as well as a
+        // named one — which a `Codec<ReturnType>` spelling could not.
+        guard shape.isTuple else {
+            return """
+                wireMVCOutcome = WireMVCResponse.encoded(
+                try \(codec).encodeResponseBody(\(call), coding: \(codingExpression)),
+                status: \(annotatedStatus),
+                headerFields: \(fields)
+                )
+                """
+        }
+        let value = shape.hasStatus ? "\(returnLocal).\(responseTupleStatusLabel)" : annotatedStatus
+        return """
+            let \(returnLocal) = \(call)
+            wireMVCOutcome = WireMVCResponse.encoded(
+            try \(codec).encodeResponseBody(\(returnLocal).\(responseTupleBodyLabel), coding: \(codingExpression)),
+            status: \(value),
+            headerFields: \(fields)
+            )
+            """
     }
 
     /// The `WireMVCStreamingOutcome` expression a `.streaming` route's `building` closure ends in, or `nil`
@@ -342,9 +381,23 @@ extension RouteBlockGenerator {
         return entries
     }
 
-    private func responseStatus(from attributes: AttributeListSyntax) -> String? {
-        for case let .attribute(attr) in attributes where attr.attributeName.trimmedDescription == "ResponseStatus" {
-            guard case let .argumentList(list) = attr.arguments, let first = list.first else { continue }
+    /// The status a `.bodiless` mode names, read off whichever annotation the route actually wrote.
+    ///
+    /// Both spellings, because the two that exist are both reasonable and a mode author picks one without
+    /// knowing this function exists: `@ResponseStatus(.noContent)` takes its status **unlabelled** (there is
+    /// nothing else it could be saying), while every body-carrying mode takes `status:` alongside the codec's
+    /// other arguments. Reading only the first is what made a `.bodiless` mode declared outside WireMVC
+    /// produce an empty witness — a route dropped in silence, which is the failure `noRouteIsSilentlyDropped`
+    /// exists to catch.
+    func bodilessStatus(from attributes: AttributeListSyntax, annotation: String) -> String? {
+        for case let .attribute(attr) in attributes where attr.attributeName.trimmedDescription == annotation {
+            guard case let .argumentList(list) = attr.arguments, !list.isEmpty else { return nil }
+            if let labelled = list.first(where: { $0.label?.text == "status" }) {
+                return labelled.expression.trimmedDescription
+            }
+            // The unlabelled first argument, and only when it is unlabelled: a mode taking some other
+            // labelled argument is not naming a status with it.
+            guard let first = list.first, first.label == nil else { return nil }
             return first.expression.trimmedDescription
         }
         return nil
