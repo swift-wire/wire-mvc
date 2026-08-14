@@ -475,8 +475,8 @@ struct UserBindingIntegrationTests {
 struct StreamingBindingTests {
 
     private static let binding = """
-        @RequestBinding(.streamingBody)
-        public struct Upload<Value>: RequestBodyStreaming {}
+        @RequestBinding(.readerBody)
+        public struct Upload<Value>: RequestBodyReading {}
         """
 
     private func generate(_ controller: String) -> (source: String, diagnostics: [String]) {
@@ -501,7 +501,7 @@ struct StreamingBindingTests {
             """
         )
         #expect(diagnostics.isEmpty, "\(diagnostics)")
-        #expect(source.contains("Upload<Receipt>.bindStreaming("))
+        #expect(source.contains("Upload<Receipt>.bindReader("))
         #expect(source.contains("reader: reader"))
         #expect(!source.contains("collectBody"), "a streamed route must not collect its body")
         // The reader is bound in the register closure rather than discarded as `_`.
@@ -560,7 +560,7 @@ struct StreamingBindingTests {
 ///
 /// Emitted unlike every other binding — `var x = Wrapper.makeStream(reader: reader)`, passed `&x` — because
 /// the handler mutates it by pulling and the stream's type depends on the reader, which only the witness can
-/// name. That is the whole reason this is a distinct obligation rather than a flavour of `.streamingBody`.
+/// name. That is the whole reason this is a distinct obligation rather than a flavour of `.readerBody`.
 @Suite("Lent body streams")
 struct BodyStreamBindingTests {
 
@@ -667,8 +667,8 @@ struct BodyStreamBindingTests {
     func lentBesideReducingRefused() {
         let (_, diagnostics) = generate(
             """
-            @RequestBinding(.streamingBody)
-            public struct Digest<Value>: RequestBodyStreaming {}
+            @RequestBinding(.readerBody)
+            public struct Digest<Value>: RequestBodyReading {}
 
             @Singleton @Controller("/files")
             public struct Files {

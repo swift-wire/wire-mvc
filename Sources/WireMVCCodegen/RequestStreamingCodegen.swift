@@ -6,7 +6,7 @@ import SwiftSyntax
 // once per route.
 
 extension RouteBlockGenerator {
-    /// Whether a binding **streams** the request body — the `@RequestBinding(.streamingBody)` obligation.
+    /// Whether a binding **streams** the request body — the `@RequestBinding(.readerBody)` obligation.
     ///
     /// Distinct from ``readsRequestBody(_:)`` and never true alongside it on one route: the terminal either
     /// collects the body into `[UInt8]` and hands it to every binding, or hands the reader itself to exactly
@@ -39,7 +39,7 @@ extension RouteBlockGenerator {
 
     /// The parameters that stream the body, in declaration order. More than one is a contradiction; keeping
     /// them all lets the diagnostic say how many rather than just "too many".
-    func streamingBodyParameters(_ function: FunctionDeclSyntax) -> [FunctionParameterSyntax] {
+    func readerBodyParameters(_ function: FunctionDeclSyntax) -> [FunctionParameterSyntax] {
         function.signature.parameterClause.parameters.filter { param in
             guard let binding = binding(from: param.attributes) else { return false }
             return streamsRequestBody(binding.wrapper)
@@ -56,14 +56,14 @@ extension RouteBlockGenerator {
         hasBody: Bool,
         mode: ResolvedResponseMode?
     ) -> Bool? {
-        let streaming = streamingBodyParameters(function)
+        let streaming = readerBodyParameters(function)
         let route = function.name.text
         // A body can be streamed once: reading it consumes the reader. Both streamed kinds count — a route
         // cannot reduce the body *and* lend it to the handler, for the same reason it cannot do either twice.
         if streaming.count > 1 {
             record(
                 RouteCodegenDiagnostic(
-                    .multipleStreamingBodyBindings(route, count: streaming.count),
+                    .multipleReaderBodyBindings(route, count: streaming.count),
                     at: streaming[1]
                 )
             )
@@ -72,14 +72,14 @@ extension RouteBlockGenerator {
         guard !streaming.isEmpty else { return false }
         // Collecting consumes the reader too, so the two tiers cannot share a route.
         if hasBody {
-            record(RouteCodegenDiagnostic(.streamingBodyWithCollectedBody(route), at: function.name))
+            record(RouteCodegenDiagnostic(.readerBodyWithCollectedBody(route), at: function.name))
             return nil
         }
         // The streaming *response* terminal takes the reader itself — it collects the request body before
         // the head goes out, because a closure cannot consume a value it only borrows. So there is none left
         // to hand a streaming binding, and the combination is refused rather than emitted.
         if mode?.terminal == .streaming {
-            record(RouteCodegenDiagnostic(.streamingBodyOnStreamingResponse(route), at: function.name))
+            record(RouteCodegenDiagnostic(.readerBodyOnStreamingResponse(route), at: function.name))
             return nil
         }
         return true
@@ -87,7 +87,7 @@ extension RouteBlockGenerator {
 
     /// The expression that builds a lent stream, or `nil` if this parameter is not one.
     ///
-    /// Kept with the rest of the streaming concern rather than beside the `bind` / `bindStreaming` spellings
+    /// Kept with the rest of the streaming concern rather than beside the `bind` / `bindReader` spellings
     /// it sits among, because none of it is shared with them: a different type comes from a different place
     /// and is constructed rather than called.
     mutating func lentStreamExpression(

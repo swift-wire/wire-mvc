@@ -5,7 +5,7 @@ import WireMVCTesting
 @testable import WireMVCBootstrapExample
 
 // The streaming **request** tier over real HTTP: `@DigestBody` is declared in the app module with
-// `@RequestBinding(.streamingBody)`, so the generated terminal hands it the reader instead of collecting the
+// `@RequestBinding(.readerBody)`, so the generated terminal hands it the reader instead of collecting the
 // body first.
 //
 // Correct output is the weak half of this — a collecting binding would produce the same digest. The claims

@@ -28,15 +28,15 @@ public struct BindingObligations: OptionSet, Sendable {
     /// The route streams the request body: the terminal hands this binding the reader rather than collecting
     /// the body first. Mutually exclusive with ``body`` on one route, and at most one per route — the reader
     /// is consumed, so a second is `'reader' consumed more than once` even if the codegen let it through.
-    public static let streamingBody = BindingObligations(rawValue: 1 << 2)
+    public static let readerBody = BindingObligations(rawValue: 1 << 2)
 
     /// The handler is lent a stream to pull from: the terminal emits
-    /// `var s = Wrapper.makeStream(reader: reader)` and passes `&s`. Like ``streamingBody`` it consumes the
+    /// `var s = Wrapper.makeStream(reader: reader)` and passes `&s`. Like ``readerBody`` it consumes the
     /// route's one reader, so the same exclusions apply.
     public static let bodyStream = BindingObligations(rawValue: 1 << 3)
 
     /// Either way of reading the body off the reader rather than a collected array.
-    public static let anyStreamedBody: BindingObligations = [.streamingBody, .bodyStream]
+    public static let anyStreamedBody: BindingObligations = [.readerBody, .bodyStream]
 }
 
 /// One request binding, as its declaration states it.
@@ -47,7 +47,7 @@ public struct BindingObligations: OptionSet, Sendable {
 public struct DeclaredRequestBinding: Sendable, Equatable {
     public let obligations: BindingObligations
     /// The stream type a `.bodyStream` terminal constructs, e.g. `"MultipartParts"`. `nil` for every other
-    /// kind of binding, which builds its value through `bind` / `bindStreaming` instead.
+    /// kind of binding, which builds its value through `bind` / `bindReader` instead.
     public let streamType: String?
 
     public init(obligations: BindingObligations, streamType: String? = nil) {
@@ -186,7 +186,7 @@ private final class RequestBindingScanner: SyntaxVisitor {
             switch argument.expression.trimmedDescription.split(separator: ".").last {
             case "body": result.insert(.body)
             case "path": result.insert(.path)
-            case "streamingBody": result.insert(.streamingBody)
+            case "readerBody": result.insert(.readerBody)
             case "bodyStream": result.insert(.bodyStream)
             default: break
             }

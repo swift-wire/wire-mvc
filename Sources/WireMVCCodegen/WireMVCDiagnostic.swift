@@ -32,9 +32,9 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
     case bodilessModeNeedsStatus(String, annotation: String)
     case bodyStreamNeedsStreamType(binding: String)
     case bodyStreamNeedsOwnership(String, parameter: String)
-    case multipleStreamingBodyBindings(String, count: Int)
-    case streamingBodyWithCollectedBody(String)
-    case streamingBodyOnStreamingResponse(String)
+    case multipleReaderBodyBindings(String, count: Int)
+    case readerBodyWithCollectedBody(String)
+    case readerBodyOnStreamingResponse(String)
     case multipleResponseAnnotations(String, annotations: String)
     case bindingMissingSendConformance(binding: String, conformance: String)
 
@@ -82,11 +82,11 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
             "binding '\(binding)' is declared @RequestBinding(.bodyStream) but names no stream type — add stream: \"YourStream\", naming the type whose init takes (request:reader:). It cannot be a factory on the binding itself: a property wrapper is generic over the parameter's type, so a static method on it has no way to resolve that generic parameter"
         case .bodyStreamNeedsOwnership(let route, let parameter):
             "parameter '\(parameter)' on '\(route)' lends a request body stream, so it must be 'consuming' — the stream is used up once, through its 'withParts'-style entry point. 'inout' cannot work: calling a consuming method on an inout binding requires reinitialising it, and there is nothing to put back"
-        case .multipleStreamingBodyBindings(let route, let count):
+        case .multipleReaderBodyBindings(let route, let count):
             "route '\(route)' has \(count) bindings that stream the request body — a body can be streamed once, because reading it consumes the reader. Collect it instead (a @RequestBinding(.body) binding hands every parameter the same bytes), or stream it into one binding that produces what the others needed"
-        case .streamingBodyWithCollectedBody(let route):
+        case .readerBodyWithCollectedBody(let route):
             "route '\(route)' both streams and collects its request body — the reader cannot do both, since collecting consumes it. Use one or the other"
-        case .streamingBodyOnStreamingResponse(let route):
+        case .readerBodyOnStreamingResponse(let route):
             "route '\(route)' streams its request body on a streaming-response route, which is not supported yet: the streaming terminal takes the reader itself to collect the body before the response head goes out, so it has none to hand the binding. Use a buffered response mode, or @RawRoute for full control of both directions"
         case .bodilessModeNeedsStatus(let route, let annotation):
             "@\(annotation) on '\(route)' names no status — a bodiless mode carries nothing but one, so it must say which. Write it as @\(annotation)(.noContent) or @\(annotation)(status: .noContent)"
@@ -144,9 +144,9 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
         case .bodilessModeNeedsStatus: id = "bodilessModeNeedsStatus"
         case .bodyStreamNeedsStreamType: id = "bodyStreamNeedsStreamType"
         case .bodyStreamNeedsOwnership: id = "bodyStreamNeedsOwnership"
-        case .multipleStreamingBodyBindings: id = "multipleStreamingBodyBindings"
-        case .streamingBodyWithCollectedBody: id = "streamingBodyWithCollectedBody"
-        case .streamingBodyOnStreamingResponse: id = "streamingBodyOnStreamingResponse"
+        case .multipleReaderBodyBindings: id = "multipleReaderBodyBindings"
+        case .readerBodyWithCollectedBody: id = "readerBodyWithCollectedBody"
+        case .readerBodyOnStreamingResponse: id = "readerBodyOnStreamingResponse"
         case .multipleResponseAnnotations: id = "multipleResponseAnnotations"
         case .bindingMissingSendConformance: id = "bindingMissingSendConformance"
         }

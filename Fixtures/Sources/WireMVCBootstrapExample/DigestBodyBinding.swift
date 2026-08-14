@@ -35,7 +35,7 @@ package enum DigestError: Error {
 }
 
 /// `@DigestBody digest: BodyDigest` — reduces the request body without holding it.
-@RequestBinding(.streamingBody)
+@RequestBinding(.readerBody)
 @propertyWrapper
 package struct DigestBody<Value> {
     package var wrappedValue: Value
@@ -43,8 +43,8 @@ package struct DigestBody<Value> {
     package init(wrappedValue: Value, _ name: String) { self.wrappedValue = wrappedValue }
 }
 
-extension DigestBody: RequestBodyStreaming where Value == BodyDigest {
-    package static func bindStreaming<Reader: AsyncReader & ~Copyable>(
+extension DigestBody: RequestBodyReading where Value == BodyDigest {
+    package static func bindReader<Reader: AsyncReader & ~Copyable>(
         name: String,
         request: HTTPRequest,
         pathParameters: [String: Substring],
