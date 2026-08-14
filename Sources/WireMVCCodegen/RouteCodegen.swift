@@ -28,7 +28,7 @@ struct RouteBlockGenerator {
     /// input sources (the consumer's and every Wire-aware dependency's). Empty for the `@Controller` macro
     /// path, which sees only the file it expands in — so the built-in wrappers stay recognised on their own,
     /// and a user binding needs the plugin.
-    var discoveredBindings: [String: BindingObligations] = [:]
+    var discoveredBindings: [String: DeclaredRequestBinding] = [:]
     /// Response modes and their (terminal, codec, client body) triple, scanned from `@ResponseMode`
     /// declarations across the input sources. Defaults to the **built-ins alone**, which is what the
     /// `@Controller` macro path sees: it expands in one file and has not parsed `Macros.swift`, so a route
@@ -532,8 +532,11 @@ extension RouteBlockGenerator {
                 )
                 return nil
             }
+            // A lent stream is built as a `var` — `withParts` consumes it — and always passed by value,
+            // because `consuming` is the only ownership that fits (see `hasConsumingOwnership`).
+            let keyword = lendsBodyStream(binding.wrapper) ? "var" : "let"
             binds.append(
-                "let \(internalName) = \(bindExpression(for: param, binding: binding, name: bindingName, hasBody: hasBody))"
+                "\(keyword) \(internalName) = \(bindExpression(for: param, binding: binding, name: bindingName, hasBody: hasBody, function: function))"
             )
             callArgs.append(isWildcard ? internalName : "\(param.firstName.text): \(internalName)")
         }
@@ -543,16 +546,20 @@ extension RouteBlockGenerator {
     /// The binding call for one parameter: `bindOptional` (→ `T?`) for an optional type,
     /// `bindOptional(...) ?? default` for a defaulted parameter, else the throwing `bind`. `body` is
     /// the collected request body (`requestBody`) for routes with a `@JSONBody`, else `nil`.
-    private func bindExpression(
+    private mutating func bindExpression(
         for param: FunctionParameterSyntax,
         binding: Binding,
         name: String,
-        hasBody: Bool
+        hasBody: Bool,
+        function: FunctionDeclSyntax
     ) -> String {
         let type = param.type.trimmedDescription
         // A streaming binding is handed the reader rather than a collected body, and there is no optional
         // form: `bindOptional` exists because a *header* or *query* item may be absent, and a request body
         // reader is always present — an empty body is a stream that ends immediately, not a missing one.
+        if let lent = lentStreamExpression(for: param, binding: binding, name: name, function: function) {
+            return lent
+        }
         if streamsRequestBody(binding.wrapper) {
             return "try await \(binding.wrapper)<\(type)>.bindStreaming("
                 + "name: \"\(name)\", request: request, pathParameters: pathParameters, reader: reader, "
@@ -706,12 +713,12 @@ extension RouteBlockGenerator {
     /// One rule, and one source of truth. WireMVC's own `@JSONBody` states `.body` on its declaration like
     /// any other binding, and the scan reads it from there — nothing restates it.
     func readsRequestBody(_ wrapper: String) -> Bool {
-        discoveredBindings[wrapper, default: []].contains(.body)
+        discoveredBindings[wrapper]?.contains(.body) ?? false
     }
 
     /// Whether a binding names a `{name}` path placeholder — the `@RequestBinding(.path)` obligation.
     func namesPathPlaceholder(_ wrapper: String) -> Bool {
-        discoveredBindings[wrapper, default: []].contains(.path)
+        discoveredBindings[wrapper]?.contains(.path) ?? false
     }
 
 }

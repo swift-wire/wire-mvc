@@ -80,7 +80,7 @@ func controllerClientTypeName(_ controller: String) -> String { controller + "Cl
 func renderControllerClient(
     controller: ControllerDeclaration,
     pathPrefix: String,
-    discoveredBindings: [String: BindingObligations],
+    discoveredBindings: [String: DeclaredRequestBinding],
     discoveredModes: [String: DeclaredResponseMode]
 ) -> String? {
     let routes = clientRoutes(
@@ -301,7 +301,7 @@ private func queryEntries(_ parameters: [ClientRouteParameter]) -> String? {
 func clientRoutes(
     of controller: ControllerDeclaration,
     pathPrefix: String,
-    discoveredBindings: [String: BindingObligations],
+    discoveredBindings: [String: DeclaredRequestBinding],
     discoveredModes: [String: DeclaredResponseMode]
 ) -> [ClientRoute] {
     controller.functions.compactMap { function in
@@ -321,6 +321,23 @@ func clientRoutes(
             )
         }
 
+        // A **lent stream** has no client shape at all. Its parameter is a stream the terminal builds from a
+        // live request body reader; a client has no reader to build one from, and nothing to send in its
+        // place — the value the handler receives is not data, it is the means of pulling data. Emitting a
+        // method anyway produced uncompilable code (`Wrapper<consuming Stream>.send(…)`), so the route is
+        // omitted. It stays drivable through the untyped client, which is where its own suite drives it.
+        //
+        // Omitted, not silently: `noRouteIsSilentlyDropped` covers every *other* mode, and
+        // `LentStreamClientTests` pins this one's absence so the omission is a stated property rather than
+        // the failure #87 was about.
+        if function.signature.parameterClause.parameters.contains(where: { parameter in
+            guard let binding = clientBinding(from: parameter.attributes, discoveredBindings: discoveredBindings)
+            else { return false }
+            return discoveredBindings[binding.wrapper]?.contains(.bodyStream) ?? false
+        }) {
+            return nil
+        }
+
         var parameters: [ClientRouteParameter] = []
         for parameter in function.signature.parameterClause.parameters {
             guard let binding = clientBinding(from: parameter.attributes, discoveredBindings: discoveredBindings) else {
@@ -337,8 +354,9 @@ func clientRoutes(
                     // *server* reads the request; a client holds what it is sending either way, so both go
                     // through `sendBody`. Checking `.body` alone generated a `send` call on a streaming
                     // binding, which has no such member.
-                    suppliesBody: !discoveredBindings[binding.wrapper, default: []]
-                        .isDisjoint(with: [.body, .streamingBody])
+                    suppliesBody:
+                        !(discoveredBindings[binding.wrapper]?
+                        .isDisjoint(with: [.body, .streamingBody]) ?? true)
                 )
             )
         }
@@ -467,7 +485,7 @@ private func clientVerb(from attributes: AttributeListSyntax) -> (method: String
 /// diagnostic, which is how a user binding produced a `nil` client rather than a wrong one.
 private func clientBinding(
     from attributes: AttributeListSyntax,
-    discoveredBindings: [String: BindingObligations]
+    discoveredBindings: [String: DeclaredRequestBinding]
 ) -> (wrapper: String, name: String?)? {
     for case let .attribute(attribute) in attributes {
         let wrapper = attribute.attributeName.trimmedDescription

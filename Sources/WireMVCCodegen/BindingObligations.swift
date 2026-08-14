@@ -29,6 +29,34 @@ public struct BindingObligations: OptionSet, Sendable {
     /// the body first. Mutually exclusive with ``body`` on one route, and at most one per route — the reader
     /// is consumed, so a second is `'reader' consumed more than once` even if the codegen let it through.
     public static let streamingBody = BindingObligations(rawValue: 1 << 2)
+
+    /// The handler is lent a stream to pull from: the terminal emits
+    /// `var s = Wrapper.makeStream(reader: reader)` and passes `&s`. Like ``streamingBody`` it consumes the
+    /// route's one reader, so the same exclusions apply.
+    public static let bodyStream = BindingObligations(rawValue: 1 << 3)
+
+    /// Either way of reading the body off the reader rather than a collected array.
+    public static let anyStreamedBody: BindingObligations = [.streamingBody, .bodyStream]
+}
+
+/// One request binding, as its declaration states it.
+///
+/// A struct rather than a bare `BindingObligations` because a `.bodyStream` binding carries a second fact:
+/// the type its stream is. That cannot be derived from the binding — a property wrapper is generic over the
+/// parameter's type, so a static factory on it is unresolvable — so the declaration names it.
+public struct DeclaredRequestBinding: Sendable, Equatable {
+    public let obligations: BindingObligations
+    /// The stream type a `.bodyStream` terminal constructs, e.g. `"MultipartParts"`. `nil` for every other
+    /// kind of binding, which builds its value through `bind` / `bindStreaming` instead.
+    public let streamType: String?
+
+    public init(obligations: BindingObligations, streamType: String? = nil) {
+        self.obligations = obligations
+        self.streamType = streamType
+    }
+
+    public func contains(_ obligation: BindingObligations) -> Bool { obligations.contains(obligation) }
+    public func isDisjoint(with other: BindingObligations) -> Bool { obligations.isDisjoint(with: other) }
 }
 
 /// Every conformance to `name` declared in `files`, by conforming type — read off the inheritance clause of
@@ -95,12 +123,12 @@ private final class ConformanceScanner: SyntaxVisitor {
 /// `FormBody`, generic parameters and module qualification absent. Two modules declaring a binding of the
 /// same name would collide — the same collision the existing wrapper set would have, and worth a diagnostic
 /// if it ever arises rather than a silent last-wins.
-public func scanRequestBindings(in files: [SourceFileSyntax]) -> [String: BindingObligations] {
-    var found: [String: BindingObligations] = [:]
+public func scanRequestBindings(in files: [SourceFileSyntax]) -> [String: DeclaredRequestBinding] {
+    var found: [String: DeclaredRequestBinding] = [:]
     for file in files {
         let scanner = RequestBindingScanner(viewMode: .sourceAccurate)
         scanner.walk(file)
-        found.merge(scanner.found) { existing, new in existing.union(new) }
+        found.merge(scanner.found) { existing, _ in existing }
     }
     return found
 }
@@ -108,7 +136,7 @@ public func scanRequestBindings(in files: [SourceFileSyntax]) -> [String: Bindin
 /// Walks rather than iterating top-level statements: a binding may be declared inside a namespace enum, and
 /// the scan should not depend on where its author put it.
 private final class RequestBindingScanner: SyntaxVisitor {
-    var found: [String: BindingObligations] = [:]
+    var found: [String: DeclaredRequestBinding] = [:]
 
     override func visit(_ node: StructDeclSyntax) -> SyntaxVisitorContinueKind {
         record(name: node.name.text, attributes: node.attributes)
@@ -133,7 +161,7 @@ private final class RequestBindingScanner: SyntaxVisitor {
     private func record(name: String, attributes: AttributeListSyntax) {
         for case let .attribute(attribute) in attributes
         where attribute.attributeName.trimmedDescription == "RequestBinding" {
-            found[name, default: []] = obligations(of: attribute)
+            found[name] = Self.declaration(of: attribute)
         }
     }
 
@@ -142,18 +170,27 @@ private final class RequestBindingScanner: SyntaxVisitor {
     /// Unknown cases are ignored rather than diagnosed here. The scan runs over *every* parsed file
     /// including dependencies, so a message about one would be reported against source the consumer cannot
     /// edit; the use site is where a bad obligation should surface.
-    private func obligations(of attribute: AttributeSyntax) -> BindingObligations {
-        guard case let .argumentList(arguments) = attribute.arguments else { return [] }
+    private static func declaration(of attribute: AttributeSyntax) -> DeclaredRequestBinding {
+        guard case let .argumentList(arguments) = attribute.arguments else {
+            return DeclaredRequestBinding(obligations: [])
+        }
         var result: BindingObligations = []
+        var streamType: String?
         for argument in arguments {
+            if argument.label?.text == "stream" {
+                // A string literal, so the written quotes are not part of the spelling.
+                streamType = argument.expression.as(StringLiteralExprSyntax.self)?.representedLiteralValue
+                continue
+            }
             // The trailing member name, so `.body` and `WireMVCBindingObligation.body` read alike.
             switch argument.expression.trimmedDescription.split(separator: ".").last {
             case "body": result.insert(.body)
             case "path": result.insert(.path)
             case "streamingBody": result.insert(.streamingBody)
+            case "bodyStream": result.insert(.bodyStream)
             default: break
             }
         }
-        return result
+        return DeclaredRequestBinding(obligations: result, streamType: streamType)
     }
 }

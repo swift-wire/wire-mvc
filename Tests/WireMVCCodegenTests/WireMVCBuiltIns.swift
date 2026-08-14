@@ -14,7 +14,7 @@ import SwiftSyntax
 ///
 /// A restated table would drift from the declarations; this cannot, because it *is* the declarations.
 enum WireMVCBuiltIns {
-    static let bindings: [String: BindingObligations] = scanRequestBindings(in: [parsed("RequestBinding.swift")])
+    static let bindings: [String: DeclaredRequestBinding] = scanRequestBindings(in: [parsed("RequestBinding.swift")])
     static let modes: [String: DeclaredResponseMode] = scanResponseModes(in: [parsed("Macros.swift")])
 
     /// **Every** WireMVC source, as `(path, source)` pairs for `generateRouteContributors`.

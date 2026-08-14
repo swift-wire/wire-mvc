@@ -27,6 +27,23 @@ public enum WireMVCBindingObligation: Sendable {
     /// collecting the body first. At most one binding per route, and never alongside `.body` — the reader
     /// cannot be both collected and streamed. See ``RequestBodyStreaming``.
     case streamingBody
+    /// The binding hands the **handler** a stream to pull from, rather than a finished value.
+    ///
+    /// Where `.streamingBody` reduces the body to something small before the handler runs, this lets the
+    /// handler act on the body as it arrives — reject an upload after its first field, write each part
+    /// somewhere as it lands. The terminal constructs the stream, lends it to the handler `inout`, and keeps
+    /// the reader in its own frame for the duration.
+    ///
+    /// The binding names its stream type with `stream:`, and the generator constructs it —
+    /// `MultipartParts(request: request, reader: reader)`. That is a **spelling**, not a protocol
+    /// requirement, and it has to be: the stream's type depends on the reader, and a protocol's
+    /// `associatedtype` is fixed by the conformance before any reader exists. The same reasoning as the
+    /// response side's `codec:`.
+    ///
+    /// The parameter must be `consuming`: a stream is used up once, through a `withParts`-style entry point
+    /// that consumes it. `inout` is not a matter of taste or of a missing feature — calling a consuming
+    /// method on an `inout` binding demands a replacement value, and a stream has none.
+    case bodyStream
 }
 
 public protocol RequestBound {

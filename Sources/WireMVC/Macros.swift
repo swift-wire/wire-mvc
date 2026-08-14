@@ -169,8 +169,15 @@ public macro Delete() = #externalMacro(module: "WireMVCMacros", type: "RouteMark
 ///
 /// Read off the declaration by the build plugin, which already re-parses every Wire-aware dependency module
 /// — so a binding declared in a library is usable in any consumer without WireMVC knowing its name.
+/// `stream:` names the type a `.bodyStream` binding's terminal constructs — `MultipartParts`, spelled with
+/// no type argument because the generator supplies the reader and lets inference do the rest.
+///
+/// A **spelling**, for the same reason `@ResponseMode(codec:)` is one, and here with a second reason on top:
+/// a property wrapper is generic over the parameter's type, so `Wrapper.makeStream(reader:)` cannot resolve
+/// — `generic parameter 'Value' could not be inferred`, since `Value` appears nowhere in the factory's
+/// signature. The factory therefore cannot live on the binding, and the declaration has to say where it does.
 @attached(peer)
-public macro RequestBinding(_ obligations: WireMVCBindingObligation...) =
+public macro RequestBinding(_ obligations: WireMVCBindingObligation..., stream: String? = nil) =
     #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
 
 // ── Response markers (peer, no-op — read by `@Controller`) ──

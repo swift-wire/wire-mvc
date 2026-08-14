@@ -30,6 +30,8 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
     case deadResponseStatusArgument(String, annotation: String)
     case responseModeMissingCodec(String, annotation: String)
     case bodilessModeNeedsStatus(String, annotation: String)
+    case bodyStreamNeedsStreamType(binding: String)
+    case bodyStreamNeedsOwnership(String, parameter: String)
     case multipleStreamingBodyBindings(String, count: Int)
     case streamingBodyWithCollectedBody(String)
     case streamingBodyOnStreamingResponse(String)
@@ -76,6 +78,10 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
             "@ResponseHeader sets '\(field)' more than once at \(scope) scope, so which value was meant is undecidable. To *add* a value to a field that legitimately repeats (Set-Cookie, Vary), pass the verb: @ResponseHeader(\(field), \"…\", .append). To replace, keep one entry (a route entry already overrides a controller entry for the same field)."
         case .responseAnnotationOnSelfDescribingReturn(let route, let annotation):
             "@\(annotation) on '\(route)' declares nothing the return type does not already say — a (status:headers:) tuple carries no body and computes its own status, so the annotation would be read by nobody and could only go out of date. Remove it. (A route that returns a body still needs @JSONResponse: that names the codec.)"
+        case .bodyStreamNeedsStreamType(let binding):
+            "binding '\(binding)' is declared @RequestBinding(.bodyStream) but names no stream type — add stream: \"YourStream\", naming the type whose init takes (request:reader:). It cannot be a factory on the binding itself: a property wrapper is generic over the parameter's type, so a static method on it has no way to resolve that generic parameter"
+        case .bodyStreamNeedsOwnership(let route, let parameter):
+            "parameter '\(parameter)' on '\(route)' lends a request body stream, so it must be 'consuming' — the stream is used up once, through its 'withParts'-style entry point. 'inout' cannot work: calling a consuming method on an inout binding requires reinitialising it, and there is nothing to put back"
         case .multipleStreamingBodyBindings(let route, let count):
             "route '\(route)' has \(count) bindings that stream the request body — a body can be streamed once, because reading it consumes the reader. Collect it instead (a @RequestBinding(.body) binding hands every parameter the same bytes), or stream it into one binding that produces what the others needed"
         case .streamingBodyWithCollectedBody(let route):
@@ -136,6 +142,8 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
         case .deadResponseStatusArgument: id = "deadResponseStatusArgument"
         case .responseModeMissingCodec: id = "responseModeMissingCodec"
         case .bodilessModeNeedsStatus: id = "bodilessModeNeedsStatus"
+        case .bodyStreamNeedsStreamType: id = "bodyStreamNeedsStreamType"
+        case .bodyStreamNeedsOwnership: id = "bodyStreamNeedsOwnership"
         case .multipleStreamingBodyBindings: id = "multipleStreamingBodyBindings"
         case .streamingBodyWithCollectedBody: id = "streamingBodyWithCollectedBody"
         case .streamingBodyOnStreamingResponse: id = "streamingBodyOnStreamingResponse"

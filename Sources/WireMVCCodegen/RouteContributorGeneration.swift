@@ -37,7 +37,7 @@ public func renderRegisterWireRoutesWitness(
     globalErrorMappings: [ErrorMapping] = [],
     keyedScopeEntry: KeyedScopeEntry? = nil,
     doublesThreadedFactoryKeys: Set<String> = [],
-    discoveredBindings: [String: BindingObligations],
+    discoveredBindings: [String: DeclaredRequestBinding],
     discoveredModes: [String: DeclaredResponseMode]
 ) -> (witness: String, diagnostics: [RouteCodegenDiagnostic]) {
     var generator = RouteBlockGenerator(
@@ -70,7 +70,7 @@ public func renderRouteContributorExtension(
     factoryKeys: Set<String>,
     globalErrorMappings: [ErrorMapping] = [],
     keyedScopeEntry: KeyedScopeEntry? = nil,
-    discoveredBindings: [String: BindingObligations],
+    discoveredBindings: [String: DeclaredRequestBinding],
     discoveredModes: [String: DeclaredResponseMode]
 ) -> (source: String, diagnostics: [RouteCodegenDiagnostic]) {
     let rendered = renderRegisterWireRoutesWitness(
@@ -106,7 +106,7 @@ public func renderVariantRouteContributorExtension(
     variantName: String,
     keyedScopeEntry: KeyedScopeEntry,
     doublesThreadedFactoryKeys: Set<String> = [],
-    discoveredBindings: [String: BindingObligations],
+    discoveredBindings: [String: DeclaredRequestBinding],
     discoveredModes: [String: DeclaredResponseMode]
 ) -> (source: String, diagnostics: [RouteCodegenDiagnostic]) {
     let rendered = renderRegisterWireRoutesWitness(
@@ -152,7 +152,7 @@ public let contributorProxyScopeEntryAccessor = "_wireEnterScope"
 private func scanDeclaredExtensions(
     in parsed: [(path: String, tree: SourceFileSyntax)]
 ) -> (
-    bindings: [String: BindingObligations],
+    bindings: [String: DeclaredRequestBinding],
     modes: [String: DeclaredResponseMode],
     diagnostics: [LocatedRouteDiagnostic]
 ) {
@@ -445,7 +445,7 @@ private func renderControllerExtensions(
     globalErrorMappings: [ErrorMapping],
     harnessKey: DiscoveredTestingKey?,
     doublesThreadedFactoryKeys: Set<String>,
-    discoveredBindings: [String: BindingObligations],
+    discoveredBindings: [String: DeclaredRequestBinding],
     discoveredModes: [String: DeclaredResponseMode]
 ) -> ControllerExtensionsResult {
     var extensions: [(name: String, source: String)] = []
@@ -574,7 +574,7 @@ private func bootstrapArtifacts(
 /// Warnings, not errors: `scanConformances` is syntactic and cannot see a conformance declared in a module
 /// this build does not parse. A false error would break a valid build; a false warning is noise.
 private func sendConformanceWarnings(
-    _ discoveredBindings: [String: BindingObligations],
+    _ discoveredBindings: [String: DeclaredRequestBinding],
     in parsed: [(path: String, tree: SourceFileSyntax)]
 ) -> [RouteCodegenDiagnostic] {
     guard let anchor = parsed.first?.tree else { return [] }
