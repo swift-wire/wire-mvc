@@ -166,6 +166,110 @@ struct StreamingController: RouteContributor {
     }
 }
 
+/// A request-body producer that counts the chunks it has handed out, so a test can assert the handler is
+/// fed **on demand** rather than from a body the bridge drained up front.
+actor CountingChunkSource {
+    static let chunkSize = 64 * 1024
+    private(set) var producedCount = 0
+
+    func next() -> HTTPBody.ByteChunk {
+        producedCount += 1
+        return ArraySlice(repeatElement(UInt8(producedCount % 256), count: Self.chunkSize))
+    }
+}
+
+/// An `HTTPBody` sequence that pulls each chunk from the source only when its consumer asks — the shape a
+/// real transport's request body has, and the only shape that can tell "streamed" apart from "collected".
+/// A `nil` `limit` never ends, which is what makes the unbounded test decisive: a bridge that collects
+/// before dispatching would hang rather than fail.
+struct PulledChunks: AsyncSequence, Sendable {
+    typealias Element = HTTPBody.ByteChunk
+
+    let source: CountingChunkSource
+    let limit: Int?
+
+    struct AsyncIterator: AsyncIteratorProtocol {
+        let source: CountingChunkSource
+        let limit: Int?
+        var delivered = 0
+
+        mutating func next() async -> HTTPBody.ByteChunk? {
+            if let limit, delivered == limit { return nil }
+            delivered += 1
+            return await source.next()
+        }
+    }
+
+    func makeAsyncIterator() -> AsyncIterator { AsyncIterator(source: source, limit: limit) }
+}
+
+/// A controller whose routes read the request body incrementally — what `@Controller` emits for a
+/// streaming request binding (`@MultipartStream`), reduced to the part the bridge has to get right.
+struct StreamingRequestController: RouteContributor {
+    let source: CountingChunkSource
+
+    func registerWireRoutes<Builder: HTTPServerRouteBuilder>(
+        on builder: inout Builder,
+        coding: WireMVCCoding
+    ) throws
+    where
+        Builder.RequestContext: ~Copyable,
+        Builder.Reader: ~Copyable,
+        Builder.ResponseSender: ~Copyable,
+        Builder.ResponseSender.Writer: ~Copyable
+    {
+        // Reads three chunks and answers — *without* ever reaching the end of the body. A handler that
+        // decides against a body it has begun to receive is the whole point of the streaming tier.
+        builder.register(method: .post, path: "/three") { _, _, _, reader, responseSender in
+            var reader = reader
+            var chunks = 0
+            while chunks < 3 {
+                try await reader.read { buffer, _ in
+                    chunks += 1
+                    buffer.removeAll()
+                }
+            }
+            var body = UniqueArray<UInt8>(copying: "read \(chunks)".utf8)
+            try await responseSender.sendAndFinish(HTTPResponse(status: .ok), buffer: &body)
+        }
+        // Reads and writes at once: head out first, then one response chunk per request chunk. The
+        // response-body-processing shape, and the arrangement that fails if the bridge serialises the two
+        // halves — the request body is still arriving after the register closure has returned its body.
+        builder.register(method: .post, path: "/echo-stream") { _, _, _, reader, responseSender in
+            var reader = reader
+            var writer = try await responseSender.send(HTTPResponse(status: .ok))
+            var ended = false
+            while !ended {
+                var chunkBytes: [UInt8] = []
+                ended = try await reader.read { buffer, finalElement in
+                    var index = buffer.startIndex
+                    while index != buffer.endIndex {
+                        let span = buffer.nextSpan(after: &index, maximumCount: .max)
+                        for position in 0..<span.count { chunkBytes.append(span[position]) }
+                    }
+                    return finalElement != nil
+                }
+                if !chunkBytes.isEmpty {
+                    var out = UniqueArray<UInt8>(copying: chunkBytes)
+                    try await writer.write(buffer: &out)
+                }
+            }
+            var end = UniqueArray<UInt8>()
+            try await writer.finish(buffer: &end, finalElement: nil)
+        }
+        // Consumes a body past the 1 MB the bridge used to cap every request at, so how much a route
+        // will accept is WireMVC's policy (`streamBody`'s `maximumSize`) rather than the adapter's.
+        builder.register(method: .post, path: "/count") { _, _, _, reader, responseSender in
+            var total = 0
+            try await WireMVCRequest.streamBody(reader, into: &total) { count, span in
+                count += span.count
+            }
+            var body = UniqueArray<UInt8>(copying: "\(total)".utf8)
+            try await responseSender.sendAndFinish(HTTPResponse(status: .ok), buffer: &body)
+        }
+    }
+}
+
 /// Contributes a response header field on the way in, exactly as a real controller-scope middleware does.
 /// It reaches the registry off the box, which on this path exists only because the `ServerTransport` bridge
 /// constructs the courier itself.
@@ -245,6 +349,13 @@ struct StreamingGraph: WireMVCComposable {
     var services: [any Service] { [] }
 }
 
+/// A graph whose single controller reads its request body a chunk at a time.
+struct StreamingRequestGraph: WireMVCComposable {
+    let source: CountingChunkSource
+    var routeContributors: [any RouteContributor] { [StreamingRequestController(source: source)] }
+    var services: [any Service] { [] }
+}
+
 @Suite("WireMVCServerTransport")
 struct AdapterTests {
     /// `WireMVCServerTransport.apply` registers the collated (proposal-native) routes onto a
@@ -307,6 +418,86 @@ struct AdapterTests {
 
         #expect(events.first == "data: tick 1\n\n" && events.last == "data: tick 5\n\n" && events.count == 5)
         #expect(maxLead <= 1)
+    }
+
+    /// The request body reaches the handler **as it arrives**: the route reads three chunks off a body
+    /// that never ends and answers, and nothing pulled a fourth.
+    ///
+    /// The symmetric case to `streamsRawResponseWithBackpressure`, and the one that distinguishes a
+    /// streaming bridge from a collecting one at all — the bridge used to drain the whole body before
+    /// dispatching, so this body would have been read to its 1 MB ceiling (16 chunks) and failed there,
+    /// having never asked the handler whether it wanted them.
+    @Test
+    func streamsRequestBodyOnDemand() async throws {
+        let source = CountingChunkSource()
+        let transport = MockTransport()
+        try WireMVCServerTransport.apply(StreamingRequestGraph(source: source), to: transport)
+
+        let unbounded = HTTPBody(
+            PulledChunks(source: source, limit: nil),
+            length: .unknown,
+            iterationBehavior: .single
+        )
+        let (response, body) = try await transport.send(.post, "/three", body: unbounded)
+
+        #expect(response.status == .ok && String(decoding: body, as: UTF8.self) == "read 3")
+        #expect(await source.producedCount == 3)
+    }
+
+    /// Request and response stream **at the same time**: the response head and its first chunk are out
+    /// while the request body is still arriving, which is what an echo or a digesting proxy needs and what
+    /// a bridge that drains before dispatching cannot do at any body size.
+    ///
+    /// Note this pins the *bridge's* behaviour only. Whether a given framework tolerates its request body
+    /// being read after the route closure has returned a streaming response is that framework's channel
+    /// semantics, and the runtime suites in wire-mvc-examples are where that gets answered.
+    @Test
+    func streamsRequestAndResponseBodiesConcurrently() async throws {
+        let chunks = 3
+        let source = CountingChunkSource()
+        let transport = MockTransport()
+        try WireMVCServerTransport.apply(StreamingRequestGraph(source: source), to: transport)
+
+        let body = HTTPBody(
+            PulledChunks(source: source, limit: chunks),
+            length: .unknown,
+            iterationBehavior: .single
+        )
+        let (head, responseBody) = try await transport.sendStreaming(.post, "/echo-stream", body: body)
+        #expect(head.status == .ok)
+
+        var received = 0
+        var producedAtFirstChunk = 0
+        for try await chunk in try #require(responseBody) {
+            received += 1
+            if received == 1 { producedAtFirstChunk = await source.producedCount }
+            #expect(chunk.count == CountingChunkSource.chunkSize)
+        }
+
+        #expect(received == chunks)
+        // The handler may already have gone back for the next chunk by the time the consumer measures, so
+        // the bound is "not all of them" rather than exactly one — which is the claim under test.
+        #expect(producedAtFirstChunk < chunks)
+    }
+
+    /// A body past the bridge's old 1 MB collect ceiling round-trips, so a route's size limit is
+    /// WireMVC's (`streamBody`'s `maximumSize`, as on the proposal-native path) rather than the adapter's.
+    @Test
+    func acceptsRequestBodyLargerThanTheOldCollectCeiling() async throws {
+        let chunks = 32  // × 64 KiB = 2 MiB
+        let source = CountingChunkSource()
+        let transport = MockTransport()
+        try WireMVCServerTransport.apply(StreamingRequestGraph(source: source), to: transport)
+
+        let large = HTTPBody(
+            PulledChunks(source: source, limit: chunks),
+            length: .unknown,
+            iterationBehavior: .single
+        )
+        let (response, body) = try await transport.send(.post, "/count", body: large)
+
+        #expect(response.status == .ok)
+        #expect(String(decoding: body, as: UTF8.self) == "\(chunks * CountingChunkSource.chunkSize)")
     }
 }
 #endif

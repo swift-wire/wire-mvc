@@ -28,6 +28,11 @@ import Foundation
 // fast path that keeps a known-length body (`Content-Length`, not chunked). Proven end-to-end in
 // swift-wire-spikes/spike-14.
 //
+// The request bridge streams the same way: `BridgeReader` pulls one chunk per `read` off the
+// transport's `HTTPBody`, so a streaming binding on this path behaves as it does on the proposal-native
+// path — the handler sees the first bytes before the last have arrived, and can abandon a body it has
+// decided against instead of paying to receive it.
+//
 // A `ServerTransport` handler must outlive the `register` closure (it produces the streamed body the
 // framework consumes afterward), so it runs in a task that can't be a structured child. For a streamed
 // response that task's lifetime is bound to the returned body — released (and cancelled) when the
@@ -42,23 +47,67 @@ import Foundation
 /// no real server context on the ServerTransport path.
 private struct BridgeRequestContext: HTTPServerCapability.RequestContext {}
 
-/// A copyable in-memory `AsyncReader` over the request body bytes — delivers them in one read.
+/// The request body's iteration state. A class because ``BridgeReader`` is a struct the handler holds
+/// across reads while the iterator's position has to survive each one; `@unchecked Sendable` on the same
+/// terms as ``ResponseChannel`` — every call happens on the single handler task.
+private final class BridgeBodySource: @unchecked Sendable {
+    /// `nil` once the body has ended (or when the request carried none), which is what makes a read past
+    /// the terminal chunk answer "still ended" rather than iterate an exhausted sequence.
+    private var iterator: HTTPBody.Iterator?
+
+    init(_ body: HTTPBody?) {
+        iterator = body?.makeAsyncIterator()
+    }
+
+    func next() async throws -> HTTPBody.ByteChunk? {
+        guard var iterator else { return nil }
+        do {
+            let chunk = try await iterator.next()
+            self.iterator = chunk == nil ? nil : iterator
+            return chunk
+        } catch {
+            self.iterator = nil
+            throw error
+        }
+    }
+}
+
+/// A copyable `AsyncReader` over the transport's request body — **one read per body chunk**, so an
+/// upload is never buffered whole and a handler can act on a body before the rest of it has arrived.
+/// How large a body a route will accept is WireMVC's own policy (`WireMVCRequest.collectBody`'s
+/// `maximumSize`, a streaming binding's own limit), exactly as on the proposal-native path; the bridge
+/// imposes none of its own.
+///
+/// `ReadFailure` is `any Error` because the body is real I/O here: the transport's sequence can fail
+/// part-way through (a client that disconnects mid-upload), where the previous collect-it-all reader
+/// could only ever succeed.
 private struct BridgeReader: AsyncReader {
     typealias ReadElement = UInt8
-    typealias ReadFailure = Never
+    typealias ReadFailure = any Error
     typealias FinalElement = HTTPFields?
     typealias Buffer = UniqueArray<UInt8>
 
-    private let bytes: [UInt8]
-    init(_ bytes: [UInt8]) { self.bytes = bytes }
+    private let source: BridgeBodySource
+    init(_ body: HTTPBody?) { source = BridgeBodySource(body) }
 
     mutating func read<Return: ~Copyable, Failure: Error>(
         body: (inout Buffer, consuming FinalElement?) async throws(Failure) -> Return
     ) async throws(EitherError<ReadFailure, Failure>) -> Return {
-        var buffer = UniqueArray<UInt8>(copying: bytes)
+        let chunk: HTTPBody.ByteChunk?
         do {
-            // `.some(nil)` — terminal chunk (end of stream) with no trailers.
-            return try await body(&buffer, .some(nil))
+            chunk = try await source.next()
+        } catch {
+            throw EitherError.first(error)
+        }
+        // The end is only known once the sequence has answered `nil`, so the terminal read delivers an
+        // empty buffer rather than fusing the last chunk with the end signal. Reading one chunk ahead to
+        // fuse them would pull bytes off the network the handler hasn't asked for — the opposite of what
+        // a streaming binding that decides on the first field and abandons the rest wants.
+        var buffer = chunk.map { Buffer(copying: $0) } ?? Buffer()
+        do {
+            // `.some(nil)` — terminal chunk (end of stream) with no trailers; `nil` — more may follow.
+            // A `ServerTransport` has no trailers to deliver either way.
+            return try await body(&buffer, chunk == nil ? .some(nil) : nil)
         } catch {
             throw EitherError.second(error)
         }
@@ -240,12 +289,6 @@ private struct ServerTransportRouteBuilder: HTTPServerRouteBuilder {
             let handler = route.handler
             try transport.register(
                 { request, requestBody, metadata in
-                    let bytes: [UInt8]
-                    if let requestBody {
-                        bytes = Array(try await HTTPBody.ByteChunk(collecting: requestBody, upTo: 1_000_000))
-                    } else {
-                        bytes = []
-                    }
                     let channel = ResponseChannel()
                     // Unstructured by necessity: the handler produces the streamed body the transport
                     // consumes *after* this closure returns, so it can't be a structured child. For a
@@ -260,7 +303,7 @@ private struct ServerTransportRouteBuilder: HTTPServerRouteBuilder {
                                     responseHeaders: ResponseHeaderRegistry()
                                 ),
                                 metadata.pathParameters,
-                                BridgeReader(bytes),
+                                BridgeReader(requestBody),
                                 BridgeResponseSender(channel: channel)
                             )
                             channel.handlerFinished()
