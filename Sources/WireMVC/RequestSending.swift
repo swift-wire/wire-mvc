@@ -40,7 +40,7 @@ public struct WireMVCOutgoingRequest: Sendable {
 /// by the generated typed client, and its route is reported rather than silently dropped.
 public protocol RequestSendable {
     /// The value this binding sends. Declared here rather than inherited from ``RequestBound``, so a
-    /// **streaming** binding — which implements ``RequestBodyStreaming`` and never ``RequestBound`` — can
+    /// **streaming** binding — which implements ``RequestBodyReading`` and never ``RequestBound`` — can
     /// still be sent by the generated client. The inheritance carried nothing but this associated type; the
     /// codegen emits `Wrapper<T>.send(…)` and never requires the two protocols to travel together.
     associatedtype Value

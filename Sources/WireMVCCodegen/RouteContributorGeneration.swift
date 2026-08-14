@@ -588,12 +588,12 @@ private func sendConformanceWarnings(
         // about a call that is never generated. The omission is a stated property, pinned by
         // `LentStreamClientTests`, rather than something this warning needs to chase.
         guard !obligations.contains(.bodyStream) else { return nil }
-        // `.streamingBody` counts as supplying the body here. The two differ in how the *server* reads the
+        // `.readerBody` counts as supplying the body here. The two differ in how the *server* reads the
         // request — collected versus walked — and not at all in what the client does: it holds whatever it
         // is sending, so it buffers either way. A streaming binding therefore conforms to
         // `RequestBodySendable` like a collecting one, and asking it for `RequestSendable` instead would be
         // asking for a conformance that could not carry a body.
-        let wantsBody = !obligations.isDisjoint(with: [.body, .streamingBody])
+        let wantsBody = !obligations.isDisjoint(with: [.body, .readerBody])
         let required = wantsBody ? "RequestBodySendable" : "RequestSendable"
         let satisfied = wantsBody ? bodySendable.contains(binding) : sendable.contains(binding)
         guard !satisfied else { return nil }

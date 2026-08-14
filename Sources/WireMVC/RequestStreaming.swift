@@ -2,14 +2,14 @@ public import AsyncStreaming
 public import BasicContainers
 public import HTTPTypes
 
-// The streaming **request** tier — the mirror of `StreamingResponses.swift`, and much smaller than it.
+// The reader-body request tier — the mirror of `StreamingResponses.swift`, and much smaller than it.
 //
 // `RequestBound.bind` is handed `body: [UInt8]?`, collected whole by the terminal before any binding runs.
 // That is right for a JSON payload and wrong for an upload: a `multipart/form-data` binding written against
 // it must buffer the entire request in memory before it can look at the first part. The only alternative
 // today is `@RawRoute(.reader)`, which gives up typed binding altogether.
 //
-// **The reader never escapes.** A streaming binding consumes it and returns a finished value; nothing hands
+// **The reader never escapes.** A reader binding consumes it and returns a finished value; nothing hands
 // the reader, or anything holding it, back to the handler. That is a deliberate restriction rather than a
 // limitation of what compiles — a value *can* hold and return a reader today, because
 // `HTTPServerRequestHandler.Reader` suppresses only `Copyable`. But upstream marks that choice open
@@ -19,12 +19,12 @@ public import HTTPTypes
 // it here costs nothing that a real binding needs, and settles either way.
 //
 // So this tier answers "parse the body without holding it all" — multipart to disk, a checksum, a bounded
-// field scan. It does not answer "hand the handler a stream to iterate", which stays `@RawRoute`.
+// field scan. Handing the handler a stream to iterate is the separate `.bodyStream` tier.
 
 /// A binding that reads the request body **incrementally**, instead of being handed it whole.
 ///
 /// Declared alongside ``RequestBound`` rather than refining it: a binding is one or the other, and the
-/// generated terminal calls exactly one of `bind` / `bindStreaming` for a given parameter. Conforming to
+/// generated terminal calls exactly one of `bind` / `bindReader` for a given parameter. Conforming to
 /// both would make that choice ambiguous, which is why the obligation — not the conformance — decides.
 ///
 /// Generic over the reader's `Buffer`, which is worth stating because the obvious alternative is a trap.
@@ -33,7 +33,7 @@ public import HTTPTypes
 /// where the generated code calls this, so it propagates to `HTTPServerRouteBuilder.Reader`, and from there
 /// into every application generic over its server. `Container.nextSpan(after:maximumCount:)` is the stable
 /// accessor that makes all of it unnecessary.
-public protocol RequestBodyStreaming {
+public protocol RequestBodyReading {
     /// The value handed to the handler parameter.
     associatedtype Value
 
@@ -47,7 +47,7 @@ public protocol RequestBodyStreaming {
     /// The negative — that two calls really do fail — was checked by compiling it during development and is
     /// **not** machine-verified: this repo has no compile-failure harness, and asserting otherwise would be
     /// the same trap as a commented-out line that looks like a test.
-    static func bindStreaming<Reader: AsyncReader & ~Copyable>(
+    static func bindReader<Reader: AsyncReader & ~Copyable>(
         name: String,
         request: HTTPRequest,
         pathParameters: [String: Substring],
@@ -59,7 +59,7 @@ public protocol RequestBodyStreaming {
 
 /// Reading a request body a chunk at a time, for bindings that do not want the whole thing.
 ///
-/// The counterpart of ``WireMVCRequest/collectBody(_:maximumSize:)``, which every non-streaming binding
+/// The counterpart of ``WireMVCRequest/collectBody(_:maximumSize:)``, which every collecting (`.body`) binding
 /// goes through. A binding may of course drive `reader.read(body:)` itself; this exists so the common
 /// shape — "walk the body, accumulating something small" — does not require each binding to re-derive the
 /// end-of-stream rule (a non-`nil` final element ends the stream, and reading again after it is a
@@ -100,7 +100,7 @@ extension WireMVCRequest {
                 // **Unwrapped, deliberately.** `read` reports both a transport failure and anything the
                 // consume closure threw as one `EitherError`, and a wrapped error is invisible to
                 // `@ErrorResponse(MyError.self, …)`: a route can only map a type it can name. Letting the
-                // wrapper escape would make every streaming binding's own errors unmappable — the same
+                // wrapper escape would make every reader binding's own errors unmappable — the same
                 // defect a codec that leaks its parser's error type has.
                 try error.unwrap()
             }

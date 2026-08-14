@@ -561,7 +561,7 @@ extension RouteBlockGenerator {
             return lent
         }
         if streamsRequestBody(binding.wrapper) {
-            return "try await \(binding.wrapper)<\(type)>.bindStreaming("
+            return "try await \(binding.wrapper)<\(type)>.bindReader("
                 + "name: \"\(name)\", request: request, pathParameters: pathParameters, reader: reader, "
                 + "coding: \(codingExpression))"
         }

@@ -25,11 +25,11 @@ public enum WireMVCBindingObligation: Sendable {
     case path
     /// The binding reads the request body **incrementally**, so the terminal hands it the reader instead of
     /// collecting the body first. At most one binding per route, and never alongside `.body` — the reader
-    /// cannot be both collected and streamed. See ``RequestBodyStreaming``.
-    case streamingBody
+    /// cannot be both collected and streamed. See ``RequestBodyReading``.
+    case readerBody
     /// The binding hands the **handler** a stream to pull from, rather than a finished value.
     ///
-    /// Where `.streamingBody` reduces the body to something small before the handler runs, this lets the
+    /// Where `.readerBody` reduces the body to something small before the handler runs, this lets the
     /// handler act on the body as it arrives — reject an upload after its first field, write each part
     /// somewhere as it lands. The terminal constructs the stream, lends it to the handler `inout`, and keeps
     /// the reader in its own frame for the duration.
