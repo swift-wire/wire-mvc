@@ -27,6 +27,21 @@ public enum WireMVCBindingObligation: Sendable {
     /// collecting the body first. At most one binding per route, and never alongside `.body` — the reader
     /// cannot be both collected and streamed. See ``RequestBodyStreaming``.
     case streamingBody
+    /// The binding hands the **handler** a stream to pull from, rather than a finished value.
+    ///
+    /// Where `.streamingBody` reduces the body to something small before the handler runs, this lets the
+    /// handler act on the body as it arrives — reject an upload after its first field, write each part
+    /// somewhere as it lands. The terminal constructs the stream, lends it to the handler `inout`, and keeps
+    /// the reader in its own frame for the duration.
+    ///
+    /// The binding provides `static func makeStream<Reader>(reader: borrowing Reader) -> some stream type`.
+    /// That is a **spelling** the generator emits, not a protocol requirement, and it has to be: the stream's
+    /// type depends on the reader, and a protocol's `associatedtype` is fixed by the conformance before any
+    /// reader exists. The same reasoning as the response side's `codec:`.
+    ///
+    /// The stream should be `~Copyable, ~Escapable` — then the compiler, not a convention, prevents a
+    /// handler stashing it somewhere that outlives the request.
+    case bodyStream
 }
 
 public protocol RequestBound {
