@@ -642,6 +642,25 @@ struct BodyStreamBindingTests {
         #expect(messages.contains { $0.contains("names no stream type") }, "\(messages)")
     }
 
+    /// A lent stream must not be nagged about `RequestSendable`. It has nothing to send, its route is
+    /// omitted from the client on purpose, and the warning's own advice — add the conformance or the call
+    /// will not compile — is about a call that is never generated.
+    @Test("a lent stream is exempt from the send-conformance warning")
+    func lentStreamNotWarnedAbout() {
+        let result = generateRouteContributors(
+            files: WireMVCBuiltIns.declarationFiles + [
+                ("Upload.swift", Self.binding),
+                ("Controller.swift", controller(ownership: "consuming")),
+            ],
+            testEntry: true
+        )
+        let messages = result.diagnostics.map { $0.message.message }
+        #expect(
+            !messages.contains { $0.contains("does not conform to RequestSendable") },
+            "\(messages)"
+        )
+    }
+
     /// Both streamed kinds consume the route's one reader, so mixing them is the same contradiction as
     /// using either twice.
     @Test("a lent stream beside a reducing stream is refused")
@@ -746,4 +765,5 @@ struct LentStreamClientTests {
         #expect(!source.contains("struct FilesClient"), "no client rather than an empty or broken one")
         #expect(!source.contains(".send(name: \"parts\""), "and certainly not an uncompilable send")
     }
+
 }

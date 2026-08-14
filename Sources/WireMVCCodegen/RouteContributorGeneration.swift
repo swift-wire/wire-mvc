@@ -582,6 +582,12 @@ private func sendConformanceWarnings(
     let bodySendable = scanConformances(to: "RequestBodySendable", in: trees)
     let sendable = scanConformances(to: "RequestSendable", in: trees)
     return discoveredBindings.sorted { $0.key < $1.key }.compactMap { binding, obligations in
+        // A **lent stream** is exempt. It has no value to send — its parameter is the means of pulling the
+        // body, not data — so its route is omitted from the typed client by design, and telling the author
+        // to "add the conformance, or the client's call will fail to compile" is advice they cannot take
+        // about a call that is never generated. The omission is a stated property, pinned by
+        // `LentStreamClientTests`, rather than something this warning needs to chase.
+        guard !obligations.contains(.bodyStream) else { return nil }
         // `.streamingBody` counts as supplying the body here. The two differ in how the *server* reads the
         // request — collected versus walked — and not at all in what the client does: it holds whatever it
         // is sending, so it buffers either way. A streaming binding therefore conforms to
