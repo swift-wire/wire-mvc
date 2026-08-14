@@ -25,32 +25,16 @@ extension RouteBlockGenerator {
         discoveredBindings[wrapper]?.contains(.bodyStream) ?? false
     }
 
-    /// How a lent stream's parameter was written. A non-copyable parameter must state its ownership, and
-    /// only these two make sense for a stream the handler pulls from.
-    enum LentStreamOwnership {
-        /// `parts: consuming P` — works today. The handler must shadow (`var parts = parts`) to pull, since
-        /// a property wrapper's backing store is a `let` and its projection is therefore read-only.
-        case consuming
-        /// `parts: inout P` — the shape this wants, and currently unusable: a property wrapper on an `inout`
-        /// parameter is broken for *every* type, not just non-copyable ones. The wrapper is initialised by
-        /// consuming the binding and nothing puts a value back, so a non-copyable parameter fails at the
-        /// declaration (`missing reinitialization of inout parameter after consume`) and a copyable one
-        /// fails at first use (`'x' is immutable`). Emitted anyway, so a route written this way starts
-        /// working the day the desugaring uses `_modify` — no change here required.
-        case inoutParameter
-    }
-
-    /// Read the ownership specifier off a lent stream's parameter, or `nil` if it states none.
-    func lentStreamOwnership(of parameter: FunctionParameterSyntax) -> LentStreamOwnership? {
-        guard let attributed = parameter.type.as(AttributedTypeSyntax.self) else { return nil }
-        for specifier in attributed.specifiers {
-            switch specifier.trimmedDescription {
-            case "consuming": return .consuming
-            case "inout": return .inoutParameter
-            default: continue
-            }
-        }
-        return nil
+    /// Whether a lent stream's parameter is `consuming`, which is the only ownership that fits.
+    ///
+    /// A stream is consumed exactly once, through `withParts`. `inout` was emitted here briefly, on the
+    /// theory that it would become usable when SE-0293 gains `inout` support — but it is not merely
+    /// unavailable, it is **wrong for this shape**: calling a `consuming` method on an `inout` binding is
+    /// `missing reinitialization of inout parameter after consume` regardless of property wrappers, and
+    /// there is nothing sensible to put back. `borrowing` cannot call a consuming method at all.
+    func hasConsumingOwnership(_ parameter: FunctionParameterSyntax) -> Bool {
+        guard let attributed = parameter.type.as(AttributedTypeSyntax.self) else { return false }
+        return attributed.specifiers.contains { $0.trimmedDescription == "consuming" }
     }
 
     /// The parameters that stream the body, in declaration order. More than one is a contradiction; keeping
@@ -120,7 +104,7 @@ extension RouteBlockGenerator {
             record(RouteCodegenDiagnostic(.bodyStreamNeedsStreamType(binding: binding.wrapper), at: param))
             return ""
         }
-        guard lentStreamOwnership(of: param) != nil else {
+        guard hasConsumingOwnership(param) else {
             record(
                 RouteCodegenDiagnostic(.bodyStreamNeedsOwnership(function.name.text, parameter: name), at: param)
             )

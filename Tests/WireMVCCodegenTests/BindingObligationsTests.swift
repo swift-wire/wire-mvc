@@ -594,7 +594,7 @@ struct BodyStreamBindingTests {
         """
     }
 
-    /// `consuming` is the spelling that works in this Swift version, and the stream is passed by value.
+    /// `consuming` is the only ownership that fits: the stream is used up once, through `withParts`.
     @Test("a consuming stream is built from the reader and passed by value")
     func consumingStream() {
         let (source, diagnostics) = generate(controller(ownership: "consuming"))
@@ -605,21 +605,22 @@ struct BodyStreamBindingTests {
         #expect(!source.contains("MultipartParts<"), "no type argument — the reader is inferred from the call")
     }
 
-    /// `inout` is emitted too, though a property wrapper on an `inout` parameter is unusable today. The point
-    /// is that a route written this way needs no codegen change on the day that is fixed.
-    @Test("an inout stream is passed by reference")
-    func inoutStream() {
-        let (source, diagnostics) = generate(controller(ownership: "inout"))
-        #expect(diagnostics.isEmpty, "\(diagnostics)")
-        #expect(source.contains("receive(parts: &parts)"), "by reference for inout")
+    /// `inout` is refused rather than emitted. It was briefly supported on the theory that SE-0293 would
+    /// make it usable — but it is wrong for this shape regardless: calling a `consuming` method on an
+    /// `inout` binding is `missing reinitialization of inout parameter after consume`, and a stream has
+    /// nothing sensible to put back.
+    @Test("an inout stream parameter is refused")
+    func inoutStreamRefused() {
+        let (_, diagnostics) = generate(controller(ownership: "inout"))
+        #expect(diagnostics.contains { $0.contains("must be 'consuming'") }, "\(diagnostics)")
     }
 
-    /// A non-copyable parameter must state ownership anyway; saying so here names the two spellings that
-    /// mean something for a stream, rather than leaving the author with the compiler's generic advice.
+    /// A non-copyable parameter must state ownership anyway; saying so here names the one spelling that
+    /// works, rather than leaving the author with the compiler's generic advice.
     @Test("a stream parameter with no ownership is diagnosed")
     func missingOwnership() {
         let (_, diagnostics) = generate(controller(ownership: ""))
-        #expect(diagnostics.contains { $0.contains("must state ownership") }, "\(diagnostics)")
+        #expect(diagnostics.contains { $0.contains("must be 'consuming'") }, "\(diagnostics)")
     }
 
     @Test("a bodyStream binding naming no stream type is diagnosed")

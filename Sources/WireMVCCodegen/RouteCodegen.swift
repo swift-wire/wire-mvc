@@ -532,15 +532,13 @@ extension RouteBlockGenerator {
                 )
                 return nil
             }
-            // A lent stream is built as a `var` — the handler pulls from it, which advances it — and passed
-            // according to how the parameter was written: by value for `consuming`, by reference for `inout`.
-            let ownership = lendsBodyStream(binding.wrapper) ? lentStreamOwnership(of: param) : nil
+            // A lent stream is built as a `var` — `withParts` consumes it — and always passed by value,
+            // because `consuming` is the only ownership that fits (see `hasConsumingOwnership`).
             let keyword = lendsBodyStream(binding.wrapper) ? "var" : "let"
-            let argument = ownership == .inoutParameter ? "&\(internalName)" : internalName
             binds.append(
                 "\(keyword) \(internalName) = \(bindExpression(for: param, binding: binding, name: bindingName, hasBody: hasBody, function: function))"
             )
-            callArgs.append(isWildcard ? argument : "\(param.firstName.text): \(argument)")
+            callArgs.append(isWildcard ? internalName : "\(param.firstName.text): \(internalName)")
         }
         return (binds, callArgs)
     }

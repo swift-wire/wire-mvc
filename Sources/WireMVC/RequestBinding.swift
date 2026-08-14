@@ -34,13 +34,15 @@ public enum WireMVCBindingObligation: Sendable {
     /// somewhere as it lands. The terminal constructs the stream, lends it to the handler `inout`, and keeps
     /// the reader in its own frame for the duration.
     ///
-    /// The binding provides `static func makeStream<Reader>(reader: borrowing Reader) -> some stream type`.
-    /// That is a **spelling** the generator emits, not a protocol requirement, and it has to be: the stream's
-    /// type depends on the reader, and a protocol's `associatedtype` is fixed by the conformance before any
-    /// reader exists. The same reasoning as the response side's `codec:`.
+    /// The binding names its stream type with `stream:`, and the generator constructs it —
+    /// `MultipartParts(request: request, reader: reader)`. That is a **spelling**, not a protocol
+    /// requirement, and it has to be: the stream's type depends on the reader, and a protocol's
+    /// `associatedtype` is fixed by the conformance before any reader exists. The same reasoning as the
+    /// response side's `codec:`.
     ///
-    /// The stream should be `~Copyable, ~Escapable` — then the compiler, not a convention, prevents a
-    /// handler stashing it somewhere that outlives the request.
+    /// The parameter must be `consuming`: a stream is used up once, through a `withParts`-style entry point
+    /// that consumes it. `inout` is not a matter of taste or of a missing feature — calling a consuming
+    /// method on an `inout` binding demands a replacement value, and a stream has none.
     case bodyStream
 }
 
