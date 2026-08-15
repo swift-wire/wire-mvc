@@ -1,7 +1,8 @@
 public import HTTPTypes
 public import Logging
 public import Wire
-public import WireMVC
+// The keys only — no WireMVC type appears in a public signature here.
+import WireMVC
 
 #if canImport(FoundationEssentials)
 import FoundationEssentials
@@ -46,12 +47,17 @@ public enum WireMVCRequestLogging {
     /// `X-Request-Id` first, then the trace-id field of a W3C `traceparent`. Falls back to a fresh
     /// UUID when the request carries neither.
     ///
-    /// Replace it from the app for a different scheme (a ULID, or trusting a different header):
+    /// One declaration doing both jobs: it is the injectable `WireMVCRequest.id` binding *and* the
+    /// `request-id` field on every log line. That is the shape every field takes here.
+    ///
+    /// Replace it from the app for a different scheme (a ULID, or trusting a different header) — the
+    /// replacement inherits the contribution, since `@Replaces` supersedes the whole binding:
     ///
     ///     @Provides(WireMVCRequest.id)
     ///     @Replaces
     ///     static func requestID(request: HTTPRequest) -> String { … }
     @Provides(WireMVCRequest.id)
+    @Contributes(to: WireMVCLogMetadata.stringEntries, atKey: WireMVCLogMetadata.requestID)
     public static func requestID(request: HTTPRequest) -> String {
         if let supplied = header("x-request-id", of: request), !supplied.isEmpty {
             return supplied
@@ -67,21 +73,22 @@ public enum WireMVCRequestLogging {
     /// The request-scoped logger — the **unkeyed** `Logger` binding, so a request-scoped type's bare
     /// `@Inject var logger: Logger` resolves here.
     ///
-    /// It is the app logger with the request id attached as metadata, so handler log lines correlate
-    /// without any per-call-site work. The app logger arrives as a borrowed app singleton (keyed, hence
-    /// `@Bind`); it is not reconstructed per request.
+    /// It is the app logger with every contributed field folded in, so handler log lines correlate
+    /// without any per-call-site work, and a new field is a `@Contributes` rather than an edit here. The
+    /// app logger arrives as a borrowed app singleton (keyed, hence `@Bind`); it is not reconstructed
+    /// per request.
     @Provides
     public static func requestLogger(
         @Bind(WireMVCApplication.logger) base: Logger,
-        @Bind(WireMVCRequest.id) id: String
+        @Bind(WireMVCLogMetadata.stringEntries) fields: [String: String]
     ) -> Logger {
         var logger = base
-        logger[metadataKey: WireMVCLogMetadata.requestID] = .string(id)
+        for (key, value) in fields { logger[metadataKey: key] = .string(value) }
         return logger
     }
 
     /// Read a header by name, tolerating a name the `HTTPField.Name` parser rejects.
-    private static func header(_ name: String, of request: HTTPRequest) -> String? {
+    static func header(_ name: String, of request: HTTPRequest) -> String? {
         guard let field = HTTPField.Name(name) else { return nil }
         return request.headerFields[field]
     }

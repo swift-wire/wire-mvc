@@ -32,8 +32,39 @@ extension WireMVCRequest {
     public static let id = BindingKey<String>()
 }
 
-/// The metadata key the request id is attached under. Exposed so an app formatting its own log lines
-/// — or asserting on them in a test — names the same string the bindings write.
+/// The per-request logger's metadata, as a map anything can contribute to.
+///
+/// The request logger is built by folding every contribution into the app logger, so adding a field is a
+/// `@Contributes` — not an edit to WireMVC. A distributed-tracing integration contributes its trace and
+/// span ids this way; so does an app that wants a tenant id on every line:
+///
+///     enum TracingKeys {
+///         static let traceID = BindingKey<String>()
+///     }
+///
+///     @Scoped(seed: HTTPRequest.self)
+///     enum TracingMetadata {
+///         @Provides(TracingKeys.traceID)
+///         @Contributes(to: WireMVCLogMetadata.stringEntries, atKey: "trace-id")
+///         static func traceID(span: Span) -> String { span.traceID }
+///     }
+///
+/// A field is therefore an ordinary binding that *also* logs itself: `TracingKeys.traceID` is injectable
+/// on its own (`@Inject(TracingKeys.traceID) var traceID: String`) and appears on every log line, from one
+/// declaration. The `@Provides` needs its key because `@Contributes` requires a co-located producer and an
+/// *unkeyed* producer would declare a second plain `String` binding, colliding with every other field.
+///
+/// The map is `String`-valued because that is what log metadata overwhelmingly is. A field of another type
+/// wants a sibling map (`intEntries`, and so on) folded alongside — deliberately not built until something
+/// needs it, since each one is a few lines and guessing the set now would be guessing.
+///
+/// **Contributors must be request-scoped.** A seed scope's multibindings aggregate from that scope's own
+/// contributors only — an app-scoped contribution stays with the default graph and never reaches the
+/// request logger. That is a silent omission rather than an error, so it is the one thing to get right.
 public enum WireMVCLogMetadata {
+    public static let stringEntries = MappedKey<String, String>()
+
+    /// The key the request id is attached under. Exposed so an app formatting its own log lines — or
+    /// asserting on them in a test — names the same string the binding writes.
     public static let requestID = "request-id"
 }

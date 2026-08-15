@@ -227,6 +227,17 @@ try await withThrowingTaskGroup(of: Void.self) { group in
             "WireMVCLogging  → unkeyed @Inject var logger: Logger is request-scoped, "
                 + "carrying request-id metadata (\(w1.requestID.prefix(8))… vs \(w2.requestID.prefix(8))…)"
         )
+        // The metadata map is an open extension point: TenantLogMetadata (this target) contributes an
+        // entry alongside WireMVCLogging's request-id, with no edit to `requestLogger` and no second
+        // logger binding. This is the shape a distributed-tracing integration takes.
+        check(
+            w1.loggerTenant == "public" && w2.loggerTenant == "public"
+                // One declaration is both the log field and an injectable binding — what the
+                // String-valued map buys over collating already-wrapped metadata values.
+                && w1.injectedTenant == w1.loggerTenant,
+            "WireMVCLogMetadata.stringEntries  → an app-side @Contributes joined the request logger's "
+                + "metadata (tenant=\(w1.loggerTenant)) and the same binding injects directly"
+        )
         // @Teardown on a request-scoped binding (RequestResource) — the generated witness's async defer runs
         // the scope teardown after each request, so the probe counts one per /whoami request above (M5.4.5).
         check(

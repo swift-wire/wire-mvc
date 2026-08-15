@@ -46,6 +46,8 @@ struct WhoAmI: Codable, Sendable {
     let storeShared: Bool
     let requestID: String
     let loggerRequestID: String
+    let loggerTenant: String
+    let injectedTenant: String
 }
 
 @Scoped(seed: HTTPRequest.self)
@@ -59,6 +61,7 @@ struct WhoAmIController: Sendable {
     // logger is keyed (`WireMVCApplication.logger`), so this spelling can only mean the per-request one.
     @Inject var logger: Logger
     @Inject(WireMVCRequest.id) var requestID: String  // the same id, injected on its own
+    @Inject(TenantKeys.tenant) var tenant: String  // an app-side log field, also injectable
 
     @Get
     @JSONResponse
@@ -71,7 +74,13 @@ struct WhoAmIController: Sendable {
             requestID: requestID,
             // Read back off the injected logger, so the response proves the metadata actually rode on
             // the logger the handler holds — not merely that the id binding resolved.
-            loggerRequestID: logger[metadataKey: WireMVCLogMetadata.requestID].map { "\($0)" } ?? "<absent>"
+            loggerRequestID: logger[metadataKey: WireMVCLogMetadata.requestID].map { "\($0)" } ?? "<absent>",
+            // And the app-side contributor's entry, proving the map is genuinely open: this one is
+            // contributed by TenantLogFields, which WireMVCLogging neither knows nor names.
+            loggerTenant: logger[metadataKey: TenantKeys.metadataKey].map { "\($0)" } ?? "<absent>",
+            // The same binding, injected directly — one declaration is both the log field and an
+            // ordinary injectable value, which is what the String-valued map buys.
+            injectedTenant: tenant
         )
     }
 }
