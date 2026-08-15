@@ -44,6 +44,11 @@ let package = Package(
         // this becomes a compatibility shim rather than an implementation.
         .library(name: "WireMVCMiddleware", targets: ["WireMVCMiddleware"]),
         .library(name: "WireMVCServerTransport", targets: ["WireMVCServerTransport"]),
+        // Request-scoped logging. Pick exactly one: `WireMVCLogging` mints the request logger itself
+        // (works on every runtime); `WireMVCTaskLocalLogging` adopts the one the runtime already bound
+        // as a task-local (Hummingbird's `hb.request.id`). Both provide the unkeyed request-scoped
+        // `Logger`, so depending on both is a duplicate-binding error — the intended "pick one".
+        .library(name: "WireMVCLogging", targets: ["WireMVCLogging"]),
         // The HTML adapter `@HTMLResponse` resolves against: it supplies `WireMVCHTMLProducer`, which
         // streams an Elementary `some HTML` into the proposal's response body writer. WireMVC's core
         // names no HTML library — the codegen emits a `WireMVCHTMLProducer(...)` call that resolves in the
@@ -186,6 +191,24 @@ let package = Package(
                 // The `services` collation key + `WireMVCComposable.services` surface app-scoped
                 // `ServiceLifecycle` services the graph runs alongside the server.
                 .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
+                // `Logger` — named by the logging contract in LoggingKeys.swift (and by Bootstrap.swift,
+                // which previously relied on ServiceLifecycle re-exporting it).
+                .product(name: "Logging", package: "swift-log"),
+            ],
+            swiftSettings: proposalSettings
+        ),
+        // The default logging target: WireMVC mints the request logger from the app logger plus a
+        // per-request correlation id. Runtime-independent, so it behaves identically on the native
+        // server, on Hummingbird/Vapor via WireMVCServerTransport, and for OpenAPI controllers.
+        // An app depends on this OR WireMVCTaskLocalLogging, never both — they both provide the
+        // unkeyed request-scoped `Logger`, so taking both is a duplicate-binding error.
+        .target(
+            name: "WireMVCLogging",
+            dependencies: [
+                "WireMVC",
+                .product(name: "Wire", package: "swift-wire"),
+                .product(name: "HTTPTypes", package: "swift-http-types"),
+                .product(name: "Logging", package: "swift-log"),
             ],
             swiftSettings: proposalSettings
         ),
