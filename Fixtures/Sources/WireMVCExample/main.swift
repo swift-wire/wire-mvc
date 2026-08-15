@@ -214,6 +214,19 @@ try await withThrowingTaskGroup(of: Void.self) { group in
                 && w1.storeShared && w2.storeShared,
             "@Scoped(seed:) @Controller  → request-scoped value (async @Inject init) fresh per request, @Singleton shared"
         )
+        // M6b — the request logger. Four things at once: the bare unkeyed `@Inject var logger: Logger`
+        // resolved (to WireMVCLogging's request-scoped binding, supplied by a *dependency module's*
+        // `@Scoped(seed:)` block); the keyed app logger it derives from coexists rather than colliding;
+        // the id is per-request, not per-process; and the id actually rode on the logger the handler
+        // holds (`loggerRequestID` is read back off its metadata, not from the id binding).
+        check(
+            !w1.requestID.isEmpty && !w2.requestID.isEmpty
+                && w1.requestID != w2.requestID  // fresh per request, not an app-scoped constant
+                && w1.loggerRequestID == w1.requestID
+                && w2.loggerRequestID == w2.requestID,
+            "WireMVCLogging  → unkeyed @Inject var logger: Logger is request-scoped, "
+                + "carrying request-id metadata (\(w1.requestID.prefix(8))… vs \(w2.requestID.prefix(8))…)"
+        )
         // @Teardown on a request-scoped binding (RequestResource) — the generated witness's async defer runs
         // the scope teardown after each request, so the probe counts one per /whoami request above (M5.4.5).
         check(

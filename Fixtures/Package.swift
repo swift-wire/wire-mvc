@@ -88,6 +88,9 @@ let package = Package(
             dependencies: [
                 .product(name: "WireMVC", package: "wire-mvc"),
                 .product(name: "WireMVCRouter", package: "wire-mvc"),
+                // The default logging target — supplies the keyed app `Logger` and the unkeyed
+                // request-scoped one WhoAmIController injects.
+                .product(name: "WireMVCLogging", package: "wire-mvc"),
                 .product(name: "Wire", package: "swift-wire"),
                 .product(name: "HTTPAPIs", package: "swift-http-api-proposal"),
                 .product(name: "AsyncStreaming", package: "swift-async-algorithms"),

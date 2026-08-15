@@ -1,7 +1,11 @@
 import HTTPTypes
+import Logging
 import Synchronization
 import Wire
 import WireMVC
+// The request-scoped `Logger` binding composes in from here — no symbol in this file names the module,
+// but removing the import removes the binding from the graph.
+import WireMVCLogging
 
 // A request-scoped controller — the M5.4 case. `@Scoped(seed: HTTPRequest.self) @Controller` makes the
 // controller a *bridge* proxy: it's constructed fresh per request from the request seed (via the
@@ -40,6 +44,8 @@ struct WhoAmI: Codable, Sendable {
     let path: String
     let tag: String
     let storeShared: Bool
+    let requestID: String
+    let loggerRequestID: String
 }
 
 @Scoped(seed: HTTPRequest.self)
@@ -48,10 +54,24 @@ struct WhoAmIController: Sendable {
     @Inject var info: RequestInfo  // request-scoped — fresh per request, async-constructed
     @Inject var resource: RequestResource  // request-scoped — @Teardown fires per request (M5.4.5)
     @Inject var store: UserStore  // app singleton — shared
+    // M6b: the bare, *unkeyed* `Logger` resolves to `WireMVCLogging`'s request-scoped binding — supplied
+    // by a dependency module's `@Scoped(seed:)` block, not by anything in this target. The app-scoped
+    // logger is keyed (`WireMVCApplication.logger`), so this spelling can only mean the per-request one.
+    @Inject var logger: Logger
+    @Inject(WireMVCRequest.id) var requestID: String  // the same id, injected on its own
 
     @Get
     @JSONResponse
     func get() async throws -> WhoAmI {
-        WhoAmI(path: info.path, tag: info.tag, storeShared: (try? store.find("42")) != nil)
+        logger.info("whoami handled")
+        return WhoAmI(
+            path: info.path,
+            tag: info.tag,
+            storeShared: (try? store.find("42")) != nil,
+            requestID: requestID,
+            // Read back off the injected logger, so the response proves the metadata actually rode on
+            // the logger the handler holds — not merely that the id binding resolved.
+            loggerRequestID: logger[metadataKey: WireMVCLogMetadata.requestID].map { "\($0)" } ?? "<absent>"
+        )
     }
 }
