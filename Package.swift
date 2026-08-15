@@ -49,6 +49,7 @@ let package = Package(
         // as a task-local (Hummingbird's `hb.request.id`). Both provide the unkeyed request-scoped
         // `Logger`, so depending on both is a duplicate-binding error — the intended "pick one".
         .library(name: "WireMVCLogging", targets: ["WireMVCLogging"]),
+        .library(name: "WireMVCTaskLocalLogging", targets: ["WireMVCTaskLocalLogging"]),
         // The HTML adapter `@HTMLResponse` resolves against: it supplies `WireMVCHTMLProducer`, which
         // streams an Elementary `some HTML` into the proposal's response body writer. WireMVC's core
         // names no HTML library — the codegen emits a `WireMVCHTMLProducer(...)` call that resolves in the
@@ -118,7 +119,9 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-collections.git", from: "1.6.0"),
         .package(url: "https://github.com/swift-server/swift-http-server.git", branch: "main"),
         .package(url: "https://github.com/swift-server/swift-service-lifecycle.git", from: "2.0.0"),
-        .package(url: "https://github.com/apple/swift-log.git", from: "1.13.2"),
+        // 1.14 is where the task-local logger (`withLogger` / `Logger.current`) lands, which
+        // WireMVCTaskLocalLogging requires outright rather than by accident of resolution.
+        .package(url: "https://github.com/apple/swift-log.git", from: "1.14.0"),
         .package(url: "https://github.com/apple/swift-openapi-runtime.git", from: "1.7.0"),
         .package(url: "https://github.com/swiftlang/swift-syntax", branch: "release/6.4.x"),
         // Pinned to a revision until upstream takes the change: it relaxes `HTMLStreamWriter` to
@@ -204,6 +207,19 @@ let package = Package(
         // unkeyed request-scoped `Logger`, so taking both is a duplicate-binding error.
         .target(
             name: "WireMVCLogging",
+            dependencies: [
+                "WireMVC",
+                .product(name: "Wire", package: "swift-wire"),
+                .product(name: "HTTPTypes", package: "swift-http-types"),
+                .product(name: "Logging", package: "swift-log"),
+            ],
+            swiftSettings: proposalSettings
+        ),
+        // The alternative logging target: adopts the logger the runtime already bound as a task-local
+        // (Hummingbird's, carrying `hb.request.id`) instead of minting one, so WireMVC's log lines and the
+        // framework's share an id. Requires swift-log 1.14, where `withLogger`/`Logger.current` land.
+        .target(
+            name: "WireMVCTaskLocalLogging",
             dependencies: [
                 "WireMVC",
                 .product(name: "Wire", package: "swift-wire"),

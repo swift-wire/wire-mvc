@@ -45,7 +45,8 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-collections.git", from: "1.6.0"),
         .package(url: "https://github.com/swift-server/swift-http-server.git", branch: "main"),
         .package(url: "https://github.com/swift-server/swift-service-lifecycle.git", from: "2.0.0"),
-        .package(url: "https://github.com/apple/swift-log.git", from: "1.13.2"),
+        // The task-local example calls `withLogger` directly, so this package needs 1.14 in its own right.
+        .package(url: "https://github.com/apple/swift-log.git", from: "1.14.0"),
     ],
     targets: [
         // Synthetic bodies for WireMVC's streaming response tier (`WireMVC/StreamingResponses.swift`):
@@ -136,6 +137,26 @@ let package = Package(
         // `WireMVCTesting` makes the plugin emit the `.wiremvc(_:)` suite-trait factory (not a `@main`,
         // which can't live in a test bundle); the suite runs `.swiftHttpServer` — a harness-owned server on
         // an ephemeral loopback port — and drives `GET /hello/Alice` over real HTTP.
+        // `WireMVCTaskLocalLogging` end to end. The native server binds no task-local logger, so this
+        // fixture plays the runtime's part with `withLogger` — binding a *different* logger at bootstrap
+        // and at serve time, so the handler's logger proves which one it re-read.
+        .executableTarget(
+            name: "WireMVCTaskLocalExample",
+            dependencies: [
+                .product(name: "WireMVC", package: "wire-mvc"),
+                .product(name: "WireMVCRouter", package: "wire-mvc"),
+                // The alternative logging target — this fixture's whole subject.
+                .product(name: "WireMVCTaskLocalLogging", package: "wire-mvc"),
+                .product(name: "Wire", package: "swift-wire"),
+                .product(name: "HTTPAPIs", package: "swift-http-api-proposal"),
+                .product(name: "HTTPTypes", package: "swift-http-types"),
+                .product(name: "NIOHTTPServer", package: "swift-http-server"),
+                .product(name: "Logging", package: "swift-log"),
+                .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
+            ],
+            swiftSettings: proposalSettings,
+            plugins: [.plugin(name: "WireMVCBuildPlugin", package: "wire-mvc")]
+        ),
         // A second `@WireMVCBootstrap` app that declares **no** `@NotFound`, so its 404 is the plugin's
         // synthesised one — the branch every other fixture skips by writing its own handler.
         .executableTarget(

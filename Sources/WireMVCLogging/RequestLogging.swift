@@ -16,10 +16,12 @@ import Foundation
 // and OpenAPI controllers.
 //
 // The alternative is `WireMVCTaskLocalLogging`, which *adopts* whatever logger the runtime already
-// bound as a task-local (Hummingbird's, carrying `hb.request.id`). Depend on exactly one: both provide
-// the unkeyed request-scoped `Logger`, so taking both is a duplicate-binding error. Because activation
-// is depend-to-activate and transitive, these are application-level dependencies — a *library* that
-// depended on one would force that choice on everything downstream.
+// bound as a task-local (Hummingbird's, carrying `hb.request.id`). Depend on exactly one. Taking both is
+// a build error, though not the one you might expect: both contribute `request-id` to the metadata map,
+// so the duplicate `atKey` is reported first — the two unkeyed `Logger` bindings would collide too, but
+// never get that far. Because activation is depend-to-activate and transitive, these are
+// application-level dependencies — a *library* that depended on one would force that choice on
+// everything downstream.
 //
 // Every binding here is `@Replaces`-able from the app (a consumer superseding a dependency's binding
 // for the same key is exactly what `@Replaces` does), so "custom id scheme" and "custom logger" need
@@ -59,15 +61,7 @@ public enum WireMVCRequestLogging {
     @Provides(WireMVCRequest.id)
     @Contributes(to: WireMVCLogMetadata.stringEntries, atKey: WireMVCLogMetadata.requestID)
     public static func requestID(request: HTTPRequest) -> String {
-        if let supplied = header("x-request-id", of: request), !supplied.isEmpty {
-            return supplied
-        }
-        // traceparent: <version>-<trace-id>-<parent-id>-<flags>; the trace-id is the correlating part.
-        if let traceparent = header("traceparent", of: request) {
-            let fields = traceparent.split(separator: "-")
-            if fields.count >= 2, !fields[1].isEmpty { return String(fields[1]) }
-        }
-        return UUID().uuidString
+        WireMVCRequest.correlationID(from: request)
     }
 
     /// The request-scoped logger — the **unkeyed** `Logger` binding, so a request-scoped type's bare
@@ -76,20 +70,13 @@ public enum WireMVCRequestLogging {
     /// It is the app logger with every contributed field folded in, so handler log lines correlate
     /// without any per-call-site work, and a new field is a `@Contributes` rather than an edit here. The
     /// app logger arrives as a borrowed app singleton (keyed, hence `@Bind`); it is not reconstructed
-    /// per request.
+    /// per request. This is the one line that differs from `WireMVCTaskLocalLogging`, which takes its
+    /// base from `Logger.current` instead.
     @Provides
     public static func requestLogger(
         @Bind(WireMVCApplication.logger) base: Logger,
         @Bind(WireMVCLogMetadata.stringEntries) fields: [String: String]
     ) -> Logger {
-        var logger = base
-        for (key, value) in fields { logger[metadataKey: key] = .string(value) }
-        return logger
-    }
-
-    /// Read a header by name, tolerating a name the `HTTPField.Name` parser rejects.
-    static func header(_ name: String, of request: HTTPRequest) -> String? {
-        guard let field = HTTPField.Name(name) else { return nil }
-        return request.headerFields[field]
+        WireMVCLogMetadata.applying(fields, to: base)
     }
 }

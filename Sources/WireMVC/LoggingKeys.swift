@@ -1,5 +1,12 @@
+public import HTTPTypes
 public import Logging
 public import Wire
+
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
+import Foundation
+#endif
 
 // The logging contract, declared in the core so every logging target and every app spell the *same*
 // keys. Wire matches keyed bindings by the canonical text of the key expression, so the keys have to
@@ -67,4 +74,38 @@ public enum WireMVCLogMetadata {
     /// The key the request id is attached under. Exposed so an app formatting its own log lines — or
     /// asserting on them in a test — names the same string the binding writes.
     public static let requestID = "request-id"
+
+    /// Fold contributed entries onto a logger. Lives here rather than in a logging target because both
+    /// targets do it identically — they differ only in where the base logger comes from.
+    public static func applying(_ entries: [String: String], to logger: Logger) -> Logger {
+        var result = logger
+        for (key, value) in entries { result[metadataKey: key] = .string(value) }
+        return result
+    }
+}
+
+extension WireMVCRequest {
+    /// Derive a correlation id for `request`.
+    ///
+    /// Prefers an id the caller already supplied, so a request keeps one identity across services:
+    /// `X-Request-Id` first, then the trace-id field of a W3C `traceparent`. Falls back to a fresh UUID
+    /// when the request carries neither. Shared by both logging targets so the id means the same thing
+    /// whichever one an app picks.
+    public static func correlationID(from request: HTTPRequest) -> String {
+        if let supplied = header("x-request-id", of: request), !supplied.isEmpty {
+            return supplied
+        }
+        // traceparent: <version>-<trace-id>-<parent-id>-<flags>; the trace-id is the correlating part.
+        if let traceparent = header("traceparent", of: request) {
+            let fields = traceparent.split(separator: "-")
+            if fields.count >= 2, !fields[1].isEmpty { return String(fields[1]) }
+        }
+        return UUID().uuidString
+    }
+
+    /// Read a header by name, tolerating a name the `HTTPField.Name` parser rejects.
+    private static func header(_ name: String, of request: HTTPRequest) -> String? {
+        guard let field = HTTPField.Name(name) else { return nil }
+        return request.headerFields[field]
+    }
 }
