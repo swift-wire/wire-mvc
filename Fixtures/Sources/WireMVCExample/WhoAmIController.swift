@@ -3,9 +3,12 @@ import Logging
 import Synchronization
 import Wire
 import WireMVC
-// The request-scoped `Logger` binding composes in from here — no symbol in this file names the module,
-// but removing the import removes the binding from the graph.
-import WireMVCLogging
+
+// `WireMVCLogging`'s bindings compose in because this *target depends on it* — activation is
+// depend-to-activate, and the plugin finds it by the `_WireExports.swift` marker in its sources
+// (`WireMVCBuildPlugin.swift`). Imports have nothing to do with it: the generated graph emits its own
+// `import WireMVCLogging` to name the providers. So there is deliberately no import here — nothing in
+// this file names one of its symbols (`WireMVCRequest` and `WireMVCLogMetadata` are core WireMVC).
 
 // A request-scoped controller — the M5.4 case. `@Scoped(seed: HTTPRequest.self) @Controller` makes the
 // controller a *bridge* proxy: it's constructed fresh per request from the request seed (via the

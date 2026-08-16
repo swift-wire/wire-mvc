@@ -43,10 +43,16 @@ func send(_ path: String, port: Int, headers: [String: String] = [:]) async thro
     return ((response as? HTTPURLResponse)?.statusCode ?? -1, data)
 }
 
-/// A logger carrying a distinguishing marker, so the handler can say which scope it came from.
-func probeLogger(marker: String) -> Logger {
+/// A logger carrying a distinguishing marker, so the handler can say which scope it came from — plus, for
+/// the serve-time one, an id under a framework-ish key, standing in for Hummingbird's `hb.request.id`.
+///
+/// Bound once around the serve rather than per request, which is where this fixture is thinner than a real
+/// runtime: Hummingbird rotates its id per request. What is under test is that the id reaches the handler
+/// and that WireMVC adds no competing one, and a constant id shows both.
+func probeLogger(marker: String, runtimeID: String? = nil) -> Logger {
     var logger = Logger(label: "WireMVCTaskLocalExample")
     logger[metadataKey: ProbeMetadata.marker] = .string(marker)
+    if let runtimeID { logger[metadataKey: ProbeMetadata.runtimeRequestID] = .string(runtimeID) }
     return logger
 }
 
@@ -72,7 +78,7 @@ let router = builder.finalize()
 
 // The serve-time binding. Task-locals propagate into child tasks, so every request handled under this
 // group sees it — standing in for Hummingbird's per-request `withLogger`.
-try await withLogger(probeLogger(marker: "serve")) { _ in
+try await withLogger(probeLogger(marker: "serve", runtimeID: "runtime-42")) { _ in
     try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask { try await wireMVCServer.serve(handler: router) }
 
@@ -96,21 +102,31 @@ try await withLogger(probeLogger(marker: "serve")) { _ in
                 + "(marker=\(probe.loggerMarker)), not the app-scoped snapshot taken at bootstrap"
         )
 
-        // The contributed fields are folded onto the adopted logger, so an app's `@Contributes` log fields
-        // keep working across a target switch — and the id binding still injects on its own.
+        // The runtime's id reaches the handler, and the app's extraction binding republishes exactly it —
+        // no translation, no second identifier.
         check(
-            !probe.injectedRequestID.isEmpty
-                && probe.loggerRequestID == probe.injectedRequestID,
-            "WireMVCLogMetadata.stringEntries  → contributed fields fold onto the adopted logger, and "
-                + "WireMVCRequest.id still injects directly"
+            probe.loggerRuntimeID == "runtime-42" && probe.injectedRequestID == "runtime-42",
+            "the runtime's own id reaches the handler, and the app-side @Provides(WireMVCRequest.id) "
+                + "republishes it (id=\(probe.injectedRequestID))"
         )
 
-        // An inbound id is honoured identically to WireMVCLogging, so switching targets changes no app code.
+        // The point of dropping the minted id: the line carries ONE identifier. Asserting the whole key set
+        // is what shows that — a spot-check for `request-id` being absent would not catch a third field
+        // appearing later, and checking only that the runtime's id is present would not catch a rival one.
+        check(
+            probe.metadataKeys == [ProbeMetadata.marker, ProbeMetadata.runtimeRequestID].sorted(),
+            "no competing id: the logger carries exactly the runtime's metadata "
+                + "(\(probe.metadataKeys.joined(separator: ", "))), with no minted request-id beside it"
+        )
+
+        // An inbound X-Request-Id is NOT honoured here — that is `WireMVCLogging`'s behaviour, and this
+        // target has no id binding of its own to honour it with. Pinned so the difference between the two
+        // targets stays deliberate rather than drifting back.
         let (_, suppliedBody) = try await send("/probe", port: port, headers: ["X-Request-Id": "abc-123"])
         let supplied = try JSONDecoder().decode(Probe.self, from: suppliedBody)
         check(
-            supplied.injectedRequestID == "abc-123" && supplied.loggerRequestID == "abc-123",
-            "WireMVCRequest.correlationID  → an inbound X-Request-Id is honoured, as on the minting target"
+            supplied.injectedRequestID == "runtime-42",
+            "an inbound X-Request-Id does not displace the runtime's id — this target adopts, it does not mint"
         )
 
         group.cancelAll()

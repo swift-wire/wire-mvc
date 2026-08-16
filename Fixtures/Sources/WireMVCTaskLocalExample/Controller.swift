@@ -2,25 +2,44 @@ import HTTPTypes
 import Logging
 import Wire
 import WireMVC
-// The request-scoped `Logger` binding composes in from here — no symbol in this file names the module,
-// but removing the import removes the binding from the graph. Swapping this one line for
-// `import WireMVCLogging` is the entire difference between the two logging targets, from an app's side.
-import WireMVCTaskLocalLogging
+
+// `WireMVCTaskLocalLogging`'s bindings compose in because this *target depends on it* — activation is
+// depend-to-activate, and the plugin finds it by the `_WireExports.swift` marker in its sources
+// (`WireMVCBuildPlugin.swift`). Imports have nothing to do with it: the generated graph emits its own
+// `import WireMVCTaskLocalLogging` to name the providers. So there is deliberately no import here —
+// nothing in this file names one of its symbols.
 
 /// What the route reports back, so the driver can assert on what the *handler* actually held.
 struct Probe: Codable, Sendable {
     /// The marker the task-local logger was bound with, read off the injected logger's metadata.
     let loggerMarker: String
-    /// The request-scoped correlation id, read off the same logger.
-    let loggerRequestID: String
-    /// The same id injected on its own — the field binding's other job.
+    /// The runtime's own request id, as it appears on the injected logger.
+    let loggerRuntimeID: String
+    /// The same id reached through `WireMVCRequest.id` — the app-side extraction binding below.
     let injectedRequestID: String
+    /// Every metadata key on the logger, sorted. Asserting on the whole set is how the fixture shows
+    /// there is no *second* id field; a spot-check for a present key could never show that.
+    let metadataKeys: [String]
 }
 
-/// The metadata key the driver binds its probe logger with. Not a Wire key — just a metadata key, chosen
-/// so it cannot collide with anything the target itself writes.
 enum ProbeMetadata {
+    /// The key the driver binds its marker under.
     static let marker = "probe-marker"
+    /// Stands in for `hb.request.id` — the framework-specific key a runtime puts its own id under.
+    static let runtimeRequestID = "runtime.request.id"
+}
+
+/// The app-side recipe `WireMVCTaskLocalLogging` documents but cannot ship: an app knows which runtime it
+/// is on, so it can name the metadata key that runtime uses and republish the id as `WireMVCRequest.id`.
+///
+/// Deliberately `@Provides` **without** `@Contributes`: the id is already on the line under the runtime's
+/// key, so contributing it would put a second, redundant id field beside it.
+@Scoped(seed: HTTPRequest.self)
+enum RuntimeRequestID {
+    @Provides(WireMVCRequest.id)
+    static func id() -> String {
+        Logger.current[metadataKey: ProbeMetadata.runtimeRequestID].map { "\($0)" } ?? ""
+    }
 }
 
 @Scoped(seed: HTTPRequest.self)
@@ -29,6 +48,7 @@ struct ProbeController: Sendable {
     /// Unkeyed, so it resolves to `WireMVCTaskLocalLogging`'s request-scoped binding — which takes its
     /// base from `Logger.current` rather than from the app-scoped logger.
     @Inject var logger: Logger
+    /// Resolves to the app's extraction binding above, not to anything WireMVC provides.
     @Inject(WireMVCRequest.id) var requestID: String
 
     @Get
@@ -37,8 +57,11 @@ struct ProbeController: Sendable {
         logger.info("probe handled")
         return Probe(
             loggerMarker: logger[metadataKey: ProbeMetadata.marker].map { "\($0)" } ?? "<absent>",
-            loggerRequestID: logger[metadataKey: WireMVCLogMetadata.requestID].map { "\($0)" } ?? "<absent>",
-            injectedRequestID: requestID
+            loggerRuntimeID: logger[metadataKey: ProbeMetadata.runtimeRequestID].map { "\($0)" }
+                ?? "<absent>",
+            injectedRequestID: requestID,
+            // `Logger` exposes metadata only per key; the whole set lives on its handler.
+            metadataKeys: logger.handler.metadata.keys.sorted()
         )
     }
 }

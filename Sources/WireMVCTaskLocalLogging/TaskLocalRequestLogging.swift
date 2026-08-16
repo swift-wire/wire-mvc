@@ -18,11 +18,32 @@ import WireMVC
 // default — an empty-label logger — unless the app adds middleware that binds one. `WireMVCLogging` is the
 // runtime-independent choice; this is for apps on a runtime that already owns the logger.
 //
-// Depend on exactly one. Taking both is a build error, though not the one you might expect: both
-// contribute `request-id` to the metadata map, so the duplicate `atKey` is reported first — the two
-// unkeyed `Logger` bindings would collide too, but never get that far. Because activation is
-// depend-to-activate and transitive, these are application-level dependencies — a *library* depending on
-// one would force the choice on everything downstream.
+// Depend on exactly one: both provide the unkeyed request-scoped `Logger`, so taking both is a
+// duplicate-binding error. Because activation is depend-to-activate and transitive, these are
+// application-level dependencies — a *library* depending on one would force the choice on everything
+// downstream.
+//
+// **No `WireMVCRequest.id` here.** This target deliberately does not provide the id binding, which is the
+// one place the two targets are not interchangeable. Minting an id would put a *second* identifier on
+// every line beside the runtime's own — two ids for one request, disagreeing, which is precisely the
+// confusion adopting the runtime's logger is meant to end. Extracting the runtime's id instead cannot be
+// done here either: it lives under a framework-specific key (`hb.request.id`) that a framework-agnostic
+// target cannot name, and on a runtime that binds no task-local at all there would be nothing to extract
+// and the fallback would be... a minted id, back where we started.
+//
+// An app knows its runtime, so it can do what this target cannot:
+//
+//     @Scoped(seed: HTTPRequest.self)
+//     enum RuntimeRequestID {
+//         @Provides(WireMVCRequest.id)
+//         static func id() -> String {
+//             Logger.current[metadataKey: "hb.request.id"].map { "\($0)" } ?? ""
+//         }
+//     }
+//
+// Note the missing `@Contributes`: the id is already on the line under the runtime's key, so contributing
+// it again would re-create the double-id problem. Providing and contributing are separate annotations
+// precisely so this case can have one without the other.
 //
 // `Logger.current` is read unconditionally, with no is-a-scope-active check. When nothing is bound it
 // returns the process-wide default rather than failing, which is exactly what any library reading
@@ -45,30 +66,16 @@ public func wireMVCTaskLocalApplicationLogger() -> Logger {
     Logger.current
 }
 
-/// The request-scoped logging bindings. A `@Scoped(seed:)` block, so both producers land in the
-/// `HTTPRequest` scope and are constructed fresh per request.
+/// The request-scoped logger — the **unkeyed** `Logger` binding, so a request-scoped type's bare
+/// `@Inject var logger: Logger` resolves here.
+///
+/// The base is `Logger.current`, snapshotted *during the request*: whatever id the runtime put on it is
+/// already there, under the runtime's own key. Contributed ``WireMVCLogMetadata/stringEntries`` fold on
+/// top exactly as in `WireMVCLogging`, so an app's `@Contributes` log fields keep working unchanged.
+///
+/// A `@Scoped(seed:)` block for one binding, so adding a second later needs no restructuring.
 @Scoped(seed: HTTPRequest.self)
 public enum WireMVCTaskLocalRequestLogging {
-    /// The per-request correlation id, under ``WireMVCRequest/id`` — derived from the request exactly as
-    /// `WireMVCLogging` derives it, so the id means the same thing whichever target an app picks and
-    /// switching between them changes no app code.
-    ///
-    /// This is deliberately *not* read back out of the adopted logger's metadata. The runtime's own id
-    /// lives under a framework-specific key (`hb.request.id`), identifies the request within that one
-    /// server, and is already on the line; ``WireMVCRequest/id`` is the cross-service correlation id and
-    /// honours an inbound `X-Request-Id` or `traceparent`. Both on a log line is the useful outcome.
-    @Provides(WireMVCRequest.id)
-    @Contributes(to: WireMVCLogMetadata.stringEntries, atKey: WireMVCLogMetadata.requestID)
-    public static func requestID(request: HTTPRequest) -> String {
-        WireMVCRequest.correlationID(from: request)
-    }
-
-    /// The request-scoped logger — the **unkeyed** `Logger` binding, so a request-scoped type's bare
-    /// `@Inject var logger: Logger` resolves here.
-    ///
-    /// The one line that differs from `WireMVCLogging`: the base is `Logger.current`, snapshotted *during
-    /// the request* rather than the app-scoped binding. Contributed fields are folded on top identically,
-    /// so an app's `@Contributes` log fields keep working unchanged across a target switch.
     @Provides
     public static func requestLogger(
         @Bind(WireMVCLogMetadata.stringEntries) fields: [String: String]

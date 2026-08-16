@@ -16,12 +16,10 @@ import Foundation
 // and OpenAPI controllers.
 //
 // The alternative is `WireMVCTaskLocalLogging`, which *adopts* whatever logger the runtime already
-// bound as a task-local (Hummingbird's, carrying `hb.request.id`). Depend on exactly one. Taking both is
-// a build error, though not the one you might expect: both contribute `request-id` to the metadata map,
-// so the duplicate `atKey` is reported first — the two unkeyed `Logger` bindings would collide too, but
-// never get that far. Because activation is depend-to-activate and transitive, these are
-// application-level dependencies — a *library* that depended on one would force that choice on
-// everything downstream.
+// bound as a task-local (Hummingbird's, carrying `hb.request.id`). Depend on exactly one: both provide
+// the app-scoped and request-scoped `Logger`, so taking both is a duplicate-binding error naming the two
+// modules. Because activation is depend-to-activate and transitive, these are application-level
+// dependencies — a *library* that depended on one would force that choice on everything downstream.
 //
 // Every binding here is `@Replaces`-able from the app (a consumer superseding a dependency's binding
 // for the same key is exactly what `@Replaces` does), so "custom id scheme" and "custom logger" need
