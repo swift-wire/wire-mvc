@@ -2048,4 +2048,52 @@ struct RouteContributorGenerationTests {
         #expect(rendered.source.contains("supplying doubles: _Binds_mock_"))
         #expect(!rendered.source.contains("todoRepository: MockTodoRepository, sessionManager: MockSessionManager"))
     }
+
+    // MARK: - The prepare() pre-step
+
+    /// A value-returning `prepare()` runs before construction and its result is the graph's `inputs:`.
+    @Test func preparePreStepSuppliesTheGraphsInputs() {
+        let source = """
+            @Singleton
+            @WireMVCBootstrap
+            struct AppBootstrap {
+                static func prepare() async throws -> AppInputs { fatalError() }
+                func createServer() throws -> NIOHTTPServer { fatalError() }
+            }
+            """
+        let rendered = renderBootstrapEntry(bootstrap: controller(source), notFoundRegistration: "", factoryKeys: [])
+        #expect(rendered.contains("let wireMVCInputs = try await AppBootstrap.prepare()"))
+        #expect(rendered.contains("let graph = try await Wire.bootstrap(inputs: wireMVCInputs)"))
+    }
+
+    /// A `Void` `prepare()` is the side-effect-only form — bootstrap the logging/metrics subsystems, wire
+    /// nothing in — so the graph is still built with no arguments.
+    @Test func voidPreparePreStepRunsWithoutSupplyingInputs() {
+        let source = """
+            @Singleton
+            @WireMVCBootstrap
+            struct AppBootstrap {
+                static func prepare() { }
+                func createServer() throws -> NIOHTTPServer { fatalError() }
+            }
+            """
+        let rendered = renderBootstrapEntry(bootstrap: controller(source), notFoundRegistration: "", factoryKeys: [])
+        #expect(rendered.contains("AppBootstrap.prepare()"))
+        #expect(rendered.contains("let graph = try await Wire.bootstrap()"))
+        #expect(!rendered.contains("wireMVCInputs"))
+    }
+
+    /// No `prepare()` → the entry is exactly what it was before the pre-step existed.
+    @Test func bootstrapEntryOmitsPreStepWhenAbsent() {
+        let source = """
+            @Singleton
+            @WireMVCBootstrap
+            struct AppBootstrap {
+                func createServer() throws -> NIOHTTPServer { fatalError() }
+            }
+            """
+        let rendered = renderBootstrapEntry(bootstrap: controller(source), notFoundRegistration: "", factoryKeys: [])
+        #expect(rendered.contains("let graph = try await Wire.bootstrap()"))
+        #expect(!rendered.contains("prepare()"))
+    }
 }

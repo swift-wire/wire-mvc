@@ -123,4 +123,27 @@ struct GlobalMiddlewareHeaderTests {
             #expect(response.head?.headerFields[.init("x-served-by")!] == "wire-mvc")
         }
     }
+
+    // MARK: - The prepare() pre-step
+
+    /// The pre-step ran, and ran *before* any binding was constructed — the property that makes it usable
+    /// for `LoggingSystem.bootstrap`, which must precede the first log call.
+    @Test func prepareRanBeforeAnyBindingWasConstructed() {
+        #expect(StartupProbe.prepareCount >= 1)
+        #expect(StartupProbe.ranBeforeConstruction)
+    }
+
+    /// Its return value is the graph's `inputs:`, so both inputs reached a binding — the unkeyed
+    /// `ServerConfig` by type and the keyed `releaseChannel` through `@Bind`.
+    @Test func inputsFromPrepareReachedTheGraph() {
+        #expect(StartupSummary.value == "127.0.0.1:8080|stable")
+    }
+
+    /// Exactly once per process, however many suites run. `prepare()` does once-per-process work
+    /// (`LoggingSystem.bootstrap` traps on a second call), and a suite trait rebuilds the app at every
+    /// suite entry — so the generated test entry routes it through `WireMVCTesting.preparedOnce`. This
+    /// bundle has several `.wiremvc()` suites, which is what makes the assertion meaningful.
+    @Test func prepareRanOnlyOncePerProcess() {
+        #expect(StartupProbe.prepareCount == 1)
+    }
 }

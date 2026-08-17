@@ -60,7 +60,7 @@ func bootstrapBuildLines(
     bootstrap: ControllerDeclaration,
     notFoundRegistration: String,
     factoryKeys: Set<String>,
-    bootstrapCall: String = "Wire.bootstrap()",
+    bootstrapMethod: String = "Wire.bootstrap",
     extraRegistrations: String = "",
     transport: BootstrapTransport = .appServer,
     prologue: String = ""
@@ -91,8 +91,16 @@ func bootstrapBuildLines(
     // the build at the call site because `BasicFormat` re-indents only the first line of an interpolated
     // block: a prologue spliced in above would leave the statement after it skewed.
     let leading = prologue.isEmpty ? "" : prologue + "\n"
+    // The `prepare()` pre-step, when the Bootstrap declares one: it runs *before* construction — that is
+    // the point of it — and its return value, if any, is the graph's `inputs:`. It joins `leading` rather
+    // than being interpolated at the call site for the same re-indentation reason.
+    let preStep = preparePreStep(in: bootstrap)
+    let preStepLines = preStep?.lines(callee: bootstrap.name, transport: transport) ?? ""
+    // `bootstrapMethod` names the method (the keyed harness swaps in a variant's); the pre-step supplies
+    // the argument. The two compose without either knowing about the other.
+    let call = "\(bootstrapMethod)(\(preStep?.bootstrapArgument ?? ""))"
     return """
-        \(leading)let graph = try await \(bootstrapCall)
+        \(leading)\(preStepLines)let graph = try await \(call)
         let bootstrap = graph.\(property)
         \(transport.serverLine(bootstrap: bootstrap))
         var builder = bootstrap.createRouteBuilder(for: server)
@@ -176,7 +184,7 @@ func suiteFactory(
     bootstrap: ControllerDeclaration,
     notFoundRegistration: String,
     factoryKeys: Set<String>,
-    bootstrapCall: String = "Wire.bootstrap()",
+    bootstrapMethod: String = "Wire.bootstrap",
     extraRegistrations: String = "",
     prologue: String = ""
 ) -> String {
@@ -184,7 +192,7 @@ func suiteFactory(
         bootstrap: bootstrap,
         notFoundRegistration: notFoundRegistration,
         factoryKeys: factoryKeys,
-        bootstrapCall: bootstrapCall,
+        bootstrapMethod: bootstrapMethod,
         extraRegistrations: extraRegistrations,
         transport: .suiteMode,
         prologue: prologue
@@ -441,6 +449,59 @@ private func functionThrows(named name: String, in declaration: ControllerDeclar
         return function.signature.effectSpecifiers?.throwsClause != nil
     }
     return false
+}
+
+/// The `prepare()` pre-step a Bootstrap may declare, or `nil` when it declares none.
+///
+/// It runs **before** `Wire.bootstrap`, which is the whole point: the graph is built from what it returns,
+/// so this is where a program does the one-time work that must precede construction —
+/// `LoggingSystem.bootstrap`, `MetricsSystem.bootstrap`, reading configuration off the environment — and
+/// where it builds the `@GraphInputs` value carrying the results in. Being pre-graph, it can inject
+/// nothing; that is the trade for running first.
+///
+/// Returning `Void` is the side-effect-only form (bootstrap the subsystems, wire nothing in); returning a
+/// value makes it the graph's `inputs:`. Both are emitted, and a Bootstrap that declares no `prepare()`
+/// emits nothing at all — every existing generated `@main` is byte-for-byte unchanged.
+struct PreparePreStep {
+    /// The `inputs:` type, or `nil` when `prepare()` returns `Void` (or `-> ()`).
+    let inputsType: String?
+    let isAsync: Bool
+    let isThrowing: Bool
+
+    /// The statement(s) that run before construction, or `""` when there is no pre-step. A value-returning
+    /// `prepare()` binds `wireMVCInputs`; a `Void` one is called for its effects alone.
+    ///
+    /// Under `.suiteMode` the call is wrapped in `WireMVCTesting.preparedOnce`, because a suite trait
+    /// rebuilds the app at every suite entry and a `prepare()` that bootstraps swift-log (or metrics, or
+    /// tracing) traps on its second call. The `@main` needs no such guard — it runs once by construction —
+    /// so its emission is the bare call.
+    func lines(callee: String, transport: BootstrapTransport) -> String {
+        let effects = (isThrowing ? "try " : "") + (isAsync ? "await " : "")
+        let call: String
+        switch transport {
+        case .appServer:
+            call = "\(effects)\(callee).prepare()"
+        case .suiteMode:
+            call = "try await WireMVCTesting.preparedOnce { \(effects)\(callee).prepare() }"
+        }
+        return inputsType == nil ? "\(call)\n" : "let wireMVCInputs = \(call)\n"
+    }
+
+    /// Spliced into `Wire.bootstrap(…)` — `inputs: wireMVCInputs`, or empty for the `Void` form. Composes
+    /// with the keyed harness's variant bootstrap, which overrides only the *method* being called.
+    var bootstrapArgument: String { inputsType == nil ? "" : "inputs: wireMVCInputs" }
+}
+
+/// Read the Bootstrap's `prepare()`, if it declares one.
+func preparePreStep(in declaration: ControllerDeclaration) -> PreparePreStep? {
+    guard let function = declaration.functions.first(where: { $0.name.text == "prepare" }) else { return nil }
+    let returnType = function.signature.returnClause?.type.trimmedDescription
+    let isVoid = returnType == nil || returnType == "Void" || returnType == "()"
+    return PreparePreStep(
+        inputsType: isVoid ? nil : returnType,
+        isAsync: function.signature.effectSpecifiers?.asyncSpecifier != nil,
+        isThrowing: function.signature.effectSpecifiers?.throwsClause != nil
+    )
 }
 
 /// Whether `declaration` declares a method with the given name — the Bootstrap's optional factory methods

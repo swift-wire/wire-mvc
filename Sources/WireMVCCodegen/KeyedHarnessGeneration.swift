@@ -177,7 +177,7 @@ func renderBootstrapKeyedTestEntry(
             bootstrap: bootstrap,
             notFoundRegistration: notFoundRegistration,
             factoryKeys: factoryKeys,
-            bootstrapCall: "Wire.\(variantBootstrapMethodName(variantName: key.variantName))()",
+            bootstrapMethod: "Wire.\(variantBootstrapMethodName(variantName: key.variantName))",
             extraRegistrations: variantRegistrations,
             prologue: keyIdentityAssertion(for: key)
         ))
