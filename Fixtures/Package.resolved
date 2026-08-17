@@ -1,5 +1,5 @@
 {
-  "originHash" : "f345b13ed7507aa41dd44170ff8bd0f4918c85e07e4d8190902d86d16d9b4e8d",
+  "originHash" : "8a14d193a3a75c54779b820929108245c116e719f863204efc13cea9953f2c28",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -8,14 +8,6 @@
       "state" : {
         "revision" : "4603a8036d921ea999fadb742931546c341f4bd7",
         "version" : "1.35.0"
-      }
-    },
-    {
-      "identity" : "elementary",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/tachyonics/elementary.git",
-      "state" : {
-        "revision" : "07eb69492ddf7052616af47518e7f883bd8f2691"
       }
     },
     {
@@ -240,7 +232,7 @@
       "location" : "https://github.com/tachyonics/swift-wire.git",
       "state" : {
         "branch" : "main",
-        "revision" : "66c9d6ff80b10c175cbb0960997d4f6f22798dea"
+        "revision" : "ed7235cfe97c8a08db4a8c8ee432359ff7b54eab"
       }
     }
   ],

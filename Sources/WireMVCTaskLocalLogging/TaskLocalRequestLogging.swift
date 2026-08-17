@@ -1,4 +1,5 @@
-public import HTTPTypes
+// `HTTPRequest` names the seed scope; it appears in no public signature here, so a plain import.
+import HTTPTypes
 public import Logging
 public import Wire
 // The keys only — no WireMVC type appears in a public signature here.
