@@ -20,6 +20,26 @@ import WireMVCRouter
 @Middleware(AccessLogKeys.factory)  // global front layer — wraps every request incl. the 404 fallback (Phase 5)
 package struct AppBootstrap {
     @Inject let config: ServerConfig
+    @Inject let startup: StartupReport
+
+    /// The **pre-step**: runs before `Wire.bootstrap`, and its return value is the graph's `inputs:`.
+    ///
+    /// This is where the one-time work that must precede construction goes — `LoggingSystem.bootstrap`
+    /// and its metrics/tracing counterparts, which trap on a second call — and where the values the graph
+    /// cannot derive for itself are read and handed in. Being pre-graph it can inject nothing; that is the
+    /// trade for running first.
+    ///
+    /// Under a test bundle the generated entry routes this through `WireMVCTesting.preparedOnce`, so a
+    /// second suite reuses the first one's result instead of re-running the once-per-process work.
+    package static func prepare() async throws -> AppInputs {
+        StartupProbe.recordPrepare()
+        // Where `LoggingSystem.bootstrap(...)` would go: before the graph, so the first binding to log
+        // already has the real handler installed.
+        return AppInputs(
+            serverConfig: ServerConfig(host: "127.0.0.1", port: 8080),
+            releaseChannel: "stable"
+        )
+    }
 
     // Returns the *concrete* server, not `some HTTPServer`: the proposal's `Reader`/`ResponseSender`
     // are `~Copyable`, which a bare `some HTTPServer` opaque return can't express. The generated
