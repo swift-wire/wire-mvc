@@ -1,6 +1,7 @@
 import HTTPTypes
 package import Wire
 import WireMVC
+package import WireMVCElementary
 
 // Two request-scoped controllers exercising the keyed harness's two subject-match shapes:
 //
@@ -226,5 +227,25 @@ package struct RegistryController: Sendable {
     @JSONResponse
     package func retag(@JSONBody note: Note) -> Note {
         Note(value: "\(registry.tag):\(note.value)")
+    }
+}
+
+/// A **streaming response on a request-scoped controller** — the combination no fixture had.
+///
+/// Every other `@HTMLResponse` route lives on the app-`@Singleton` `PagesController`, so the streaming
+/// terminal had only ever been emitted with an empty scope-entry preamble and prologue. Here both are
+/// non-empty *and* the request body is reduced through a lent reader, so the generated `building` carries
+/// the scope prologue, the lent bind and the handler call together. That is the shape most likely to break
+/// silently, since each half is fine on its own.
+@Scoped(seed: HTTPRequest.self)
+@Controller("/scoped-pages")
+package struct ScopedPageController: Sendable {
+    @Inject var stamp: NoteStamp  // borrowed app singleton, as the JSON scoped controllers do
+
+    @Post("/digest")
+    @HTMLResponse
+    @ErrorResponse(DigestError.self, .contentTooLarge)
+    package func digestPage(@DigestBody digest: BodyDigest) -> some HTML {
+        TodoListPage(heading: stamp.stamp("scoped"), rows: ["bytes: \(digest.byteCount)"])
     }
 }

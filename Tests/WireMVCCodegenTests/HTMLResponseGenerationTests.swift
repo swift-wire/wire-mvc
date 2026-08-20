@@ -293,6 +293,95 @@ struct HTMLResponseGenerationTests {
         )
         #expect(messages.contains { $0.contains("the status on @HTMLResponse(status:)") })
     }
+    // MARK: - Request bodies on a streaming response
+
+    /// Bindings declared outside WireMVC, one per streamed kind. WireMVC declares neither itself — the
+    /// real ones live in the fixtures and examples — so a test that wants them has to supply them, exactly
+    /// as the plugin would after scanning a consumer's sources.
+    private var streamedBindings: [String: DeclaredRequestBinding] {
+        var bindings = WireMVCBuiltIns.bindings
+        bindings["DigestBody"] = DeclaredRequestBinding(obligations: .readerBody)
+        bindings["PartsStream"] = DeclaredRequestBinding(obligations: .bodyStream, streamType: "MultipartParts")
+        return bindings
+    }
+
+    private func witness(_ source: String, bindings: [String: DeclaredRequestBinding]) -> String {
+        renderRegisterWireRoutesWitness(
+            access: "",
+            controller: controller(source),
+            pathPrefix: "/pages",
+            subjectAccessor: "_wireSubject",
+            factoryKeys: [],
+            discoveredBindings: bindings,
+            discoveredModes: WireMVCBuiltIns.modes
+        ).witness
+    }
+
+    private func diagnostics(_ source: String, bindings: [String: DeclaredRequestBinding]) -> [String] {
+        renderRegisterWireRoutesWitness(
+            access: "",
+            controller: controller(source),
+            pathPrefix: "/pages",
+            subjectAccessor: "_wireSubject",
+            factoryKeys: [],
+            discoveredBindings: bindings,
+            discoveredModes: WireMVCBuiltIns.modes
+        ).diagnostics.map(\.message.message)
+    }
+
+    /// A binding that **reduces** the body without holding it composes with a streaming response, through
+    /// the lending overload: the reader arrives as a parameter of `building` rather than being consumed
+    /// before it.
+    ///
+    /// The point of `lendingBodyFrom:` is *where* the bind ends up. Inside `building` it is inside the
+    /// mapped `do`, so a malformed body still maps through `@ErrorResponse`; hoisting it would compile and
+    /// lose that.
+    @Test func readerBodyCombinesWithStreamingResponse() {
+        let source = """
+            @Controller("/pages")
+            struct Pages {
+                @Post("/report")
+                @HTMLResponse
+                func report(@DigestBody digest: Digest) async throws -> some HTML {
+                    Text(digest.hex)
+                }
+            }
+            """
+        let rendered = witness(source, bindings: streamedBindings)
+        #expect(rendered.contains("lendingBodyFrom: reader,"))
+        #expect(rendered.contains("building: { reader in"))
+        // The collecting overload must not also be selected — the reader can only be consumed once.
+        #expect(!rendered.contains("collectingBodyFrom:"))
+        // The bind resolves to the lent reader by shadowing, so it is rendered exactly as it always was.
+        #expect(rendered.contains("reader: reader"))
+        #expect(diagnostics(source, bindings: streamedBindings).isEmpty)
+    }
+
+    /// A binding that **lends** the stream to the handler does not, and says why.
+    ///
+    /// This combination had no test at all before the split — the old single diagnostic covered both kinds
+    /// and was covered by neither.
+    @Test func bodyStreamOnStreamingResponseIsDiagnosed() {
+        let source = """
+            @Controller("/pages")
+            struct Pages {
+                @Post("/live")
+                @HTMLResponse
+                func live<Stream: MultipartPartStream & ~Copyable>(
+                    @PartsStream stream: consuming Stream
+                ) async throws -> some HTML {
+                    Text("x")
+                }
+            }
+            """
+        let messages = diagnostics(source, bindings: streamedBindings)
+        #expect(messages.count == 1)
+        let message = try! #require(messages.first)
+        #expect(message.contains("lends its request body stream"))
+        // It names the working alternative rather than only refusing.
+        #expect(message.contains("@RawRoute"))
+        #expect(message.contains(".readerBody"))
+    }
 }
 
 /// The typed client for `@HTMLResponse` routes.
@@ -378,4 +467,5 @@ struct HTMLResponseClientTests {
             #expect(emitted.contains("func \(route)("), "route '\(route)' is missing from the client")
         }
     }
+
 }

@@ -100,6 +100,45 @@ public struct WireMVCStreamingOutcome<Producer: WireMVCBodyProducer> {
     }
 }
 
+/// The generated terminal for a streaming route whose request body is **read incrementally**.
+///
+/// The sibling of the collecting overload above, and the distinction between them is worth stating because
+/// it is easy to conclude the wrong thing from that one's doc comment. Collection cannot happen *inside*
+/// `building` because a closure only **borrows** what it captures, and `collectBody` consumes. A reader
+/// handed to `building` as a **consuming parameter** is not captured — this function owns it and moves it
+/// in — so the obstacle does not apply, and a `@RequestBinding(.readerBody)` binding can consume it there.
+///
+/// That placement is the whole point: the binding runs inside the same `do` whose `catch` maps, so a
+/// malformed body still becomes a status through `@ErrorResponse` rather than escaping as a truncated
+/// response. Hoisting the read above the call would compile and lose exactly that.
+///
+/// The request is reduced to a value before the response head goes out, so this is *sequential*, not
+/// duplex. A binding that **lends** the stream to the handler (`.bodyStream`) still cannot combine with a
+/// streaming response — see `WireMVCDiagnostic.bodyStreamOnStreamingResponse`.
+public func wireMVCStreamingTerminal<
+    Producer: WireMVCBodyProducer,
+    Sender: HTTPResponseSender & ~Copyable,
+    Reader: AsyncReader & ~Copyable
+>(
+    responseSender: consuming Sender,
+    lendingBodyFrom reader: consuming sending Reader,
+    building: (consuming Reader) async throws -> WireMVCStreamingOutcome<Producer>,
+    errorMapping: (any Error) throws -> WireMVCOutcome
+) async throws where Sender.Writer: ~Copyable, Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields? {
+    let wireMVCResult: WireMVCTerminalOutcome<Producer>
+    do {
+        wireMVCResult = .stream(try await building(reader))
+    } catch let wireMVCError {
+        wireMVCResult = .buffered(try errorMapping(wireMVCError))
+    }
+    switch wireMVCResult {
+    case .stream(let streaming):
+        try await streaming.send(on: responseSender)
+    case .buffered(let buffered):
+        try await buffered.send(on: responseSender)
+    }
+}
+
 /// The terminal-local discriminant: what a streaming route decided to send. Never named by a user.
 public enum WireMVCTerminalOutcome<Producer: WireMVCBodyProducer> {
     case stream(WireMVCStreamingOutcome<Producer>)

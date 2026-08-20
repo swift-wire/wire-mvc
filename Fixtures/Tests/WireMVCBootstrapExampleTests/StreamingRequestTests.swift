@@ -75,4 +75,90 @@ struct StreamingRequestTests {
             #expect(response.status == 413)
         }
     }
+
+    // MARK: - The same binding on a streaming response
+
+    /// `/pages/digest/page` is `@DigestBody` again, this time under `@HTMLResponse` — the combination the
+    /// generator used to refuse outright.
+    ///
+    /// It goes through the **lending** terminal overload: the reader is handed to `building` as a consuming
+    /// parameter instead of being collected before it, so the binding walks it inside the mapped region. The
+    /// digest reaching the page is the proof the walk happened there and not somewhere the head had already
+    /// gone out.
+    @Test("a reduced body reaches a streamed response")
+    func reducedBodyOnStreamingResponse() async throws {
+        try await withClient { client in
+            let body = "the quick brown fox jumps over the lazy dog"
+            let response = try await client.send("POST", "/pages/digest/page", body: Data(body.utf8))
+            #expect(response.status == 200)
+            let page = response.bodyText
+            let expected = digest(of: body)
+            #expect(page.contains("bytes: \(expected.byteCount)"))
+            #expect(page.contains("checksum: \(expected.checksum)"))
+            // The streaming tier seeds the content type; a buffered mode would have set its own.
+            #expect(response.head?.headerFields[.contentType]?.contains("text/html") == true)
+        }
+    }
+
+    /// **The property the placement buys.** The binding throws from inside the walk, and the mapping still
+    /// fires — 413, not a truncated 200 — because `lendingBodyFrom:` puts the walk inside the same `do`
+    /// whose `catch` maps. Hoisting the read above the terminal would compile and lose exactly this, which
+    /// is why the existing collecting overload's doc comment argues against it.
+    @Test("an oversized body still maps to 413 on a streaming response")
+    func oversizedBodyMapsOnStreamingResponse() async throws {
+        try await withClient { client in
+            let response = try await client.send(
+                "POST",
+                "/pages/digest/page",
+                body: Data(String(repeating: "x", count: 64 * 1024).utf8)
+            )
+            #expect(response.status == 413, "the walk threw before the head went out, so the tier mapped it")
+        }
+    }
+
+    /// A lent reader **beside another bind**. `@Path` decodes from the register closure's `pathParameters`
+    /// while the reader arrives as `building`'s parameter — two binds of different kinds in one closure.
+    /// The label reaching the page is what proves the ordinary bind still runs there too.
+    @Test("a reduced body composes with other binds on a streamed response")
+    func reducedBodyBesideOtherBinds() async throws {
+        try await withClient { client in
+            let body = "hello"
+            let response = try await client.send("POST", "/pages/digest/report/page", body: Data(body.utf8))
+            #expect(response.status == 200)
+            let page = response.bodyText
+            #expect(page.contains("report"), "the @Path bind reached the handler")
+            #expect(page.contains("bytes: \(body.utf8.count)"), "so did the lent reader")
+        }
+    }
+
+    /// A streamed response on a **request-scoped** controller, with a lent reader.
+    ///
+    /// Every other `@HTMLResponse` route in the fixtures is app-`@Singleton`, so before this the streaming
+    /// terminal had only ever been emitted with an empty scope-entry preamble and prologue. Here the
+    /// generated `building` carries the scope entry, the lent bind and the handler call together — each half
+    /// is fine alone, which is exactly why the combination is worth pinning.
+    @Test("a streamed response works on a request-scoped controller")
+    func streamedResponseOnScopedController() async throws {
+        try await withClient { client in
+            let body = "abcdef"
+            let response = try await client.send("POST", "/scoped-pages/digest", body: Data(body.utf8))
+            #expect(response.status == 200)
+            let page = response.bodyText
+            #expect(page.contains("stamped:scoped"), "the scope-entered controller's injected singleton")
+            #expect(page.contains("bytes: \(body.utf8.count)"))
+        }
+    }
+
+    /// And the mapping still fires from inside a scope-entered lending terminal.
+    @Test("an oversized body maps to 413 on a scoped streamed route")
+    func oversizedBodyMapsOnScopedStreamingResponse() async throws {
+        try await withClient { client in
+            let response = try await client.send(
+                "POST",
+                "/scoped-pages/digest",
+                body: Data(String(repeating: "x", count: 64 * 1024).utf8)
+            )
+            #expect(response.status == 413)
+        }
+    }
 }

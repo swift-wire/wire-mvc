@@ -34,7 +34,7 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
     case bodyStreamNeedsOwnership(String, parameter: String)
     case multipleReaderBodyBindings(String, count: Int)
     case readerBodyWithCollectedBody(String)
-    case readerBodyOnStreamingResponse(String)
+    case bodyStreamOnStreamingResponse(String)
     case multipleResponseAnnotations(String, annotations: String)
     case bindingMissingSendConformance(binding: String, conformance: String)
 
@@ -86,8 +86,8 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
             "route '\(route)' has \(count) bindings that stream the request body — a body can be streamed once, because reading it consumes the reader. Collect it instead (a @RequestBinding(.body) binding hands every parameter the same bytes), or stream it into one binding that produces what the others needed"
         case .readerBodyWithCollectedBody(let route):
             "route '\(route)' both streams and collects its request body — the reader cannot do both, since collecting consumes it. Use one or the other"
-        case .readerBodyOnStreamingResponse(let route):
-            "route '\(route)' streams its request body on a streaming-response route, which is not supported yet: the streaming terminal takes the reader itself to collect the body before the response head goes out, so it has none to hand the binding. Use a buffered response mode, or @RawRoute for full control of both directions"
+        case .bodyStreamOnStreamingResponse(let route):
+            "route '\(route)' lends its request body stream to the handler on a streaming-response route — a duplex route, which is not supported yet. A typed handler returns before its response body is written, so it cannot still be holding the request stream; that needs the response to be a parameter rather than a return value, which is designed but blocked on a compiler bug (swiftlang/swift#91473). Use @RawRoute, which supports both directions today, or a binding that reduces the body instead of lending it (@RequestBinding(.readerBody)), which does combine with a streaming response"
         case .bodilessModeNeedsStatus(let route, let annotation):
             "@\(annotation) on '\(route)' names no status — a bodiless mode carries nothing but one, so it must say which. Write it as @\(annotation)(.noContent) or @\(annotation)(status: .noContent)"
         case .responseModeMissingCodec(let route, let annotation):
@@ -146,7 +146,7 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
         case .bodyStreamNeedsOwnership: id = "bodyStreamNeedsOwnership"
         case .multipleReaderBodyBindings: id = "multipleReaderBodyBindings"
         case .readerBodyWithCollectedBody: id = "readerBodyWithCollectedBody"
-        case .readerBodyOnStreamingResponse: id = "readerBodyOnStreamingResponse"
+        case .bodyStreamOnStreamingResponse: id = "bodyStreamOnStreamingResponse"
         case .multipleResponseAnnotations: id = "multipleResponseAnnotations"
         case .bindingMissingSendConformance: id = "bindingMissingSendConformance"
         }
