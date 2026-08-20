@@ -21,8 +21,9 @@ import FoundationNetworking
 public struct TestClient: Sendable {
     /// How a built request reaches the app.
     enum Transport: Sendable {
-        /// A real HTTP round-trip to the suite server's loopback host + port.
-        case loopback(host: String, port: Int)
+        /// A real HTTP round-trip to the suite server's loopback host + port, over **this suite's own**
+        /// `URLSession` — see ``TestClient/makeSession()``.
+        case loopback(host: String, port: Int, session: URLSession)
         /// The in-memory exchange channel. A request is submitted and answered incrementally: the head
         /// arrives before the body exists, and body chunks cross a rendezvous, so this transport streams.
         case inProcess(InProcessDispatch)
@@ -36,7 +37,7 @@ public struct TestClient: Sendable {
     let boundCorrelationID: CorrelationID?
 
     init(host: String, port: Int, boundCorrelationID: CorrelationID? = nil) {
-        self.transport = .loopback(host: host, port: port)
+        self.transport = .loopback(host: host, port: port, session: Self.makeSession())
         self.boundCorrelationID = boundCorrelationID
     }
 
@@ -124,9 +125,9 @@ public struct TestClient: Sendable {
         headers: [String: String] = [:]
     ) async throws -> TestResponse {
         switch transport {
-        case .loopback:
+        case .loopback(_, _, let session):
             let request = makeRequest(method, path, body: body, headers: headers)
-            let (data, response) = try await Self.session.data(for: request)
+            let (data, response) = try await session.data(for: request)
             return TestResponse(head: Self.head(of: response), body: data)
         case .inProcess(let dispatch):
             // The buffered surface over a streaming transport: start the exchange, then drain it whole.
@@ -141,7 +142,44 @@ public struct TestClient: Sendable {
         }
     }
 
-    /// The client's own `URLSession`, with cookie handling switched off at the **configuration** level.
+    /// This client's address over a **fresh** session — the isolation boundary for a `withClient` scope.
+    ///
+    /// Per *suite* is not enough, which was established by measurement rather than reasoning: tests inside a
+    /// suite run in parallel and would still share one pool, so a connection a route reset under one test was
+    /// still handed to another. Per `withClient` scope is the boundary that matches how a test actually uses
+    /// a client. `.inProcess` holds no session, so it is returned unchanged.
+    func withFreshTransport() -> TestClient {
+        guard case let .loopback(host, port, _) = transport else { return self }
+        return TestClient(
+            transport: .loopback(host: host, port: port, session: Self.makeSession()),
+            boundCorrelationID: boundCorrelationID
+        )
+    }
+
+    /// Release this client's transport. Called once by the suite trait after the suite's tests have run;
+    /// a no-op for `.inProcess`, which holds no such resource.
+    func releaseTransport() {
+        if case .loopback(_, _, let session) = transport { session.finishTasksAndInvalidate() }
+    }
+
+    /// **One session per suite, not one per process.**
+    ///
+    /// A `URLSession` is a bundle of shared mutable state — cookie storage, response cache, connection
+    /// pool, credentials — and sharing one across a whole test process leaks every one of those between
+    /// tests. This type used to do exactly that, and the leaks were found one at a time, each after it had
+    /// already produced a *misattributed* failure: cookies rewrote an explicitly-set header so a route
+    /// answered as the wrong user; the response cache replayed a stale body so the server looked like it was
+    /// ignoring headers; and a connection reset by a route refusing an oversized upload was handed to a
+    /// parallel test, which failed with a network error instead of its own assertion.
+    ///
+    /// Disabling each channel as it bites only ever closes the ones already discovered. A session scoped to
+    /// the suite closes all of them, including any not yet found, because there is no shared object left to
+    /// leak through. Connection reuse *within* a suite is unaffected, which is where it was worth having.
+    ///
+    /// The cookie and cache settings below are kept regardless. They are no longer load-bearing for
+    /// cross-test isolation, but they still stop a suite's *own* requests interfering with each other, and
+    /// the Linux CI behaviour that motivated the cookie one was never explained — so this is not the place
+    /// to find out whether it still reproduces.
     ///
     /// `URLSession.shared` manages cookies through the process-wide `HTTPCookieStorage`: it stores every
     /// `Set-Cookie` a route sends and then replaces an explicitly-set `Cookie` header with whatever it holds
@@ -154,7 +192,7 @@ public struct TestClient: Sendable {
     /// referenced in `URLSessionTask.swift` or `HTTPURLProtocol.swift` upstream, which is suggestive but not
     /// conclusive, and no upstream issue was found. This removes the storage instead of asking the request
     /// to bypass it, which does not depend on knowing the answer.
-    static let session: URLSession = {
+    static func makeSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpCookieStorage = nil
         configuration.httpShouldSetCookies = false
@@ -168,7 +206,7 @@ public struct TestClient: Sendable {
         configuration.urlCache = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         return URLSession(configuration: configuration)
-    }()
+    }
 
     /// Rebuild the proposal's response head from Foundation's. `URLSession` reports the status and header
     /// fields separately from the body, so this is the loopback transport's one lossy seam — header *order*
@@ -199,13 +237,13 @@ public struct TestClient: Sendable {
         body: Data?,
         headers: [String: String]
     ) -> URLRequest {
-        guard case let .loopback(host, port) = transport else {
+        guard case let .loopback(host, port, _) = transport else {
             preconditionFailure("makeRequest is the loopback transport's renderer")
         }
         var request = URLRequest(url: URL(string: "http://\(host):\(port)\(path)")!)
         request.httpMethod = method
         request.httpBody = body
-        // Belt to `Self.session`'s braces. Correct on Darwin; observed to have no effect on Linux CI, which
+        // Belt to the session's braces. Correct on Darwin; observed to have no effect on Linux CI, which
         // is why the session carries the actual fix.
         request.httpShouldHandleCookies = false
         for (name, value) in headers {

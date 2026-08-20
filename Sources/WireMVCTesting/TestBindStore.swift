@@ -85,7 +85,11 @@ extension WireMVCTesting {
         let id = CorrelationID.mint()
         store.put(doubles, for: id)
         defer { store.remove(id) }
-        return try await body(TestClient.forSuite.bound(to: id))
+        // A fresh session per scope: see `TestClient.withFreshTransport()`. Tests in a suite run in
+        // parallel, so a shared pool lets one test's reset connection surface as another's failure.
+        let client = TestClient.forSuite.withFreshTransport().bound(to: id)
+        defer { client.releaseTransport() }
+        return try await body(client)
     }
 
     /// The no-doubles sibling: a ``TestClient`` carrying no correlation id, for requests that supply nothing —
@@ -93,6 +97,8 @@ extension WireMVCTesting {
     /// mount), or a keyed route driven deliberately unbound to assert its explicit 500. The generated
     /// `withClient(for:)` wrappers call this.
     public static func withClient<R>(_ body: (TestClient) async throws -> R) async throws -> R {
-        try await body(TestClient.forSuite)
+        let client = TestClient.forSuite.withFreshTransport()
+        defer { client.releaseTransport() }
+        return try await body(client)
     }
 }

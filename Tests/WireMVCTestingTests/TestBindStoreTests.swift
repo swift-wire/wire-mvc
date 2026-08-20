@@ -230,7 +230,7 @@ private struct OKHandler: HTTPServerRequestHandler {
         // Setting only the per-request flag looked correct on macOS and changed nothing on Linux CI, so the
         // session's configuration is what this actually rests on. Asserted here for that reason — the
         // earlier version of this test checked the flag alone and passed while the bug was live.
-        let configuration = TestClient.session.configuration
+        let configuration = TestClient.makeSession().configuration
         #expect(configuration.httpCookieStorage == nil)
         #expect(configuration.httpShouldSetCookies == false)
         #expect(configuration.httpCookieAcceptPolicy == .never)
