@@ -11,6 +11,14 @@
       }
     },
     {
+      "identity" : "elementary",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/tachyonics/elementary.git",
+      "state" : {
+        "revision" : "07eb69492ddf7052616af47518e7f883bd8f2691"
+      }
+    },
+    {
       "identity" : "swift-algorithms",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-algorithms.git",

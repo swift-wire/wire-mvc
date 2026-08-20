@@ -88,6 +88,10 @@ extension RouteBlockGenerator {
                 )
                 return nil
             }
+            // Whether to wrap is decided **per slot**, not by "roles were named at all". Naming `.reader`
+            // to get a reader says nothing about the sender beside it, and the blanket rule silently cost
+            // such a route every contributed response header.
+            let genericRoles = rawGenericRoles(function)
             for (param, role) in zip(params, explicitRoles) {
                 guard let primitive = rawPrimitive(forRoleName: role) else {
                     record(
@@ -95,7 +99,14 @@ extension RouteBlockGenerator {
                     )
                     return nil
                 }
-                callArgs.append("\(rawArgumentLabel(param))\(rawArgument(forPrimitive: primitive, wrapsSender: false))")
+                // A transformed slot names a compound type (`MultiPartSender<S>`); an untransformed one is
+                // the function's own generic parameter, constrained by `HTTPResponseSender`. That is the
+                // property the wrap depends on, and it is the same test the inferred path already makes.
+                let base = strippingOwnership(param.type.trimmedDescription)
+                let wrapsSender = primitive == "responseSender" && genericRoles[base] == .sender
+                callArgs.append(
+                    "\(rawArgumentLabel(param))\(rawArgument(forPrimitive: primitive, wrapsSender: wrapsSender))"
+                )
                 used.insert(primitive)
             }
         } else {
@@ -198,10 +209,16 @@ extension RouteBlockGenerator {
     ///   itself — there is no outcome to inject them into. Without it a middleware's header vanishes on
     ///   every raw route, including the `@NotFound` fallback, which must be raw.
     ///
-    /// `wrapsSender` is false on the **explicit-role** path (`@RawRoute(.role, …)`), where the sender is a
-    /// transformed slot whose type a middleware pins — `MultiPartSender<S>` cannot also be
-    /// `ResponseHeaderApplyingSender<MultiPartSender<S>>`. Those routes keep the courier unwrap and forgo
-    /// the contributions; naming a transformed slot is already the "I am taking over this primitive" signal.
+    /// `wrapsSender` is decided **per slot**, on both paths, by one question: is this parameter the register
+    /// closure's own sender, or a transformed one a middleware pins? A transformed slot names a compound type
+    /// — `MultiPartSender<S>`, which cannot also be `ResponseHeaderApplyingSender<MultiPartSender<S>>` — so it
+    /// keeps the courier unwrap and forgoes contributions; naming a transformed slot is the "I am taking over
+    /// this primitive" signal. An untransformed sender is wrapped whether or not roles were named.
+    ///
+    /// It used to be false for the whole explicit-role path, which read the signal off the wrong thing: a
+    /// handler naming `.reader` to get a reader forfeited every contributed response header for a sender it
+    /// had not touched. Harmless while every explicit-role route in the tree was a transformed-sender one;
+    /// wrong the moment a duplex route named both.
     ///
     /// Kept separate from ``rawPrimitive(forRoleName:)`` because that one's result is also the *role*
     /// bookkeeping (`used`), which the missing-sender diagnostic keys on.

@@ -1309,6 +1309,45 @@ struct RouteContributorGenerationTests {
         #expect(rendered.source.contains("try await self._wireSubject.upload(request, responseSender: responseSender)"))
     }
 
+    /// An **untransformed** sender is wrapped even when roles are named — the wrap decision is per slot, not
+    /// per binding style.
+    ///
+    /// The regression this guards: the explicit-role path used to skip the wrap wholesale, on a rationale
+    /// written for transformed slots (`MultiPartSender<S>` cannot also be
+    /// `ResponseHeaderApplyingSender<MultiPartSender<S>>`). A duplex handler names `.reader` to get a reader
+    /// and leaves its sender alone, so it forfeited every contributed response header for a primitive it had
+    /// not touched. Every explicit-role route in the tree was a transformed one, so nothing caught it.
+    @Test func rawRouteExplicitRolesStillWrapAnUntransformedSender() {
+        let source = """
+            @Controller("/duplex")
+            struct Duplex {
+                @Post
+                @RawRoute(.reader, .responseSender)
+                func exchange<Reader: AsyncReader & ~Copyable, Sender: HTTPResponseSender & ~Copyable>(
+                    reader: consuming Reader,
+                    responseSender: consuming Sender
+                ) async throws where Sender.Writer: ~Copyable {
+                }
+            }
+            """
+        let rendered = renderRouteContributorExtension(
+            controller: controller(source),
+            pathPrefix: "/duplex",
+            factoryKeys: [],
+            discoveredBindings: WireMVCBuiltIns.bindings,
+            discoveredModes: WireMVCBuiltIns.modes
+        )
+        #expect(rendered.diagnostics.isEmpty)
+        // The reader is bound (not `_`) because a role names it, and the sender is wrapped because the
+        // handler declares the register closure's own sender type rather than a middleware-produced one.
+        #expect(
+            rendered.source.contains(
+                "try await self._wireSubject.exchange(reader: reader, responseSender: "
+                    + "ResponseHeaderApplyingSender(wrapping: responseSender, registry: wireMVCResponseHeaderRegistry))"
+            )
+        )
+    }
+
     @Test func rawRouteRoleCountMismatchIsDiagnosed() {
         let source = """
             @Controller("/uploads")
