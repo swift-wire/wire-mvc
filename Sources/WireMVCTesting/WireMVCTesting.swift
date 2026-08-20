@@ -232,6 +232,9 @@ public enum WireMVCTesting {
                 }
                 group.addTask { try await server.serve(handler: handler) }
                 let client = try await mode.client(server.base)
+                // The client owns this suite's `URLSession`, so it is released here rather than left to a
+                // process-wide singleton — see `TestClient.makeSession()` for why the session is per suite.
+                defer { client.releaseTransport() }
                 try await TestClient.$currentStorage.withValue(client) {
                     try await runTests()
                 }
