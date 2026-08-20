@@ -537,12 +537,17 @@ struct StreamingBindingTests {
         #expect(diagnostics.contains { $0.contains("both streams and collects") }, "\(diagnostics)")
     }
 
-    /// A streaming request on a streaming *response* route: the streaming terminal takes the reader itself,
-    /// so there is none left to hand the binding. Diagnosed rather than emitted and left to fail as
-    /// `'reader' consumed more than once` in generated code.
-    @Test("streaming a request body on a streaming response route is refused")
-    func streamingBothWaysRefused() {
-        let (_, diagnostics) = generate(
+    /// A **reduced** request body combines with a streaming response, through the lending terminal
+    /// overload.
+    ///
+    /// This used to be refused, on the grounds that the streaming terminal consumes the reader before the
+    /// head goes out. That is true of the collecting overload and not of `lendingBodyFrom:`, which hands
+    /// the reader to `building` as a consuming parameter — moved in rather than captured — so the binding
+    /// consumes it inside the mapped region. Lending the stream to the *handler* is still refused; see
+    /// `BodyStreamBindingTests.lentStreamOnStreamingResponseRefused`.
+    @Test("a reduced request body combines with a streaming response")
+    func reducedBodyOnStreamingResponseAllowed() {
+        let (source, diagnostics) = generate(
             """
             @Singleton @Controller("/files")
             public struct Files {
@@ -551,7 +556,9 @@ struct StreamingBindingTests {
             }
             """
         )
-        #expect(diagnostics.contains { $0.contains("streaming-response route") }, "\(diagnostics)")
+        #expect(diagnostics.isEmpty, "\(diagnostics)")
+        #expect(source.contains("lendingBodyFrom: reader,"))
+        #expect(!source.contains("collectingBodyFrom:"), "the reader can only be consumed once")
     }
 }
 
@@ -592,6 +599,31 @@ struct BodyStreamBindingTests {
             }
         }
         """
+    }
+
+    /// A **lent** stream does not combine with a streaming response, where a reduced body now does — see
+    /// `StreamingBindingTests.reducedBodyOnStreamingResponseAllowed`.
+    ///
+    /// The reason is the typed tier's shape rather than the reader's ownership: a handler returns before its
+    /// response body is written, so it cannot still be holding the stream. Expressing it needs the response
+    /// to be a parameter rather than a return value, which is designed and ownership-verified but blocked on
+    /// swiftlang/swift#91473 (swift-wire `PendingIssues/14`). `@RawRoute` serves the case meanwhile.
+    @Test("a lent stream on a streaming response route is refused")
+    func lentStreamOnStreamingResponseRefused() {
+        let (_, diagnostics) = generate(
+            """
+            @Singleton @Controller("/files")
+            public struct Files {
+                @Post @HTMLResponse
+                public func receive<S: PartStream & ~Copyable>(@Upload parts: consuming S) async throws -> some HTML {
+                    Page()
+                }
+            }
+            """
+        )
+        #expect(diagnostics.contains { $0.contains("lends its request body stream") }, "\(diagnostics)")
+        // It points at what does work rather than only refusing.
+        #expect(diagnostics.contains { $0.contains("@RawRoute") }, "\(diagnostics)")
     }
 
     /// `consuming` is the only ownership that fits: the stream is used up once, through `withParts`.

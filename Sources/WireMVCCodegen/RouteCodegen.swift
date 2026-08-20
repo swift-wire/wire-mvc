@@ -342,6 +342,7 @@ struct RouteBlockGenerator {
                 streamingClosureBody(
                     hasBinds: hasBinds,
                     hasBody: hasBody,
+                    streamsBody: streamsBody,
                     binds: binds,
                     outcome: outcome,
                     scopeEntryPreamble: foldThreadsDoubles ? "" : scopeEntryPreamble,

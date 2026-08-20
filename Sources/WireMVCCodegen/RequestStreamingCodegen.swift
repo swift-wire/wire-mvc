@@ -75,11 +75,20 @@ extension RouteBlockGenerator {
             record(RouteCodegenDiagnostic(.readerBodyWithCollectedBody(route), at: function.name))
             return nil
         }
-        // The streaming *response* terminal takes the reader itself — it collects the request body before
-        // the head goes out, because a closure cannot consume a value it only borrows. So there is none left
-        // to hand a streaming binding, and the combination is refused rather than emitted.
-        if mode?.terminal == .streaming {
-            record(RouteCodegenDiagnostic(.readerBodyOnStreamingResponse(route), at: function.name))
+        // A **lent** stream cannot combine with a streaming response, and a *reduced* one now can.
+        //
+        // The two used to be refused together, on the grounds that the streaming terminal consumes the
+        // reader before the head goes out. That is true of the collecting overload; it is not true of
+        // `lendingBodyFrom:`, which hands the reader to `building` as a consuming parameter — moved in
+        // rather than captured — so a `.readerBody` binding consumes it inside the mapped region and the
+        // route emits normally.
+        //
+        // Lending the stream to the *handler* is the one that stays refused, and for a different reason:
+        // the typed tier's handler returns before the body is written, so a duplex route needs the
+        // response to be a parameter rather than a return value. That is designed and ownership-verified
+        // but blocked upstream — swift-wire `PendingIssues/14`, swiftlang/swift#91473.
+        if mode?.terminal == .streaming, let lent = streaming.first, lendsBodyStream(binding(from: lent.attributes)?.wrapper ?? "") {
+            record(RouteCodegenDiagnostic(.bodyStreamOnStreamingResponse(route), at: function.name))
             return nil
         }
         return true

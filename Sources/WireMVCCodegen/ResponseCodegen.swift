@@ -235,6 +235,7 @@ extension RouteBlockGenerator {
     func streamingClosureBody(
         hasBinds: Bool,
         hasBody: Bool,
+        streamsBody: Bool,
         binds: [String],
         outcome: String,
         scopeEntryPreamble: String,
@@ -245,10 +246,24 @@ extension RouteBlockGenerator {
         // `building` ends in the outcome. A single-expression body needs no `return`; a multi-statement one
         // (a response tuple, a bind, a prologue) supplies its own — `streamingOutcome` writes it.
         let body = "\(scopeEntryPrologue)\(bindsBlock)\(outcome)"
-        // A body route takes the collecting overload: `collectBody` consumes the reader, which a closure
-        // cannot do, and hoisting the read above the call would take it outside the mapped region.
-        let readerArgument = hasBody ? "\ncollectingBodyFrom: reader," : ""
-        let buildingParameter = hasBody ? " requestBody in" : ""
+        // Three shapes, one per way a route treats the request body.
+        //
+        // A **collected** body takes `collectingBodyFrom:`: `collectBody` consumes the reader, which a
+        // closure cannot do to something it captured, and hoisting the read above the call would take it
+        // outside the mapped region.
+        //
+        // A **reader** body takes `lendingBodyFrom:` instead, and the reader arrives as a *parameter* of
+        // `building` rather than being consumed before it. A consuming parameter is moved in, not
+        // captured, so the borrow that blocks the collecting case never arises — and the binding runs
+        // inside the mapped `do`, which is what keeps a malformed body mapping to a status.
+        //
+        // The parameter is deliberately named `reader`, shadowing the register closure's own. Every
+        // `bindReader` expression already spells `reader: reader`, so the shadow is what makes the bind
+        // resolve to the lent one with no change to how binds are rendered.
+        let readerArgument =
+            streamsBody
+            ? "\nlendingBodyFrom: reader," : (hasBody ? "\ncollectingBodyFrom: reader," : "")
+        let buildingParameter = streamsBody ? " reader in" : (hasBody ? " requestBody in" : "")
         return """
             \(scopeEntryPreamble)try await wireMVCStreamingTerminal(
             responseSender: responseSender,\(readerArgument)

@@ -102,13 +102,47 @@ package struct PagesController {
     /// A **streamed** request body, through a binding declared in this module. The handler never sees the
     /// bytes — only what the binding reduced them to while walking the reader.
     ///
-    /// `@JSONResponse`, not `@HTMLResponse`: a streaming request on a streaming-response route is diagnosed,
-    /// because the streaming terminal takes the reader itself to collect the body before the head goes out.
+    /// `@JSONResponse` here, with `/digest/page` below as the same binding on a **streaming** response —
+    /// the pair is what shows the terminal is chosen by the response, not by the binding.
     @Post("/digest")
     @JSONResponse
     @ErrorResponse(DigestError.self, .contentTooLarge)
     package func digest(@DigestBody digest: BodyDigest) -> BodyDigest {
         digest
+    }
+
+    /// A **reduced** request body on a **streaming** response — the combination that used to be refused.
+    ///
+    /// It works through the lending terminal overload: the reader arrives as a consuming *parameter* of
+    /// `building` rather than being collected before it, so `@DigestBody` walks it inside the mapped `do`.
+    /// That placement is the whole point — an oversized body still throws `DigestError` from inside the
+    /// walk and still maps to `413`, because nothing has been written yet. Pinned over real HTTP by
+    /// `WireMVCBootstrapExampleTests`.
+    ///
+    /// Only *lending the stream to the handler* remains refused on a streaming response: a typed handler
+    /// returns before its body is written, so it cannot still hold the request stream. See
+    /// `WireMVCDiagnostic.bodyStreamOnStreamingResponse`.
+    @Post("/digest/page")
+    @HTMLResponse
+    @ErrorResponse(DigestError.self, .contentTooLarge)
+    package func digestPage(@DigestBody digest: BodyDigest) -> some HTML {
+        TodoListPage(
+            heading: "Digest",
+            rows: ["bytes: \(digest.byteCount)", "checksum: \(digest.checksum)"]
+        )
+    }
+
+    /// A reduced body **beside other binds**, on a streaming response.
+    ///
+    /// The lent reader is a parameter of `building` while `@Path` decodes from the register closure's
+    /// `pathParameters` — two binds of different kinds in one `building`, which is the interaction the
+    /// single-bind route above cannot show. The path value reaching the page proves the ordinary bind still
+    /// runs inside the mapped region alongside the lent one.
+    @Post("/digest/{label}/page")
+    @HTMLResponse
+    @ErrorResponse(DigestError.self, .contentTooLarge)
+    package func labelledDigestPage(@Path label: String, @DigestBody digest: BodyDigest) -> some HTML {
+        TodoListPage(heading: label, rows: ["bytes: \(digest.byteCount)"])
     }
 
     /// The same mode with an annotated status, read through the generic `status:` path rather than a
