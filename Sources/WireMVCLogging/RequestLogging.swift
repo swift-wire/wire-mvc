@@ -70,6 +70,13 @@ public enum WireMVCRequestLogging {
     /// app logger arrives as a borrowed app singleton (keyed, hence `@Bind`); it is not reconstructed
     /// per request. This is the one line that differs from `WireMVCTaskLocalLogging`, which takes its
     /// base from `Logger.current` instead.
+    ///
+    /// **The app logger is keyed because it is the borrowed one, not because it lost a tie-break.** An app
+    /// singleton is present in every scope, so it is the only logger that can meet another scope's; two
+    /// sibling seeded scopes never borrow from each other. So this pattern repeats rather than being spent
+    /// here — a job scope declares its own unkeyed `Logger` and a job-scoped `@Inject var logger: Logger`
+    /// resolves to that one, with no collision and no key. Every seeded scope gets the bare spelling; only
+    /// the app logger pays for being everywhere.
     @Provides
     public static func requestLogger(
         @Bind(WireMVCApplication.logger) base: Logger,
