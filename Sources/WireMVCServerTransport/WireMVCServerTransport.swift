@@ -311,7 +311,18 @@ private struct ServerTransportRouteBuilder: HTTPServerRouteBuilder {
                             channel.handlerThrew(error)
                         }
                     }
-                    switch await channel.awaitStart() {
+                    // `Task {}` inherits task-locals and priority but **not** cancellation, so the
+                    // handler has to be cancelled explicitly when the request is. Without this a client
+                    // that disconnects before the head is sent leaves the handler running to completion
+                    // for a response nobody will read — the streaming path is already covered further
+                    // down (releasing the body releases `HandlerTaskHandle`, whose `deinit` cancels),
+                    // but before a head exists there is no body to release.
+                    let start = await withTaskCancellationHandler {
+                        await channel.awaitStart()
+                    } onCancel: {
+                        task.cancel()
+                    }
+                    switch start {
                     case let .complete(head, responseBytes):
                         return (head, responseBytes.isEmpty ? nil : HTTPBody(Data(responseBytes)))
                     case let .streaming(head):
