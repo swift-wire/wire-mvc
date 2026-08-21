@@ -71,6 +71,33 @@ public protocol FinalizableHTTPServerRouteBuilder<RequestContext, Reader, Respon
             ) async throws -> Void
     )
 
+    /// Register the handler for a request whose **path matched but whose method did not** — the `405`
+    /// counterpart to `registerNotFound`.
+    ///
+    /// Separate from the 404 fallback because it is a different answer: the resource exists, and the
+    /// response owes an `Allow` listing what it does accept, which is the third parameter (the router's
+    /// resolved set, deduplicated and sorted). Routing a 405 through `registerNotFound` would present
+    /// "no such resource" for a resource that is right there.
+    ///
+    /// It exists for the same reason `registerNotFound` does: whatever writes a head must drain the
+    /// request context's `ResponseHeaderRegistry`, or a global `@Middleware`'s CORS and security headers
+    /// go missing from exactly the responses nobody declares. A router cannot do that draining itself —
+    /// it is not constrained to a `ResponseHeaderCarrying` context — so the generated `@main` supplies a
+    /// handler that can.
+    ///
+    /// Required rather than defaulted: a no-op default would let a new builder silently answer bare 405s,
+    /// which is the exact bug this exists to close.
+    mutating func registerMethodNotAllowed(
+        handler:
+            @escaping @Sendable (
+                HTTPRequest,
+                consuming RequestContext,
+                [HTTPRequest.Method],
+                consuming sending Reader,
+                consuming sending ResponseSender
+            ) async throws -> Void
+    )
+
     /// Compact the registered routes into the immutable handler that serves them.
     consuming func finalize() -> ServingHandler
 }
