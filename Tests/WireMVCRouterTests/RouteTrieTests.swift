@@ -12,6 +12,17 @@ import Testing
 /// Case accessors, so a `.matched` assertion reads the way it did when `resolve` returned an optional
 /// tuple. Deliberately not on the production type: the three outcomes are the point of the enum, and
 /// flattening them back into optionals in shipping code would invite exactly the collapse this replaced.
+extension RouteInsertion {
+    var index: Int? {
+        if case let .inserted(index) = self { return index }
+        return nil
+    }
+    var duplicateOf: String? {
+        if case let .duplicate(existing) = self { return existing }
+        return nil
+    }
+}
+
 extension RouteResolution {
     var index: Int? {
         if case let .matched(index, _) = self { return index }
@@ -32,7 +43,7 @@ struct RouteTrieTests {
 
     @Test func literalMatchBindsNoParameters() {
         var trie = RouteTrie()
-        let index = trie.insert(method: .get, path: "/health")
+        let index = trie.insert(method: .get, path: "/health").index
         let match = trie.freeze().resolve(method: .get, path: "/health")
         #expect(match.index == index)
         #expect(match.parameters?.isEmpty == true)
@@ -40,7 +51,7 @@ struct RouteTrieTests {
 
     @Test func pathParameterBinds() {
         var trie = RouteTrie()
-        let index = trie.insert(method: .get, path: "/users/{id}")
+        let index = trie.insert(method: .get, path: "/users/{id}").index
         let match = trie.freeze().resolve(method: .get, path: "/users/42")
         #expect(match.index == index)
         #expect(match.parameters?["id"].map(String.init) == "42")
@@ -115,8 +126,8 @@ struct RouteTrieTests {
     @Test func literalBeatsParameter() {
         // Static-before-param precedence: /users/me matches the literal even though /users/{id} exists.
         var trie = RouteTrie()
-        let me = trie.insert(method: .get, path: "/users/me")
-        let byId = trie.insert(method: .get, path: "/users/{id}")
+        let me = trie.insert(method: .get, path: "/users/me").index
+        let byId = trie.insert(method: .get, path: "/users/{id}").index
         let frozen = trie.freeze()
         #expect(frozen.resolve(method: .get, path: "/users/me").index == me)
         let param = frozen.resolve(method: .get, path: "/users/42")
@@ -126,8 +137,8 @@ struct RouteTrieTests {
 
     @Test func distinctMethodsAtSameNodeDispatchSeparately() {
         var trie = RouteTrie()
-        let get = trie.insert(method: .get, path: "/users/{id}")
-        let delete = trie.insert(method: .delete, path: "/users/{id}")
+        let get = trie.insert(method: .get, path: "/users/{id}").index
+        let delete = trie.insert(method: .delete, path: "/users/{id}").index
         let frozen = trie.freeze()
         #expect(frozen.resolve(method: .get, path: "/users/9").index == get)
         #expect(frozen.resolve(method: .delete, path: "/users/9").index == delete)
@@ -138,12 +149,63 @@ struct RouteTrieTests {
         var trie = RouteTrie()
         var indices: [String: Int] = [:]
         for name in ["alpha", "bravo", "charlie", "delta", "echo"] {
-            indices[name] = trie.insert(method: .get, path: "/\(name)")
+            indices[name] = trie.insert(method: .get, path: "/\(name)").index
         }
         let frozen = trie.freeze()
         #expect(frozen.resolve(method: .get, path: "/charlie").index == indices["charlie"])
         #expect(frozen.resolve(method: .get, path: "/echo").index == indices["echo"])
         #expect(frozen.resolve(method: .get, path: "/foxtrot") == .notFound)
+    }
+
+    // MARK: - Duplicate routes
+
+    @Test func registeringTheSameMethodAndPathTwiceIsADuplicate() {
+        // Previously accepted in silence: `resolve` takes the first match, so the second registration was
+        // unreachable and its controller's route was simply dead.
+        var trie = RouteTrie()
+        #expect(trie.insert(method: .get, path: "/users").index == 0)
+        #expect(trie.insert(method: .get, path: "/users").duplicateOf == "/users")
+    }
+
+    @Test func differentMethodsOnOnePathAreNotDuplicates() {
+        var trie = RouteTrie()
+        #expect(trie.insert(method: .get, path: "/users").index == 0)
+        #expect(trie.insert(method: .post, path: "/users").index == 1)
+        #expect(trie.insert(method: .delete, path: "/users").index == 2)
+    }
+
+    /// The case a string comparison of templates would miss entirely.
+    ///
+    /// A node carries **one** parameter edge and the first name wins, so `/users/{id}` and
+    /// `/users/{name}` are the same node — the second is unreachable however it is spelled. Reporting the
+    /// template that claimed it is what turns "why is my route 404ing" into an answer.
+    @Test func parameterNamesThatDifferOnlyInSpellingStillCollide() {
+        var trie = RouteTrie()
+        #expect(trie.insert(method: .get, path: "/users/{id}").index == 0)
+        #expect(trie.insert(method: .get, path: "/users/{name}").duplicateOf == "/users/{id}")
+    }
+
+    @Test func aDuplicateConsumesNoRouteIndex() {
+        // The rejected insert must not advance the index, or the trie and the handler array drift — the
+        // thing the builder's other precondition exists to catch.
+        var trie = RouteTrie()
+        #expect(trie.insert(method: .get, path: "/a").index == 0)
+        #expect(trie.insert(method: .get, path: "/a").duplicateOf != nil)
+        #expect(trie.insert(method: .get, path: "/b").index == 1)
+    }
+
+    @Test func aRejectedDuplicateLeavesTheFirstRouteServing() {
+        var trie = RouteTrie()
+        let first = trie.insert(method: .get, path: "/users").index
+        _ = trie.insert(method: .get, path: "/users")
+        #expect(trie.freeze().resolve(method: .get, path: "/users").index == first)
+    }
+
+    @Test func distinctPathsSharingAPrefixAreNotDuplicates() {
+        var trie = RouteTrie()
+        #expect(trie.insert(method: .get, path: "/users/me").index == 0)
+        #expect(trie.insert(method: .get, path: "/users/{id}").index == 1)
+        #expect(trie.insert(method: .get, path: "/users").index == 2)
     }
 
     // MARK: - Percent-decoding
@@ -227,7 +289,7 @@ struct RouteTrieTests {
         // v1: empty path segments are omitted, so "/users/" and "/users" are equivalent. A
         // trailing-slash *policy* is a tracked hardening item.
         var trie = RouteTrie()
-        let index = trie.insert(method: .get, path: "/users")
+        let index = trie.insert(method: .get, path: "/users").index
         #expect(trie.freeze().resolve(method: .get, path: "/users/").index == index)
     }
 }

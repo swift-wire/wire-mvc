@@ -75,9 +75,27 @@ where
         path: String,
         handler: @escaping Handler
     ) {
-        let index = trie.insert(method: method, path: path)
-        precondition(index == handlers.count, "RouteTrie index and handler array drifted")
-        handlers.append(handler)
+        switch trie.insert(method: method, path: path) {
+        case let .inserted(index):
+            precondition(index == handlers.count, "RouteTrie index and handler array drifted")
+            handlers.append(handler)
+
+        case let .duplicate(existing):
+            // Fatal at registration, which is startup: a duplicate has no recovery that is not worse than
+            // stopping. Accepting it silently — what this replaces — left the second route unreachable,
+            // so a controller's route went dead with nothing said, and the failure surfaced later as a
+            // 404 on a route that visibly exists in the source.
+            //
+            // `existing` may read differently from `path`: a node has one parameter edge and the first
+            // name wins, so `/users/{id}` and `/users/{name}` are the same node. Naming both is what makes
+            // that case legible rather than baffling.
+            let collision =
+                existing == path
+                ? "'\(path)' is registered twice"
+                : "'\(path)' collides with '\(existing)' — they differ only in parameter *names*, "
+                    + "which a router cannot tell apart, so only the first would ever be reached"
+            preconditionFailure("duplicate route: \(method.rawValue) \(collision).")
+        }
     }
 
     public mutating func registerNotFound(handler: @escaping Handler) {
