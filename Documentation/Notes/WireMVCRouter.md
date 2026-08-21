@@ -100,14 +100,71 @@ What remains, roughly by value; each is additive and testable through `RouteTrie
    rather than `removingPercentEncoding`, so the router stays free of Foundation on a per-request path;
    a segment with no `%` allocates nothing.
 
-   **Literal segments are still matched raw**, which is a separate decision and remains open: whether
-   `/h%C3%A9llo` should reach a route registered as `/héllo` is a question about routing semantics, not
-   about what a handler receives once a route is chosen.
+   **Literal segments are matched encoded, and that is settled rather than deferred.** The question is
+   whether to decode the path *before* matching, so `/h%C3%A9llo` reaches a route registered as `/héllo`.
+   The answer is no, and the industry has been moving in that direction rather than towards it — see
+   *Prior art on decode-before-match* below.
 
    Another **cross-runtime divergence**, and a three-way one. Vapor decodes (RoutingKit's `Parameters.set`),
    Hummingbird does **not** — nothing in its router calls `removingPercentEncoding` — so on that runtime a
    `%`-escaped id reaches a handler still escaped. Measured and pinned by `PathParameterDecodingTests` in
    each of the three example runtimes.
+
+## Prior art on decode-before-match
+
+Recorded because the choice looks arbitrary until you see who has tried the other one. Two camps:
+
+**Decode the whole path, then match.**
+
+- **Go `net/http.ServeMux`** (1.22+) decodes every percent-encoded segment before matching, and
+  `PathValue` returns decoded. It has already produced a reported defect: [golang/go#75019](https://github.com/golang/go/issues/75019)
+  shows `/;x=y%3ba%3db` matching as `;x=y;a=b`, so an encoded delimiter and a literal one become
+  indistinguishable. Closed as not planned, with no raw-value escape hatch.
+- **ASP.NET Core** matches literal text against "the decoded representation of the URL's path", with
+  acknowledged inconsistencies in whether route *parameters* are decoded
+  ([dotnet/aspnetcore#30655](https://github.com/dotnet/aspnetcore/issues/30655)).
+- **Spring, legacy** (`AntPathMatcher` + `UrlPathHelper.urlDecode`, on by default since 2.5). Their own
+  documentation calls it out: the request URI "needs to be decoded to make it possible to compare to
+  controller mappings, but this is undesirable because of the potential to decode reserved characters that
+  alter the path structure."
+
+**Match encoded, decode per segment** — what this router does.
+
+- **Spring's `PathPatternParser`**, the replacement for the above and the **default since Spring 6.0**:
+  "a parsed `PathPattern` matches to a parsed representation of the path called `RequestPath`, one path
+  segment at a time … This allows decoding and sanitizing path segment values individually without the
+  risk of altering the structure of the path." That is split-then-decode-per-segment, arrived at
+  independently here.
+- **Express** matches the encoded path and decodes captured params with `decodeURIComponent`.
+- **Vapor** does the same, via RoutingKit's `Parameters.set`.
+- **Hummingbird** matches encoded but decodes nothing — the one runtime where an escaped id reaches a
+  handler still escaped.
+
+| | Literal matching | Bound parameters |
+|---|---|---|
+| Go `ServeMux` | decoded | decoded |
+| ASP.NET Core | decoded | inconsistent |
+| Spring ≤ 5 (legacy) | decoded | decoded |
+| **Spring 6 (default)** | **encoded** | **per segment** |
+| Express | encoded | decoded |
+| Vapor | encoded | decoded |
+| **WireMVC** | **encoded** | **decoded** |
+| Hummingbird | encoded | not decoded |
+
+The direction of travel is the argument: the framework that shipped our rejected behaviour migrated away
+from it, published why, and made the alternative its default. Nothing is moving the other way. RFC 3986
+agrees — §2.4 says octets are decoded only "when they are being extracted from the URI for use outside",
+which is what handing a parameter to a handler is, and what matching structure is not.
+
+### The one axis where a reasonable implementation differs
+
+**Malformed input.** Express throws `URIError: Failed to decode param` and answers **400**; Vapor is
+lenient (`removingPercentEncoding ?? $0`). This router took Vapor's position.
+
+Express's case is real — a malformed URI *is* a client error, and a 400 surfaces it rather than routing an
+identifier no client sent. Against it: emitting one would need a fourth `RouteResolution` case, and
+leniency keeps a bad URI a routing question rather than an error the router invented. Recorded as a choice
+rather than an oversight, so revisiting it starts from the trade rather than from scratch.
 
 **Shipped since v1:** `registerNotFound(handler:)` (M5.5 Phase 4) — `TrieRouteBuilder` stores one
 optional fallback handler, `FrozenTrieRouter` dispatches to it on a miss (the built-in 404 is the
