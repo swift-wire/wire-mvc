@@ -152,8 +152,6 @@ struct FrozenRouteTrie: Sendable {
             allowed.append(route.method)
         }
         return allowed.sorted { $0.rawValue < $1.rawValue }
-<<<<<<< HEAD
-=======
     }
 
     /// Percent-decode a bound path parameter — `/users/a%20b` binds `a b`, not `a%20b`.
@@ -212,7 +210,6 @@ struct FrozenRouteTrie: Sendable {
         case UInt8(ascii: "A")...UInt8(ascii: "F"): byte - UInt8(ascii: "A") + 10
         default: nil
         }
->>>>>>> origin/sp_Percent_decode_bound_path_parameters
     }
 
     private static func literalChild(of node: Node, segment: String) -> Int? {
