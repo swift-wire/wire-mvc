@@ -381,6 +381,52 @@ struct TracingGraph: WireMVCComposable {
     var services: [any Service] { [] }
 }
 
+/// Records how far the handler got: that it started waiting, and whether it was cancelled while waiting.
+actor CancellationWitness {
+    private(set) var started = false
+    private(set) var observedCancellation = false
+
+    func noteStarted() { started = true }
+    func noteCancelled() { observedCancellation = true }
+}
+
+/// A handler that waits, then reports whether it was cancelled while waiting. Stands in for any handler
+/// doing real work before it produces a response head.
+struct SlowController: RouteContributor {
+    let witness: CancellationWitness
+
+    func registerWireRoutes<Builder: HTTPServerRouteBuilder>(
+        on builder: inout Builder,
+        coding: WireMVCCoding
+    ) throws
+    where
+        Builder.RequestContext: ~Copyable,
+        Builder.Reader: ~Copyable,
+        Builder.ResponseSender: ~Copyable,
+        Builder.ResponseSender.Writer: ~Copyable
+    {
+        let witness = self.witness
+        builder.register(method: .get, path: "/slow") { _, _, _, _, responseSender in
+            await witness.noteStarted()
+            do {
+                // Long enough that observing cancellation inside it means cancellation, not elapsed time.
+                try await Task.sleep(for: .seconds(5))
+            } catch {
+                await witness.noteCancelled()
+                throw error
+            }
+            var body = UniqueArray<UInt8>(copying: "late".utf8)
+            try await responseSender.sendAndFinish(HTTPResponse(status: .ok), buffer: &body)
+        }
+    }
+}
+
+struct SlowGraph: WireMVCComposable {
+    let witness: CancellationWitness
+    var routeContributors: [any RouteContributor] { [SlowController(witness: witness)] }
+    var services: [any Service] { [] }
+}
+
 /// Stands in for `Wire.bootstrap()`'s collated graph. No `@BackgroundService` contributors here, so
 /// `services` is empty — the routes are what this adapter test drives.
 struct TestGraph: WireMVCComposable {
@@ -400,6 +446,20 @@ struct StreamingRequestGraph: WireMVCComposable {
     let source: CountingChunkSource
     var routeContributors: [any RouteContributor] { [StreamingRequestController(source: source)] }
     var services: [any Service] { [] }
+}
+
+/// Waits for a condition rather than for a duration — the assertions below are about *whether* something
+/// happens, and a fixed sleep would make them flaky in one direction and slow in the other.
+private func poll(
+    timeout: Duration = .seconds(2),
+    until condition: @Sendable () async -> Bool
+) async -> Bool {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if await condition() { return true }
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    return await condition()
 }
 
 @Suite("WireMVCServerTransport")
@@ -439,6 +499,32 @@ struct AdapterTests {
         let (response, _) = try await transport.send(.get, "/stamped")
         #expect(response.status == .ok)
         #expect(response.headerFields[.init("x-stamp")!] == "adapter")
+    }
+
+    // MARK: - Cancellation into the handler
+
+    /// Cancelling the request cancels the handler — *before* any response head has been sent.
+    ///
+    /// The bridge dispatches into `Task {}`, which inherits task-locals and priority but **not**
+    /// cancellation. On the streaming path the handler's lifetime is tied to the returned body, so
+    /// releasing the body cancels it; before a head exists there is no body to release, and this is the
+    /// window where a client disconnect leaves work running for a response nobody will read.
+    @Test
+    func cancellingTheRequestCancelsTheHandlerBeforeAnyResponse() async throws {
+        let witness = CancellationWitness()
+        let transport = MockTransport()
+        try WireMVCServerTransport.apply(SlowGraph(witness: witness), to: transport)
+
+        let request = Task { try await transport.send(.get, "/slow") }
+        // Cancel only once the handler is actually waiting, so this lands mid-flight.
+        #expect(await poll { await witness.started }, "handler never started")
+        request.cancel()
+        _ = try? await request.value
+
+        #expect(
+            await poll { await witness.observedCancellation },
+            "handler kept running after the request was cancelled"
+        )
     }
 
     // MARK: - Ambient context across the bridge
