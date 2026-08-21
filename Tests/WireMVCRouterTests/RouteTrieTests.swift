@@ -146,6 +146,83 @@ struct RouteTrieTests {
         #expect(frozen.resolve(method: .get, path: "/foxtrot") == .notFound)
     }
 
+    // MARK: - Percent-decoding
+
+    @Test func aPercentEscapeInAParameterIsDecoded() {
+        // The item this closes: before, a handler received `a%20b` and could not tell it had been given
+        // undecoded input — the only router gap that produced a silently *wrong value* rather than a wrong
+        // status or an absent feature.
+        var trie = RouteTrie()
+        _ = trie.insert(method: .get, path: "/users/{name}")
+        let match = trie.freeze().resolve(method: .get, path: "/users/a%20b")
+        #expect(match.parameters?["name"].map(String.init) == "a b")
+    }
+
+    @Test func anEncodedSlashStaysInsideOneParameter() {
+        // Decoding runs *after* splitting on `/`, so `%2F` cannot reintroduce a path boundary: this is one
+        // segment binding one parameter whose value happens to contain a slash.
+        var trie = RouteTrie()
+        _ = trie.insert(method: .get, path: "/files/{path}")
+        let match = trie.freeze().resolve(method: .get, path: "/files/a%2Fb")
+        #expect(match.parameters?["path"].map(String.init) == "a/b")
+        #expect(match.parameters?.count == 1)
+    }
+
+    @Test func multiByteUTF8Decodes() {
+        var trie = RouteTrie()
+        _ = trie.insert(method: .get, path: "/greet/{word}")
+        let match = trie.freeze().resolve(method: .get, path: "/greet/h%C3%A9llo")
+        #expect(match.parameters?["word"].map(String.init) == "héllo")
+    }
+
+    @Test func lowerAndUpperCaseHexBothDecode() {
+        var trie = RouteTrie()
+        _ = trie.insert(method: .get, path: "/x/{v}")
+        let frozen = trie.freeze()
+        #expect(frozen.resolve(method: .get, path: "/x/%2f").parameters?["v"].map(String.init) == "/")
+        #expect(frozen.resolve(method: .get, path: "/x/%2F").parameters?["v"].map(String.init) == "/")
+    }
+
+    @Test func plusIsNotASpaceInAPath() {
+        // `+` means space in application/x-www-form-urlencoded, which is a *query* convention. In a path
+        // segment it is an ordinary character, and translating it would corrupt any identifier with one.
+        var trie = RouteTrie()
+        _ = trie.insert(method: .get, path: "/users/{name}")
+        let match = trie.freeze().resolve(method: .get, path: "/users/a+b")
+        #expect(match.parameters?["name"].map(String.init) == "a+b")
+    }
+
+    @Test func malformedEscapesAreLeftAlone() {
+        // Lenient, like Vapor's `removingPercentEncoding ?? $0`: a malformed URI stays a routing question
+        // rather than becoming a 400 the router invented. A truncated escape at the end, a non-hex digit,
+        // and a bare `%` all survive verbatim.
+        var trie = RouteTrie()
+        _ = trie.insert(method: .get, path: "/x/{v}")
+        let frozen = trie.freeze()
+        #expect(frozen.resolve(method: .get, path: "/x/a%").parameters?["v"].map(String.init) == "a%")
+        #expect(frozen.resolve(method: .get, path: "/x/a%2").parameters?["v"].map(String.init) == "a%2")
+        #expect(frozen.resolve(method: .get, path: "/x/a%zz").parameters?["v"].map(String.init) == "a%zz")
+    }
+
+    @Test func bytesThatAreNotUTF8LeaveTheSegmentRaw() {
+        // `%FF` decodes to a byte that begins no valid UTF-8 sequence. Falling back to the raw segment is
+        // deliberate: a corrupted identifier that still looks like a string — which `String(decoding:)`
+        // would produce, with replacement characters — is worse than an undecoded one.
+        var trie = RouteTrie()
+        _ = trie.insert(method: .get, path: "/x/{v}")
+        let match = trie.freeze().resolve(method: .get, path: "/x/%FF")
+        #expect(match.parameters?["v"].map(String.init) == "%FF")
+    }
+
+    @Test func aSegmentWithoutEscapesIsUntouched() {
+        // The fast path: no `%`, so no allocation and no copy — the parameter is still a slice of the
+        // request path.
+        var trie = RouteTrie()
+        _ = trie.insert(method: .get, path: "/users/{id}")
+        let match = trie.freeze().resolve(method: .get, path: "/users/42")
+        #expect(match.parameters?["id"].map(String.init) == "42")
+    }
+
     @Test func trailingSlashMatchesInV1() {
         // v1: empty path segments are omitted, so "/users/" and "/users" are equivalent. A
         // trailing-slash *policy* is a tracked hardening item.
