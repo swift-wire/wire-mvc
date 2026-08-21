@@ -90,7 +90,24 @@ What remains, roughly by value; each is additive and testable through `RouteTrie
    incidental "empty segments omitted" behavior.
 5. **Duplicate-route diagnostics.** Two registrations for the same method+template — surface it (a
    precondition today only guards index/handler drift).
-6. **Percent-decoding** of path parameters (`/users/a%20b` → `a b`).
+6. ~~**Percent-decoding** of path parameters (`/users/a%20b` → `a b`).~~ **Shipped.** Applied to bound
+   parameters only, *after* the path is split — so `%2F` binds one parameter containing a slash rather
+   than reintroducing a path boundary. `+` is left alone: it means space in
+   `application/x-www-form-urlencoded`, a query convention, and is an ordinary character in a path
+   segment. Malformed input (a stray `%`, a truncated escape, bytes that are not UTF-8) leaves the segment
+   exactly as it arrived rather than failing the request — matching Vapor's `removingPercentEncoding ?? $0`
+   and keeping a malformed URI a routing question rather than a 400 the router invented. Hand-rolled
+   rather than `removingPercentEncoding`, so the router stays free of Foundation on a per-request path;
+   a segment with no `%` allocates nothing.
+
+   **Literal segments are still matched raw**, which is a separate decision and remains open: whether
+   `/h%C3%A9llo` should reach a route registered as `/héllo` is a question about routing semantics, not
+   about what a handler receives once a route is chosen.
+
+   Another **cross-runtime divergence**, and a three-way one. Vapor decodes (RoutingKit's `Parameters.set`),
+   Hummingbird does **not** — nothing in its router calls `removingPercentEncoding` — so on that runtime a
+   `%`-escaped id reaches a handler still escaped. Measured and pinned by `PathParameterDecodingTests` in
+   each of the three example runtimes.
 
 **Shipped since v1:** `registerNotFound(handler:)` (M5.5 Phase 4) — `TrieRouteBuilder` stores one
 optional fallback handler, `FrozenTrieRouter` dispatches to it on a miss (the built-in 404 is the

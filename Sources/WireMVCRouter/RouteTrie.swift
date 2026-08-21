@@ -118,7 +118,7 @@ struct FrozenRouteTrie: Sendable {
             if let child = Self.literalChild(of: node, segment: String(segment)) {
                 current = child
             } else if let edge = node.parameterChild {
-                parameters[edge.name] = segment
+                parameters[edge.name] = Self.percentDecoded(segment)
                 current = edge.child
             } else {
                 return .notFound
@@ -152,6 +152,67 @@ struct FrozenRouteTrie: Sendable {
             allowed.append(route.method)
         }
         return allowed.sorted { $0.rawValue < $1.rawValue }
+<<<<<<< HEAD
+=======
+    }
+
+    /// Percent-decode a bound path parameter — `/users/a%20b` binds `a b`, not `a%20b`.
+    ///
+    /// Applied to **parameters only**, not to literal matching. Decoding before matching would change
+    /// routing semantics (whether `/h%C3%A9llo` reaches a route registered as `/héllo`), which is a
+    /// separate decision from what a handler receives once a route is chosen. Left as tracked work.
+    ///
+    /// Decoding happens **after** the path is split on `/`, which is what makes `%2F` work: the request
+    /// `/files/a%2Fb` is one segment, so the handler is handed the single parameter `a/b` rather than
+    /// having the escape silently reintroduce a path boundary.
+    ///
+    /// `+` is left alone. It means space in `application/x-www-form-urlencoded` — a *query* convention —
+    /// and is an ordinary character in a path segment; translating it here would corrupt any identifier
+    /// containing one.
+    ///
+    /// Lenient on malformed input: a stray `%`, a truncated escape, or bytes that do not form UTF-8 leave
+    /// the segment exactly as it arrived rather than failing the request. That matches Vapor
+    /// (`removingPercentEncoding ?? $0`) and keeps a malformed URI a routing question rather than a 400 the
+    /// router invents. Hummingbird, for reference, does not decode at all.
+    ///
+    /// Hand-rolled rather than `removingPercentEncoding` so the router stays free of Foundation: this runs
+    /// per request, and the common case — no `%` in the segment — allocates nothing.
+    static func percentDecoded(_ segment: Substring) -> Substring {
+        guard segment.utf8.contains(UInt8(ascii: "%")) else { return segment }
+
+        let source = Array(segment.utf8)
+        var decoded: [UInt8] = []
+        decoded.reserveCapacity(source.count)
+        var index = 0
+        while index < source.count {
+            if source[index] == UInt8(ascii: "%"), index + 2 < source.count,
+                let high = Self.hexDigit(source[index + 1]), let low = Self.hexDigit(source[index + 2])
+            {
+                decoded.append(high << 4 | low)
+                index += 3
+            } else {
+                decoded.append(source[index])
+                index += 1
+            }
+        }
+        // `validating:` rather than `decoding:`, so invalid UTF-8 falls back to the raw segment instead of
+        // being papered over with replacement characters — a corrupted identifier that still looks like a
+        // string is worse than an undecoded one.
+        guard let string = String(validating: decoded, as: UTF8.self) else { return segment }
+        // The `Substring` keeps the new `String`'s storage alive, so this outlives the request path it was
+        // sliced from — which is what lets the parameter type stay `Substring` with no allocation on the
+        // path that needs none.
+        return string[...]
+    }
+
+    private static func hexDigit(_ byte: UInt8) -> UInt8? {
+        switch byte {
+        case UInt8(ascii: "0")...UInt8(ascii: "9"): byte - UInt8(ascii: "0")
+        case UInt8(ascii: "a")...UInt8(ascii: "f"): byte - UInt8(ascii: "a") + 10
+        case UInt8(ascii: "A")...UInt8(ascii: "F"): byte - UInt8(ascii: "A") + 10
+        default: nil
+        }
+>>>>>>> origin/sp_Percent_decode_bound_path_parameters
     }
 
     private static func literalChild(of node: Node, segment: String) -> Int? {
