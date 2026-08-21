@@ -11,6 +11,15 @@ public import HTTPTypes
 // static > param > catch-all precedence beyond literal-first, trailing-slash policy, catch-all params,
 // duplicate-route diagnostics — is tracked in [Notes/WireMVCRouter.md].
 
+/// What inserting a route concluded.
+enum RouteInsertion: Sendable, Equatable {
+    /// Registered; the caller stores its handler at this index in the parallel array.
+    case inserted(index: Int)
+    /// A route for this method already occupies the node this path reaches. `existing` is the template
+    /// that claimed it, which may differ textually from the one being inserted — see `insert`.
+    case duplicate(existing: String)
+}
+
 /// A `{name}` parameter edge out of a trie node: the segment name and the child node it leads to.
 struct ParameterEdge: Sendable, Equatable {
     let name: String
@@ -23,16 +32,27 @@ struct RouteTrie {
     struct BuildNode {
         var literalChildren: [String: Int] = [:]
         var parameterChild: ParameterEdge?
-        var routes: [(method: HTTPRequest.Method, index: Int)] = []
+        /// The template is carried at build time only, so a duplicate can name what it collides *with*.
+        /// `freeze()` drops it — serving never needs it, so it costs nothing per request.
+        var routes: [(method: HTTPRequest.Method, index: Int, template: String)] = []
     }
 
     private var nodes: [BuildNode] = [BuildNode()]
     private var routeCount = 0
 
-    /// Insert `method` + `path`; returns the route index (the caller stores the handler at the same
-    /// index in a parallel array). Literal segments share nodes; a `{name}` segment takes the node's
+    /// Insert `method` + `path`. Literal segments share nodes; a `{name}` segment takes the node's
     /// single parameter edge (first name wins for a shared prefix).
-    mutating func insert(method: HTTPRequest.Method, path: String) -> Int {
+    ///
+    /// Reports a **duplicate** rather than accepting it. Two registrations for one method at one node
+    /// meant the second was silently unreachable — `resolve` takes the first match — so a controller's
+    /// route could go dead with nothing said. The trie only reports; the builder decides what to do,
+    /// which is what keeps the detection testable without crashing a test process.
+    ///
+    /// "Duplicate" is a property of the *node*, not of the template text. `/users/{id}` and
+    /// `/users/{name}` are different strings that reach the same node, because a node has one parameter
+    /// edge and the first name wins — so registering the same method on both is a real collision, and
+    /// the reported `existing` template is what makes that legible.
+    mutating func insert(method: HTTPRequest.Method, path: String) -> RouteInsertion {
         var current = 0
         for segment in Self.segments(path) {
             if segment.hasPrefix("{"), segment.hasSuffix("}") {
@@ -54,10 +74,13 @@ struct RouteTrie {
                 current = child
             }
         }
+        if let existing = nodes[current].routes.first(where: { $0.method == method }) {
+            return .duplicate(existing: existing.template)
+        }
         let index = routeCount
         routeCount += 1
-        nodes[current].routes.append((method, index))
-        return index
+        nodes[current].routes.append((method, index, path))
+        return .inserted(index: index)
     }
 
     /// Compact into the immutable trie: each node's literal children become a segment-sorted array
@@ -70,7 +93,7 @@ struct RouteTrie {
                         .sorted { $0.key < $1.key }
                         .map { (segment: $0.key, child: $0.value) },
                     parameterChild: node.parameterChild,
-                    routes: node.routes
+                    routes: node.routes.map { (method: $0.method, index: $0.index) }
                 )
             }
         )

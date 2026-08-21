@@ -88,8 +88,27 @@ What remains, roughly by value; each is additive and testable through `RouteTrie
 3. **Catch-all / wildcard params.** `{path*}` capturing the remainder (proxying, static files).
 4. **Trailing-slash policy.** A deliberate choice (strict / redirect / lenient) instead of the
    incidental "empty segments omitted" behavior.
-5. **Duplicate-route diagnostics.** Two registrations for the same method+template — surface it (a
-   precondition today only guards index/handler drift).
+5. ~~**Duplicate-route diagnostics.**~~ **Shipped.** `insert` reports a `RouteInsertion` — `.inserted` or
+   `.duplicate(existing:)` — and `TrieRouteBuilder` turns the second into a `preconditionFailure` naming
+   the method and both templates. Fatal at registration, which is startup: a duplicate has no recovery
+   better than stopping, and accepting it silently left the second route unreachable (`resolve` takes the
+   first match), so a controller's route went dead and surfaced later as a 404 on a route visibly present
+   in the source.
+
+   **Duplicate is a property of the node, not of the template text.** A node carries one parameter edge
+   and the first name wins, so `/users/{id}` and `/users/{name}` are the same node — registering one
+   method on both is a real collision that comparing strings would miss. The message names the template
+   that claimed the node, which is what turns "why is my route 404ing" into an answer. The template is
+   carried on build nodes only; `freeze()` drops it, so serving pays nothing.
+
+   The trie only *reports*; the builder decides to stop. That split is what keeps the detection unit
+   testable — a precondition inside the trie could not be tested without killing the test process.
+
+   Where the neighbours sit: **Hummingbird** also crashes
+   (`preconditionFailure("\(method.rawValue) already has a handler")`), while **Vapor** logs at `info`
+   and lets the last registration win. Vapor's leniency suits a router whose routes are written by hand
+   and may be deliberately overridden; WireMVC's come from `@Controller` annotations collated by codegen,
+   where there is no override idiom and a duplicate is unambiguously a mistake.
 6. ~~**Percent-decoding** of path parameters (`/users/a%20b` → `a b`).~~ **Shipped.** Applied to bound
    parameters only, *after* the path is split — so `%2F` binds one parameter containing a slash rather
    than reintroducing a path boundary. `+` is left alone: it means space in
