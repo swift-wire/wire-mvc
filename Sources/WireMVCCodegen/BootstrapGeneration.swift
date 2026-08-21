@@ -79,9 +79,11 @@ func bootstrapBuildLines(
     )
     // Pre-finalize registrations (introspection mount + `@NotFound` fallback + any keyed-harness variant-proxy
     // registrations), combined so an absent piece adds no blank line to the entry.
-    let registrations = [mountIntrospection, notFoundRegistration, extraRegistrations]
-        .filter { !$0.isEmpty }
-        .joined(separator: "\n")
+    let registrations = [
+        mountIntrospection, notFoundRegistration, synthesisedMethodNotAllowedRegistration, extraRegistrations,
+    ]
+    .filter { !$0.isEmpty }
+    .joined(separator: "\n")
     // The finalized router is wrapped once in the global-middleware front layer: the keyless proxy's
     // `wrapGlobalMiddleware` folds the Bootstrap's `@Middleware` factories around every request — matched
     // routes and the `@NotFound` fallback alike — or returns the router unchanged (identity) when there are
@@ -431,6 +433,31 @@ func renderNotFoundRegistration(
     }
     return (registration, generator.diagnostics)
 }
+
+/// The `builder.registerMethodNotAllowed { … }` every bootstrap app gets — the `405` sibling of the
+/// synthesised 404 above, and for the same reason.
+///
+/// The router decides *which* answer is owed and resolves the `Allow` set; the head is written here
+/// because only generated code has a `ResponseHeaderCarrying` context to drain. A router writing it
+/// itself would drop every global `@Middleware` contribution on the one response an app never declares —
+/// the same gap `@NotFound`'s synthesised fallback closed for 404s.
+///
+/// Always synthesised: unlike `@NotFound` there is no annotation to author one, because nothing has
+/// asked for a custom 405 body yet. When something does, this is where it forks, exactly as the 404 does.
+let synthesisedMethodNotAllowedRegistration = """
+    builder.registerMethodNotAllowed { _, requestContext, wireMVCAllowed, _, responseSender in
+    let \(responseHeaderDrainLocal) = requestContext.responseHeaders
+    var wireMVCAllowFields = HTTPFields()
+    wireMVCAllowFields[.allow] = wireMVCAllowed.map(\\.rawValue).joined(separator: ", ")
+    try await WireMVCOutcome.status(
+    .methodNotAllowed,
+    headerFields: WireMVCResponseHeaders.resolved(
+    returned: wireMVCAllowFields,
+    middleware: try await \(responseHeaderDrainLocal).drain()
+    )
+    ).send(on: responseSender)
+    }
+    """
 
 /// Whether a method carries `@NotFound`.
 private func hasNotFoundAttribute(_ function: FunctionDeclSyntax) -> Bool {

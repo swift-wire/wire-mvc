@@ -282,6 +282,18 @@ struct RouteContributorGenerationTests {
                                 headerFields: WireMVCResponseHeaders.resolved(middleware: try await wireMVCResponseHeaderDrain.drain())
                             ).send(on: responseSender)
                         }
+                        builder.registerMethodNotAllowed { _, requestContext, wireMVCAllowed, _, responseSender in
+                            let wireMVCResponseHeaderDrain = requestContext.responseHeaders
+                            var wireMVCAllowFields = HTTPFields()
+                            wireMVCAllowFields[.allow] = wireMVCAllowed.map(\\.rawValue).joined(separator: ", ")
+                            try await WireMVCOutcome.status(
+                                .methodNotAllowed,
+                                headerFields: WireMVCResponseHeaders.resolved(
+                                    returned: wireMVCAllowFields,
+                                    middleware: try await wireMVCResponseHeaderDrain.drain()
+                                )
+                            ).send(on: responseSender)
+                        }
                         let handler = builder.finalize()
                         let wireMVCServed = graph._WireGlobalMiddleware_AppBootstrap.wrapGlobalMiddleware(handler)
                         try await WireMVC.serve(on: server, handler: wireMVCServed, services: wireMVCServices)
@@ -365,6 +377,18 @@ struct RouteContributorGenerationTests {
                                     try await WireMVCOutcome.status(
                                         .notFound,
                                         headerFields: WireMVCResponseHeaders.resolved(middleware: try await wireMVCResponseHeaderDrain.drain())
+                                    ).send(on: responseSender)
+                                }
+                                builder.registerMethodNotAllowed { _, requestContext, wireMVCAllowed, _, responseSender in
+                                    let wireMVCResponseHeaderDrain = requestContext.responseHeaders
+                                    var wireMVCAllowFields = HTTPFields()
+                                    wireMVCAllowFields[.allow] = wireMVCAllowed.map(\\.rawValue).joined(separator: ", ")
+                                    try await WireMVCOutcome.status(
+                                        .methodNotAllowed,
+                                        headerFields: WireMVCResponseHeaders.resolved(
+                                            returned: wireMVCAllowFields,
+                                            middleware: try await wireMVCResponseHeaderDrain.drain()
+                                        )
                                     ).send(on: responseSender)
                                 }
                                 let handler = builder.finalize()

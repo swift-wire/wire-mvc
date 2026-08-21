@@ -32,11 +32,25 @@ where
             consuming sending ResponseSender
         ) async throws -> Void
 
+    /// A 405 handler. Same shape as `Handler` but for the allowed-method list in place of path
+    /// parameters: a 405 matched no template, so there is nothing to bind, and it owes an `Allow`.
+    public typealias MethodNotAllowedHandler =
+        @Sendable (
+            HTTPRequest,
+            consuming RequestContext,
+            [HTTPRequest.Method],
+            consuming sending Reader,
+            consuming sending ResponseSender
+        ) async throws -> Void
+
     private var trie = RouteTrie()
     private var handlers: [Handler] = []
     /// The fallback dispatched to on an unmatched request (M5.5 Phase 4). `nil` until `registerNotFound`;
     /// the frozen router answers a built-in 404 when it stays `nil`.
     private var notFoundHandler: Handler?
+    /// The handler for a matched path with an unmatched method. `nil` until `registerMethodNotAllowed`;
+    /// the frozen router answers a built-in — and contribution-less — 405 when it stays `nil`.
+    private var methodNotAllowedHandler: MethodNotAllowedHandler?
 
     public init() {}
 
@@ -70,15 +84,25 @@ where
         notFoundHandler = handler
     }
 
+    public mutating func registerMethodNotAllowed(handler: @escaping MethodNotAllowedHandler) {
+        methodNotAllowedHandler = handler
+    }
+
     /// Freeze the trie and pair it with the handler array — the immutable handler the server serves.
     public consuming func finalize() -> FrozenTrieRouter<RequestContext, Reader, ResponseSender> {
-        FrozenTrieRouter(trie: trie.freeze(), handlers: handlers, notFoundHandler: notFoundHandler)
+        FrozenTrieRouter(
+            trie: trie.freeze(),
+            handlers: handlers,
+            notFoundHandler: notFoundHandler,
+            methodNotAllowedHandler: methodNotAllowedHandler
+        )
     }
 }
 
 /// The immutable, servable router — *is* the proposal's `HTTPServerRequestHandler`. Resolves the
 /// request path through the frozen trie (binary-searched literal children) and dispatches the matched
-/// method's handler, or answers `404`.
+/// method's handler, answers `405` with `Allow` when the path exists but the method does not, or falls
+/// back to `404`.
 public struct FrozenTrieRouter<
     RequestContext: HTTPServerCapability.RequestContext & ~Copyable,
     Reader: AsyncReader & ~Copyable & SendableMetatype,
@@ -94,6 +118,9 @@ where
     /// The fallback for unmatched requests; the built-in 404 below is used only when it's `nil` (an app
     /// that never called `registerNotFound`).
     let notFoundHandler: TrieRouteBuilder<RequestContext, Reader, ResponseSender>.Handler?
+    /// The 405 handler, registered by the generated `@main`. It has a `ResponseHeaderCarrying` context and
+    /// so can drain the registry — which is why the head is written there rather than here.
+    let methodNotAllowedHandler: TrieRouteBuilder<RequestContext, Reader, ResponseSender>.MethodNotAllowedHandler?
 
     public func handle(
         request: HTTPRequest,
@@ -102,15 +129,37 @@ where
         responseSender: consuming sending ResponseSender
     ) async throws {
         // Resolve without consuming, so the reader and sender are consumed exactly once — by the
-        // matched handler, the fallback, or the built-in 404.
-        guard let matched = trie.resolve(method: request.method, path: request.path ?? "/") else {
+        // matched handler, the fallback, the built-in 404, or the 405.
+        switch trie.resolve(method: request.method, path: request.path ?? "/") {
+        case let .matched(index, parameters):
+            try await handlers[index](request, requestContext, parameters, reader, responseSender)
+
+        case let .methodNotAllowed(allowed):
+            // Dispatched to its own handler rather than to `notFoundHandler`: that fallback is the app's
+            // *404* — `@NotFound` — and routing a 405 into it would present "no such resource" for a
+            // resource that exists. `Allow` is required on a 405 by RFC 9110 §15.5.6.
+            //
+            // The registered handler writes the head because it can drain the request context's
+            // `ResponseHeaderRegistry`; this router cannot, not being constrained to a
+            // `ResponseHeaderCarrying` context. Without one — a hand-written builder that registers none —
+            // the fallback below is correct but bare, so a global `@Middleware`'s CORS or security headers
+            // would be missing from it.
+            if let methodNotAllowedHandler {
+                try await methodNotAllowedHandler(request, requestContext, allowed, reader, responseSender)
+            } else {
+                var fields = HTTPFields()
+                fields[.allow] = allowed.map(\.rawValue).joined(separator: ", ")
+                try await responseSender.sendAndFinish(
+                    HTTPResponse(status: .methodNotAllowed, headerFields: fields)
+                )
+            }
+
+        case .notFound:
             if let notFoundHandler {
                 try await notFoundHandler(request, requestContext, [:], reader, responseSender)
             } else {
                 try await responseSender.sendAndFinish(HTTPResponse(status: .notFound))
             }
-            return
         }
-        try await handlers[matched.index](request, requestContext, matched.parameters, reader, responseSender)
     }
 }

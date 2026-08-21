@@ -81,10 +81,26 @@ struct RouteTrie {
     }
 }
 
+/// What resolving a request against the trie concluded.
+///
+/// Three outcomes rather than an optional, because "no such path" and "not that method on this path" are
+/// different answers and HTTP has different status codes for them. Collapsing both to `nil` meant every
+/// wrong-method request was a `404`, which tells a client its URL is wrong when its URL is right.
+enum RouteResolution: Sendable, Equatable {
+    /// A route matched: its registration index, and the `{name}` parameters bound along the way.
+    case matched(index: Int, parameters: [String: Substring])
+    /// The path named a node carrying routes, but none for this method. Answered `405` with `Allow`.
+    ///
+    /// `allowed` is deduplicated and sorted, so the header is deterministic for a given registration set
+    /// rather than dependent on the order routes happened to be registered in.
+    case methodNotAllowed(allowed: [HTTPRequest.Method])
+    /// Nothing matched the path at all. Answered `404`.
+    case notFound
+}
+
 /// Serve phase (non-generic): the immutable trie. `resolve` walks the request path, collecting
-/// `{name}` parameters, and returns the matched route's index and parameters — or `nil` (the caller
-/// answers `404`). Literal children are matched by binary search; a literal match beats the parameter
-/// edge (static-before-param precedence).
+/// `{name}` parameters, and reports one of the three ``RouteResolution`` outcomes. Literal children are
+/// matched by binary search; a literal match beats the parameter edge (static-before-param precedence).
 struct FrozenRouteTrie: Sendable {
     struct Node: Sendable {
         let literalChildren: [(segment: String, child: Int)]  // sorted by segment
@@ -94,7 +110,7 @@ struct FrozenRouteTrie: Sendable {
 
     let nodes: [Node]
 
-    func resolve(method: HTTPRequest.Method, path: String) -> (index: Int, parameters: [String: Substring])? {
+    func resolve(method: HTTPRequest.Method, path: String) -> RouteResolution {
         var current = 0
         var parameters: [String: Substring] = [:]
         for segment in Self.stripQuery(path).split(separator: "/", omittingEmptySubsequences: true) {
@@ -105,11 +121,37 @@ struct FrozenRouteTrie: Sendable {
                 parameters[edge.name] = segment
                 current = edge.child
             } else {
-                return nil
+                return .notFound
             }
         }
-        guard let route = nodes[current].routes.first(where: { $0.method == method }) else { return nil }
-        return (route.index, parameters)
+        let routes = nodes[current].routes
+        if let route = routes.first(where: { $0.method == method }) {
+            return .matched(index: route.index, parameters: parameters)
+        }
+        // A node reached but carrying no routes is an *interior* node — `/users` when only
+        // `/users/{id}` was registered. The path names nothing, so that is a 404, not "the wrong method
+        // on a real resource". Only a node with routes can be a 405.
+        guard !routes.isEmpty else { return .notFound }
+        return .methodNotAllowed(allowed: Self.allowedMethods(of: routes))
+    }
+
+    /// The distinct methods registered at a node, in a stable order.
+    ///
+    /// The walk is greedy and does not backtrack — a literal child wins over the parameter edge and the
+    /// search never returns — so these are the methods of the node the path actually reached, which is
+    /// the same node a matching request would have been dispatched from. A future backtracking matcher
+    /// would need to union across the candidates it abandoned.
+    private static func allowedMethods(
+        of routes: [(method: HTTPRequest.Method, index: Int)]
+    )
+        -> [HTTPRequest.Method]
+    {
+        var seen = Set<HTTPRequest.Method>()
+        var allowed: [HTTPRequest.Method] = []
+        for route in routes where seen.insert(route.method).inserted {
+            allowed.append(route.method)
+        }
+        return allowed.sorted { $0.rawValue < $1.rawValue }
     }
 
     private static func literalChild(of node: Node, segment: String) -> Int? {

@@ -27,6 +27,36 @@ struct FallbackTests {
             #expect(response.head?.headerFields[.init("x-stamp")!] == "global")
         }
     }
+
+    /// `/ping` exists but only answers `GET`, so a `DELETE` is a **405**, not a 404 — and it names what
+    /// the resource does accept. Previously both came back `404`, which tells a client to fix a URL that
+    /// was already right.
+    ///
+    /// Asserted over a real server rather than only against the trie, because the status and the `Allow`
+    /// header are the router's to emit, and the trie only decides *which* answer is owed.
+    @Test func aWrongMethodOnARealRouteIsMethodNotAllowed() async throws {
+        try await withClient { client in
+            let response = try await client.delete("/ping")
+            #expect(response.status == 405)
+            #expect(response.head?.headerFields[.allow] == "GET")
+        }
+    }
+
+    /// The 405 carries global-middleware contributions, like every other response.
+    ///
+    /// It gets them the way the 404 does: the router resolves *which* answer is owed and hands the allowed
+    /// set to a **synthesised** `registerMethodNotAllowed` handler, which has a `ResponseHeaderCarrying`
+    /// context and drains the registry. A router-written head could not — it is not constrained to such a
+    /// context — and a bare 405 is precisely the gap that once let a 404 escape without a security or CORS
+    /// header: a response nobody declares is the one nobody checks.
+    @Test func aMethodNotAllowedCarriesTheGlobalHeader() async throws {
+        try await withClient { client in
+            let response = try await client.delete("/ping")
+            #expect(response.status == 405)
+            #expect(response.head?.headerFields[.allow] == "GET")
+            #expect(response.head?.headerFields[.init("x-stamp")!] == "global")
+        }
+    }
 }
 
 // The gate path. A gate answers the request itself, so the terminal — and its drain — never runs. These
