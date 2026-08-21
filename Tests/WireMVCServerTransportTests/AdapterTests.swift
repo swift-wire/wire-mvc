@@ -335,6 +335,52 @@ struct StampedGraph: WireMVCComposable {
     var services: [any Service] { [] }
 }
 
+/// The mechanism `ServiceContext` (and so distributed tracing) rides on. A plain `@TaskLocal` rather than
+/// the real thing on purpose: `ServiceContext.current` *is* a task-local, so what has to be proven is that
+/// task-locals survive the bridge — proving it without taking a dependency on swift-distributed-tracing.
+enum TracingProbe {
+    @TaskLocal static var traceID: String?
+}
+
+/// Reads the ambient task-local at two points that are not the same: inside the register closure's
+/// unstructured `Task` (one-shot), and from the streaming body producer, which runs *after* that closure
+/// has returned its response head.
+struct TracingController: RouteContributor {
+    func registerWireRoutes<Builder: HTTPServerRouteBuilder>(
+        on builder: inout Builder,
+        coding: WireMVCCoding
+    ) throws
+    where
+        Builder.RequestContext: ~Copyable,
+        Builder.Reader: ~Copyable,
+        Builder.ResponseSender: ~Copyable,
+        Builder.ResponseSender.Writer: ~Copyable
+    {
+        builder.register(method: .get, path: "/trace") { _, _, _, _, responseSender in
+            var body = UniqueArray<UInt8>(copying: (TracingProbe.traceID ?? "<none>").utf8)
+            try await responseSender.sendAndFinish(HTTPResponse(status: .ok), buffer: &body)
+        }
+        // The sharper case: each chunk is produced after the register closure returned, so this reads the
+        // task-local at a point where the host's `withValue` scope has long exited. Task-local values are
+        // copied into an unstructured `Task` at creation, so they should outlive that scope.
+        builder.register(method: .get, path: "/trace-stream") { _, _, _, _, responseSender in
+            var writer = try await responseSender.send(HTTPResponse(status: .ok))
+            for index in 1...3 {
+                var chunk = UniqueArray<UInt8>(
+                    copying: "\(index):\(TracingProbe.traceID ?? "<none>")\n".utf8
+                )
+                try await writer.write(buffer: &chunk)
+            }
+            try await writer.finish()
+        }
+    }
+}
+
+struct TracingGraph: WireMVCComposable {
+    var routeContributors: [any RouteContributor] { [TracingController()] }
+    var services: [any Service] { [] }
+}
+
 /// Stands in for `Wire.bootstrap()`'s collated graph. No `@BackgroundService` contributors here, so
 /// `services` is empty — the routes are what this adapter test drives.
 struct TestGraph: WireMVCComposable {
@@ -393,6 +439,49 @@ struct AdapterTests {
         let (response, _) = try await transport.send(.get, "/stamped")
         #expect(response.status == .ok)
         #expect(response.headerFields[.init("x-stamp")!] == "adapter")
+    }
+
+    // MARK: - Ambient context across the bridge
+
+    /// Task-local context set by a host middleware reaches a WireMVC handler.
+    ///
+    /// This is what an `open-telemetry`-style host middleware needs: `ServiceContext.current` is a
+    /// task-local, so if task-locals cross the bridge, tracing context does. The bridge dispatches into an
+    /// unstructured `Task {}` — which *inherits* task-locals, unlike `Task.detached` — so it should hold;
+    /// the point of pinning it is that swapping to `Task.detached` for an unrelated reason would break
+    /// tracing silently, with no test and no compiler complaint.
+    @Test
+    func taskLocalContextReachesTheHandlerThroughTheBridge() async throws {
+        let transport = MockTransport()
+        try WireMVCServerTransport.apply(TracingGraph(), to: transport)
+
+        let (response, body) = try await TracingProbe.$traceID.withValue("abc-123") {
+            try await transport.send(.get, "/trace")
+        }
+        #expect(response.status == .ok)
+        #expect(String(decoding: body, as: UTF8.self) == "abc-123")
+    }
+
+    /// The same, for a *streamed* response — where the body is produced after the register closure has
+    /// returned and the host's `withValue` scope has exited.
+    ///
+    /// The value is copied into the unstructured task at creation, so it outlives the scope that set it.
+    /// A bridge that produced the body from a task created later, outside that scope, would read `nil`
+    /// here while the one-shot case above still passed.
+    @Test
+    func taskLocalContextSurvivesIntoAStreamedBody() async throws {
+        let transport = MockTransport()
+        try WireMVCServerTransport.apply(TracingGraph(), to: transport)
+
+        let (head, streamingBody) = try await TracingProbe.$traceID.withValue("abc-123") {
+            try await transport.sendStreaming(.get, "/trace-stream")
+        }
+        #expect(head.status == .ok)
+        let body = try #require(streamingBody)
+
+        var text = ""
+        for try await chunk in body { text += String(decoding: chunk, as: UTF8.self) }
+        #expect(text == "1:abc-123\n2:abc-123\n3:abc-123\n")
     }
 
     /// A raw streaming (SSE) handler streams through the adapter incrementally: events arrive from an
