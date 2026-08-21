@@ -65,6 +65,24 @@ What remains, roughly by value; each is additive and testable through `RouteTrie
    `registerMethodNotAllowed` handler, the 405 sibling of the synthesised 404: only generated code has a
    `ResponseHeaderCarrying` context, so only it can drain the registry — a router-written head would have
    dropped every global `@Middleware` contribution on the one response an app never declares.
+
+   **This makes the native path stricter than the bridged runtimes, deliberately.** Neither Hummingbird nor
+   Vapor answers 405: both route a method mismatch to their not-found responder, so the same app serves
+   `405 + Allow` on the proposal runtime and `404` on the other two. Measured, not assumed — pinned by
+   `MethodMismatchTests` in each of `HummingbirdExample` and `VaporExample`.
+
+   The two get there differently, which is worth knowing before anyone proposes closing the gap.
+   Hummingbird *has* the information and declines to use it: `RouterResponder.respond` resolves the path,
+   then looks the method up on the resulting responder chain — which knows its methods — and sends both
+   failures to `notFoundResponder`. Vapor cannot tell the cases apart at all: the method is the first path
+   component of the lookup (`router.route(path: [method.rawValue] + pathComponents, …)`), so a wrong method
+   is an ordinary trie miss, and a 405 would need a second lookup.
+
+   Neither exposes a hook for it — both construct their not-found responder internally, so the
+   customisation point is error-handling middleware catching the 404, not a registered fallback. Closing
+   the divergence would therefore mean intercepting misses inside the `ServerTransport` bridge, which is
+   ownership WireMVC declines on those runtimes for the same reason file serving is native-path-only: it
+   collates onto the host's router rather than owning it.
 2. **Full precedence.** Literal beats parameter already; add parameter beats catch-all, and make it
    order-independent (replace first-registered-wins among ambiguous routes).
 3. **Catch-all / wildcard params.** `{path*}` capturing the remainder (proxying, static files).
