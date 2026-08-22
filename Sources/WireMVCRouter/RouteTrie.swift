@@ -48,6 +48,18 @@ struct ParameterEdge: Sendable, Equatable {
 /// Build phase (non-generic): insert path templates into a segment trie. Nodes live in a flat array
 /// (indices, not pointers).
 struct RouteTrie {
+    /// A route as registered. Named rather than a tuple: it carries four things, which is past the point
+    /// where positional members read clearly (and past `large_tuple`'s limit).
+    struct BuildRoute {
+        let method: HTTPRequest.Method
+        let index: Int
+        /// The template as written, so a duplicate can name what it collides *with*. Build-time only —
+        /// `freeze()` drops it, so serving never carries it.
+        let template: String
+        /// This route's own `{name}`s, in the order its path passes parameter edges.
+        let parameterNames: [String]
+    }
+
     struct BuildNode {
         var literalChildren: [String: Int] = [:]
         var parameterChild: ParameterEdge?
@@ -56,7 +68,7 @@ struct RouteTrie {
         ///
         /// The template is carried at build time only, so a duplicate can name what it collides *with*.
         /// `freeze()` drops it — serving never needs it, so it costs nothing per request.
-        var routes: [(method: HTTPRequest.Method, index: Int, template: String, parameterNames: [String])] = []
+        var routes: [BuildRoute] = []
     }
 
     private var nodes: [BuildNode] = [BuildNode()]
@@ -102,7 +114,9 @@ struct RouteTrie {
         }
         let index = routeCount
         routeCount += 1
-        nodes[current].routes.append((method, index, path, parameterNames))
+        nodes[current].routes.append(
+            BuildRoute(method: method, index: index, template: path, parameterNames: parameterNames)
+        )
         return .inserted(index: index)
     }
 
@@ -118,7 +132,11 @@ struct RouteTrie {
                         .map { (segment: $0.key, child: $0.value) },
                     parameterChild: node.parameterChild,
                     routes: node.routes.map {
-                        (method: $0.method, index: $0.index, parameterNames: $0.parameterNames)
+                        FrozenRouteTrie.Route(
+                            method: $0.method,
+                            index: $0.index,
+                            parameterNames: $0.parameterNames
+                        )
                     }
                 )
             }
@@ -151,10 +169,19 @@ enum RouteResolution: Sendable, Equatable {
 /// `{name}` parameters, and reports one of the three ``RouteResolution`` outcomes. Literal children are
 /// matched by binary search; a literal match beats the parameter edge (static-before-param precedence).
 struct FrozenRouteTrie: Sendable {
+    /// A route as served — the build-time template dropped, since matching never needs it.
+    struct Route: Sendable {
+        let method: HTTPRequest.Method
+        let index: Int
+        /// Applied to the positionally-collected values once this route is the chosen one, so each route
+        /// names what it matched however it spelled it.
+        let parameterNames: [String]
+    }
+
     struct Node: Sendable {
         let literalChildren: [(segment: String, child: Int)]  // sorted by segment
         let parameterChild: ParameterEdge?
-        let routes: [(method: HTTPRequest.Method, index: Int, parameterNames: [String])]
+        let routes: [Route]
     }
 
     let trailingSlash: TrailingSlashPolicy
@@ -213,7 +240,7 @@ struct FrozenRouteTrie: Sendable {
     /// the same node a matching request would have been dispatched from. A future backtracking matcher
     /// would need to union across the candidates it abandoned.
     private static func allowedMethods(
-        of routes: [(method: HTTPRequest.Method, index: Int, parameterNames: [String])]
+        of routes: [Route]
     )
         -> [HTTPRequest.Method]
     {
