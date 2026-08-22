@@ -44,6 +44,9 @@ where
         ) async throws -> Void
 
     private var trie = RouteTrie()
+    /// How a request's trailing slash is treated. An app chooses it where it builds the router — its
+    /// `createRouteBuilder(for:)` — because it is a property of the app's URL contract, not of a route.
+    private let trailingSlash: TrailingSlashPolicy
     private var handlers: [Handler] = []
     /// The fallback dispatched to on an unmatched request (M5.5 Phase 4). `nil` until `registerNotFound`;
     /// the frozen router answers a built-in 404 when it stays `nil`.
@@ -52,12 +55,17 @@ where
     /// the frozen router answers a built-in — and contribution-less — 405 when it stays `nil`.
     private var methodNotAllowedHandler: MethodNotAllowedHandler?
 
-    public init() {}
+    public init(trailingSlash: TrailingSlashPolicy = .lenient) {
+        self.trailingSlash = trailingSlash
+    }
 
     /// Infer the router's associated types from the server it will serve on, so callers needn't spell
     /// `TrieRouteBuilder<Server.RequestContext, …>` by hand. The inverse (`~Copyable`) requirements are
     /// restated because they don't propagate across the generic boundary on their own.
-    public init<Server: HTTPServer>(for server: borrowing Server)
+    public init<Server: HTTPServer>(
+        for server: borrowing Server,
+        trailingSlash: TrailingSlashPolicy = .lenient
+    )
     where
         Server.RequestContext == RequestContext,
         Server.Reader == Reader,
@@ -67,7 +75,7 @@ where
         Server.ResponseSender: ~Copyable,
         Server.ResponseSender.Writer: ~Copyable
     {
-        self.init()
+        self.init(trailingSlash: trailingSlash)
     }
 
     public mutating func register(
@@ -109,7 +117,7 @@ where
     /// Freeze the trie and pair it with the handler array — the immutable handler the server serves.
     public consuming func finalize() -> FrozenTrieRouter<RequestContext, Reader, ResponseSender> {
         FrozenTrieRouter(
-            trie: trie.freeze(),
+            trie: trie.freeze(trailingSlash: trailingSlash),
             handlers: handlers,
             notFoundHandler: notFoundHandler,
             methodNotAllowedHandler: methodNotAllowedHandler

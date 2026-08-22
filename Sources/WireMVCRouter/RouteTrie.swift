@@ -11,6 +11,22 @@ public import HTTPTypes
 // static > param > catch-all precedence beyond literal-first, trailing-slash policy, catch-all params,
 // duplicate-route diagnostics — is tracked in [Notes/WireMVCRouter.md].
 
+/// How a request path's **trailing slash** is treated — `/users/` against a route registered `/users`.
+///
+/// Explicit because the alternative is an accident: splitting a path on `/` and omitting empty segments
+/// makes the two equivalent as a side effect of the parsing, not as a decision anyone took.
+///
+/// Route *templates* always normalise slash-free — `/users/` and `/users` register the same node, since
+/// registration splits the same way — so this governs the request side only.
+public enum TrailingSlashPolicy: Sendable, Equatable {
+    /// `/users/` and `/users` are the same resource. What both Hummingbird and Vapor do, and what this
+    /// router did incidentally before the policy existed.
+    case lenient
+    /// `/users/` is not `/users`, and does not match. One resource has one URL, and a client sending the
+    /// other is told so rather than quietly served.
+    case strict
+}
+
 /// What inserting a route concluded.
 enum RouteInsertion: Sendable, Equatable {
     /// Registered; the caller stores its handler at this index in the parallel array.
@@ -85,8 +101,9 @@ struct RouteTrie {
 
     /// Compact into the immutable trie: each node's literal children become a segment-sorted array
     /// (binary-searchable, no per-lookup hashing).
-    consuming func freeze() -> FrozenRouteTrie {
+    consuming func freeze(trailingSlash: TrailingSlashPolicy = .lenient) -> FrozenRouteTrie {
         FrozenRouteTrie(
+            trailingSlash: trailingSlash,
             nodes: nodes.map { node in
                 FrozenRouteTrie.Node(
                     literalChildren: node.literalChildren
@@ -131,12 +148,22 @@ struct FrozenRouteTrie: Sendable {
         let routes: [(method: HTTPRequest.Method, index: Int)]
     }
 
+    let trailingSlash: TrailingSlashPolicy
     let nodes: [Node]
 
     func resolve(method: HTTPRequest.Method, path: String) -> RouteResolution {
+        let requestPath = Self.stripQuery(path)
+        // Checked before splitting, because splitting is what erases the distinction: omitting empty
+        // segments is why `/users/` ever looked like `/users`.
+        //
+        // `/` itself is exempt. It is the root, not a trailing slash on something — there is no shorter
+        // form of it to prefer, and rejecting it would make the root unreachable under `.strict`.
+        if trailingSlash == .strict, requestPath.count > 1, requestPath.hasSuffix("/") {
+            return .notFound
+        }
         var current = 0
         var parameters: [String: Substring] = [:]
-        for segment in Self.stripQuery(path).split(separator: "/", omittingEmptySubsequences: true) {
+        for segment in requestPath.split(separator: "/", omittingEmptySubsequences: true) {
             let node = nodes[current]
             if let child = Self.literalChild(of: node, segment: String(segment)) {
                 current = child

@@ -86,8 +86,35 @@ What remains, roughly by value; each is additive and testable through `RouteTrie
 2. **Full precedence.** Literal beats parameter already; add parameter beats catch-all, and make it
    order-independent (replace first-registered-wins among ambiguous routes).
 3. **Catch-all / wildcard params.** `{path*}` capturing the remainder (proxying, static files).
-4. **Trailing-slash policy.** A deliberate choice (strict / redirect / lenient) instead of the
-   incidental "empty segments omitted" behavior.
+4. ~~**Trailing-slash policy.**~~ **Shipped, as two of the three.** `TrailingSlashPolicy` is chosen where
+   an app builds its router — `TrieRouteBuilder(for: server, trailingSlash:)`, i.e. its
+   `createRouteBuilder(for:)` — because it is a property of the app's URL contract, not of a route.
+
+   - `.lenient` (**default**) — `/users/` and `/users` are one resource. What the behaviour already was,
+     but as a decision rather than a side effect of omitting empty segments while splitting.
+   - `.strict` — `/users/` does not match `/users`. Judged on the path before the query (`/users/?x=1` has
+     a trailing slash, `/users?x=1` does not) and before splitting, since splitting is what erased the
+     distinction. `/` is exempt: it is the root rather than a trailing slash on something, and rejecting
+     it would make the root unreachable.
+
+   Route **templates** normalise slash-free either way — registration splits identically, so `/users/` and
+   `/users` are one node, and writing both is now a duplicate. The policy therefore governs the request
+   side only.
+
+   **`.redirect` is not built**, and that is the deferral rather than an oversight. Canonicalising means
+   *writing a response head* — a 308 with `Location`, preserving the method where a 301 would not — and a
+   head written by the router carries no global `@Middleware` contributions, which is the gap the 405
+   needed a synthesised handler to close. It would want a third synthesised handler beside `@NotFound`'s
+   and the 405's. Cheap to add once something asks; nothing has, and an API-first stack is the context
+   where redirecting is least wanted — a 308 on a `POST` is a round trip a client did not ask for.
+
+   Prior art is genuinely split, which is why the policy is explicit rather than picked for everyone.
+   **Hummingbird** and **Vapor** are both lenient with no option (each splits omitting empty segments).
+   **Express** exposes `strict routing`, default off, and leaves redirecting to middleware.
+   **Go's `ServeMux`** redirects (301) toward a registered `/a/`, which surprises people often enough to
+   have its own issue ([golang/go#11757](https://github.com/golang/go/issues/11757)). **Django** redirects
+   by default via `APPEND_SLASH`, and 404s when it is off. Defaulting to `.lenient` keeps us with the
+   Swift neighbours; `.strict` is there for an app that wants one URL per resource.
 5. ~~**Duplicate-route diagnostics.**~~ **Shipped.** `insert` reports a `RouteInsertion` — `.inserted` or
    `.duplicate(existing:)` — and `TrieRouteBuilder` turns the second into a `preconditionFailure` naming
    the method and both templates. Fatal at registration, which is startup: a duplicate has no recovery
