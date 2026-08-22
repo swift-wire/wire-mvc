@@ -80,9 +80,17 @@ What remains, roughly by value; each is additive and testable through `RouteTrie
 
    Neither exposes a hook for it — both construct their not-found responder internally, so the
    customisation point is error-handling middleware catching the 404, not a registered fallback. Closing
-   the divergence would therefore mean intercepting misses inside the `ServerTransport` bridge, which is
-   ownership WireMVC declines on those runtimes for the same reason file serving is native-path-only: it
-   collates onto the host's router rather than owning it.
+   the divergence *through the bridge* would therefore mean intercepting misses inside it, which is
+   ownership the `ServerTransport` path does not take: there, WireMVC collates onto the host's router
+   rather than owning it, the same position file serving sits in.
+
+   That is a statement about the bridge, not about **native per-framework adapters**, which are an open
+   question awaiting a rationale rather than a decision already taken. The arguments for them are the
+   `ServerTransport` ceiling items — connection metadata, protocol upgrade, non-`{name}` path syntax — and
+   the argument against is portability. Tracing was measured and is *not* among the arguments for: ambient
+   context crosses the bridge intact on the path WireMVC uses (swift-wire's
+   [RemainingSurfaceWork.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/RemainingSurfaceWork.md)).
+   A 405 that matched the native path would be one more item on the *for* side, not a reason on its own.
 2. **Full precedence** — *order-independence shipped; parameter-beats-catch-all waits on catch-all.*
 
    The half that was separable is done, and it was hiding a silent defect rather than a missing feature.
@@ -101,7 +109,40 @@ What remains, roughly by value; each is additive and testable through `RouteTrie
 
    **Parameter-beats-catch-all is the remaining half**, and it cannot be built before catch-all exists —
    see item 3. It is a precedence rule between two things when only one of them is implemented.
-3. **Catch-all / wildcard params.** `{path*}` capturing the remainder (proxying, static files).
+3. ~~**Catch-all / wildcard params.**~~ **Shipped on the native path.** `{name*}` as the final segment
+   binds the whole remainder — `/files/{path*}` against `/files/a/b/c.css` binds `path` = `a/b/c.css`.
+
+   **Precedence falls out rather than being coded**, which completes item 2's other half. The catch-all is
+   remembered as the walk passes a node carrying one, and consulted *only* when the walk cannot advance —
+   so a literal edge wins, then the parameter edge, then the catch-all. `/files/readme`, `/files/other`
+   and `/files/a/b` reach three different routes with all three registered.
+
+   **The remainder is bound undecoded** — the one place this router does not percent-decode, and
+   deliberately. A single segment has no structure to lose, so decoding it is safe; a remainder spans
+   separators, and decoding it would turn `%2F` into a real path boundary before whatever resolves it
+   against a filesystem or a bucket ever sees it. That is the traversal class item 6 cites Spring's
+   documentation on. A handler wanting components decodes them per segment, which is the only order that
+   keeps the structure.
+
+   **One or more segments, and last only.** `/files` does not match `/files/{path*}` — register it
+   separately if it should serve; a zero-length remainder pushes `""` handling into every handler.
+   A catch-all before the end is rejected, since everything after it is unreachable — the same call
+   RoutingKit makes.
+
+   **Not bridgeable, and that is where it is refused.** `WireMVCServerTransport` throws on a catch-all
+   route: the path crosses `ServerTransport.register` as an OpenAPI `{name}` template, and the adapters
+   interpret a wildcard in it differently — Hummingbird as a single-segment capture named `path*`, Vapor
+   as a *literal* segment. Refused at registration rather than at codegen because only there is the
+   runtime known: a controller in a shared package does not know whether it will be served natively or
+   bridged. Codegen still rejects the shapes no template expresses anywhere — a bare `*`, Hummingbird's
+   prefix/suffix forms — and a misplaced catch-all.
+
+   So this is a **portability cliff inside the route surface**, entered knowingly: a controller using a
+   catch-all serves on the native runtime only. Both hosts have wildcards of their own, so the gap is on
+   the bridge's side, and whether it closes at a small seam is what
+   [CatchAllMountingProbe.md](CatchAllMountingProbe.md) measures — now with a native implementation to
+   mount, which is what the probe needed.
+
 4. ~~**Trailing-slash policy.**~~ **Shipped, as two of the three.** `TrailingSlashPolicy` is chosen where
    an app builds its router — `TrieRouteBuilder(for: server, trailingSlash:)`, i.e. its
    `createRouteBuilder(for:)` — because it is a property of the app's URL contract, not of a route.

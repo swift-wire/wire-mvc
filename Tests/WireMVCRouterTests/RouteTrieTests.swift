@@ -157,6 +157,85 @@ struct RouteTrieTests {
         #expect(frozen.resolve(method: .get, path: "/foxtrot") == .notFound)
     }
 
+    // MARK: - Catch-all
+
+    @Test func aCatchAllBindsTheRemainder() {
+        var trie = RouteTrie()
+        _ = trie.insert(method: .get, path: "/files/{path*}")
+        let frozen = trie.freeze()
+        #expect(frozen.resolve(method: .get, path: "/files/a").parameters?["path"].map(String.init) == "a")
+        #expect(
+            frozen.resolve(method: .get, path: "/files/a/b/c.css").parameters?["path"].map(String.init)
+                == "a/b/c.css"
+        )
+    }
+
+    @Test func literalAndParameterBothBeatACatchAll() {
+        // Precedence is not coded — the catch-all is only consulted when the walk cannot advance, so
+        // literal > parameter > catch-all falls out of the order the edges are tried in.
+        var trie = RouteTrie()
+        let catchAll = trie.insert(method: .get, path: "/files/{path*}").index
+        let parameter = trie.insert(method: .get, path: "/files/{name}").index
+        let literal = trie.insert(method: .get, path: "/files/readme").index
+        let frozen = trie.freeze()
+        #expect(frozen.resolve(method: .get, path: "/files/readme").index == literal)
+        #expect(frozen.resolve(method: .get, path: "/files/other").index == parameter)
+        #expect(frozen.resolve(method: .get, path: "/files/a/b").index == catchAll)
+    }
+
+    @Test func aCatchAllRemainderIsNotDecoded() {
+        // Deliberate, and the one place this router does *not* decode. A single segment has no structure
+        // to lose; a remainder spans separators, so decoding it would turn `%2F` into a real path boundary
+        // — handed straight to whatever resolves it against a filesystem or a bucket.
+        var trie = RouteTrie()
+        _ = trie.insert(method: .get, path: "/files/{path*}")
+        let match = trie.freeze().resolve(method: .get, path: "/files/a%2Fb/c")
+        #expect(match.parameters?["path"].map(String.init) == "a%2Fb/c")
+    }
+
+    @Test func earlierParametersStillBindAlongsideACatchAll() {
+        var trie = RouteTrie()
+        _ = trie.insert(method: .get, path: "/u/{id}/files/{path*}")
+        let match = trie.freeze().resolve(method: .get, path: "/u/9/files/a/b")
+        #expect(match.parameters?["id"].map(String.init) == "9")
+        #expect(match.parameters?["path"].map(String.init) == "a/b")
+    }
+
+    @Test func aCatchAllMatchesOneOrMoreSegments() {
+        // Not zero: `/files` is a different resource, and a zero-length remainder pushes `""` handling
+        // into every handler. Register `/files` as well if it should serve.
+        var trie = RouteTrie()
+        _ = trie.insert(method: .get, path: "/files/{path*}")
+        #expect(trie.freeze().resolve(method: .get, path: "/files") == .notFound)
+    }
+
+    @Test func aCatchAllMustBeTheLastSegment() {
+        // Anything after it can never match, so it is rejected rather than silently unreachable — the same
+        // call RoutingKit makes.
+        var trie = RouteTrie()
+        #expect(trie.insert(method: .get, path: "/files/{path*}/edit") == .catchAllNotLast("{path*}"))
+    }
+
+    @Test func otherWildcardShapesAreStillRejected() {
+        // Hummingbird's bare `*`, prefix and suffix forms have no meaning here, and read as ordinary
+        // parameters if unchecked. Only the trailing catch-all is expressible.
+        var trie = RouteTrie()
+        #expect(trie.insert(method: .get, path: "/files/*") == .unsupportedSegment("*"))
+        #expect(trie.insert(method: .get, path: "/files/**") == .unsupportedSegment("**"))
+    }
+
+    @Test func twoCatchAllsAtOneNodeAreADuplicate() {
+        var trie = RouteTrie()
+        #expect(trie.insert(method: .get, path: "/files/{path*}").index == 0)
+        #expect(trie.insert(method: .get, path: "/files/{rest*}").duplicateOf == "/files/{path*}")
+    }
+
+    @Test func ordinaryParametersAreUnaffected() {
+        var trie = RouteTrie()
+        #expect(trie.insert(method: .get, path: "/files/{path}").index == 0)
+        #expect(trie.insert(method: .post, path: "/a/{x}/b/{y}").index == 1)
+    }
+
     // MARK: - Precedence and ordering
 
     /// Each route names the values it matched, however *it* spelled them.

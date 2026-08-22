@@ -286,6 +286,20 @@ private struct ServerTransportRouteBuilder: HTTPServerRouteBuilder {
     /// and return the response head with either a known-length or a streaming body.
     consuming func apply(to transport: some ServerTransport) throws {
         for route in routes {
+            // A catch-all is expressible in a WireMVC route template and served by the native router, but
+            // not through this bridge: `ServerTransport.register` takes the path as a string in OpenAPI's
+            // `{name}` convention, and each adapter mangles a wildcard differently — Hummingbird as a
+            // single-segment capture named `path*`, Vapor as a *literal* segment. Registering it would
+            // produce a route that silently matches the wrong thing on each runtime.
+            //
+            // Refused here rather than at codegen because only here is the runtime known: a controller in
+            // a shared package does not know whether it will be served natively or bridged.
+            //
+            // Both hosts *do* have wildcards of their own, so this is a gap on the bridge's side rather
+            // than a limit of the runtime — see `Documentation/Notes/CatchAllMountingProbe.md`.
+            if let catchAll = Self.catchAllSegment(in: route.path) {
+                throw WireMVCServerTransportError.catchAllNotBridgeable(path: route.path, segment: catchAll)
+            }
             let handler = route.handler
             try transport.register(
                 { request, requestBody, metadata in
@@ -341,6 +355,34 @@ private struct ServerTransportRouteBuilder: HTTPServerRouteBuilder {
                 method: route.method,
                 path: route.path
             )
+        }
+    }
+}
+
+extension ServerTransportRouteBuilder {
+    /// The trailing `{name*}` in a route template, or `nil`.
+    static func catchAllSegment(in path: String) -> String? {
+        path.split(separator: "/", omittingEmptySubsequences: true)
+            .last { $0.hasPrefix("{") && $0.hasSuffix("}") && $0.dropLast().hasSuffix("*") }
+            .map(String.init)
+    }
+}
+
+/// What `WireMVCServerTransport` refuses to serve.
+public enum WireMVCServerTransportError: Error, CustomStringConvertible {
+    /// A catch-all route cannot be registered on a `ServerTransport`.
+    case catchAllNotBridgeable(path: String, segment: String)
+
+    public var description: String {
+        switch self {
+        case let .catchAllNotBridgeable(path, segment):
+            """
+            route '\(path)' uses the catch-all '\(segment)', which the ServerTransport bridge cannot \
+            register: the path crosses the adapter as an OpenAPI '{name}' template, and Hummingbird and \
+            Vapor each interpret a wildcard in it differently. The native (proposal server) router serves \
+            catch-all routes; on this runtime, serve that shape with the host framework's own router or \
+            middleware.
+            """
         }
     }
 }

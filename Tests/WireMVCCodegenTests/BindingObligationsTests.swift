@@ -229,6 +229,71 @@ struct UserBindingIntegrationTests {
         public struct FormBody<Value: Decodable & Sendable>: RequestBound {}
         """
 
+    @Test("a trailing catch-all is a valid template — the runtime decides whether it can be served")
+    func catchAllTemplateIsNotDiagnosed() {
+        let (_, diagnostics) = generate(
+            """
+            @Controller("/files")
+            public struct FilesController: Sendable {
+                @Get("/{path*}")
+                @JSONResponse
+                public func serve(@Path path: String) async throws -> String { path }
+            }
+            """
+        )
+        // Not codegen's call: the native router serves this, and the ServerTransport bridge refuses it at
+        // registration, where the runtime is known. A controller in a shared package does not know which
+        // it will be.
+        #expect(diagnostics.isEmpty, "got: \(diagnostics)")
+    }
+
+    @Test("a wildcard shape no template expresses is an error at build time")
+    func unexpressibleWildcardIsDiagnosed() {
+        let (_, diagnostics) = generate(
+            """
+            @Controller("/files")
+            public struct FilesController: Sendable {
+                @Get("/*")
+                @JSONResponse
+                public func serve() async throws -> String { "" }
+            }
+            """
+        )
+        #expect(diagnostics.count == 1, "got: \(diagnostics)")
+        #expect((diagnostics.first ?? "").contains("{name*}"), "names the shape that does work")
+    }
+
+    @Test("a catch-all before the end is an error — everything after it is unreachable")
+    func misplacedCatchAllIsDiagnosed() {
+        let (_, diagnostics) = generate(
+            """
+            @Controller("/files")
+            public struct FilesController: Sendable {
+                @Get("/{path*}/edit")
+                @JSONResponse
+                public func serve(@Path path: String) async throws -> String { path }
+            }
+            """
+        )
+        #expect(diagnostics.count == 1, "got: \(diagnostics)")
+        #expect((diagnostics.first ?? "").contains("must be the last segment"))
+    }
+
+    @Test("the wildcard check does not catch an ordinary parameter")
+    func ordinaryParameterIsNotDiagnosed() {
+        let (_, diagnostics) = generate(
+            """
+            @Controller("/files")
+            public struct FilesController: Sendable {
+                @Get("/{path}")
+                @JSONResponse
+                public func serve(@Path path: String) async throws -> String { path }
+            }
+            """
+        )
+        #expect(diagnostics.isEmpty, "got: \(diagnostics)")
+    }
+
     @Test("a user binding is recognised, so its parameter is not diagnosed")
     func recognised() {
         let (source, diagnostics) = generate(
