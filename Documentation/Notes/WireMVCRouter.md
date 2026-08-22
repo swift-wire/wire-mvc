@@ -83,8 +83,24 @@ What remains, roughly by value; each is additive and testable through `RouteTrie
    the divergence would therefore mean intercepting misses inside the `ServerTransport` bridge, which is
    ownership WireMVC declines on those runtimes for the same reason file serving is native-path-only: it
    collates onto the host's router rather than owning it.
-2. **Full precedence.** Literal beats parameter already; add parameter beats catch-all, and make it
-   order-independent (replace first-registered-wins among ambiguous routes).
+2. **Full precedence** — *order-independence shipped; parameter-beats-catch-all waits on catch-all.*
+
+   The half that was separable is done, and it was hiding a silent defect rather than a missing feature.
+   A node has one parameter edge, and that edge carried the `{name}`, so the name belonged to whichever
+   route registered **first**: with `GET /users/{id}` and `DELETE /users/{userId}`, the DELETE handler's
+   value arrived under `"id"`. A `@Path userId` binding would look it up, find nothing, and fail somewhere
+   with no visible connection to the registration order that caused it.
+
+   Names now belong to the **route**, not the edge. `resolve` collects matched values *positionally* and
+   names them only once a route is chosen, from that route's own template — so each route spells its
+   parameters however it likes and the outcome cannot depend on who registered first. Pinned both ways
+   round, including for multi-parameter paths where a misalignment would slide a name onto the wrong value.
+
+   Literal-beats-parameter was already order-independent, being decided by structure rather than arrival;
+   that is now pinned in both registration orders so it stays so.
+
+   **Parameter-beats-catch-all is the remaining half**, and it cannot be built before catch-all exists —
+   see item 3. It is a precedence rule between two things when only one of them is implemented.
 3. **Catch-all / wildcard params.** `{path*}` capturing the remainder (proxying, static files).
 4. ~~**Trailing-slash policy.**~~ **Shipped, as two of the three.** `TrailingSlashPolicy` is chosen where
    an app builds its router — `TrieRouteBuilder(for: server, trailingSlash:)`, i.e. its
