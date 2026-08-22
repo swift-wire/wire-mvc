@@ -401,6 +401,9 @@ let package = Package(
             dependencies: [
                 "WireMVCRouter",
                 .product(name: "HTTPTypes", package: "swift-http-types"),
+                .product(name: "HTTPAPIs", package: "swift-http-api-proposal"),
+                .product(name: "AsyncStreaming", package: "swift-async-algorithms"),
+                .product(name: "BasicContainers", package: "swift-collections"),
             ],
             swiftSettings: proposalSettings
         ),

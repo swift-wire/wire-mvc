@@ -191,16 +191,20 @@ where
             } else {
                 var fields = HTTPFields()
                 fields[.allow] = allowed.map(\.rawValue).joined(separator: ", ")
-                try await responseSender.sendAndFinish(
-                    HTTPResponse(status: .methodNotAllowed, headerFields: fields)
-                )
+                var response = HTTPResponse(status: .methodNotAllowed, headerFields: fields)
+                // Bodiless, but a known length all the same — see `stateLengthIfAbsent`. A synthesised
+                // miss is written here rather than through a `WireMVCOutcome`, so it needs saying twice.
+                response.stateLengthIfAbsent(0)
+                try await responseSender.sendAndFinish(response)
             }
 
         case .notFound:
             if let notFoundHandler {
                 try await notFoundHandler(request, requestContext, [:], reader, responseSender)
             } else {
-                try await responseSender.sendAndFinish(HTTPResponse(status: .notFound))
+                var response = HTTPResponse(status: .notFound)
+                response.stateLengthIfAbsent(0)
+                try await responseSender.sendAndFinish(response)
             }
         }
     }
