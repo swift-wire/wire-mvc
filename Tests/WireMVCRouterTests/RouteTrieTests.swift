@@ -285,11 +285,54 @@ struct RouteTrieTests {
         #expect(match.parameters?["id"].map(String.init) == "42")
     }
 
-    @Test func trailingSlashMatchesInV1() {
-        // v1: empty path segments are omitted, so "/users/" and "/users" are equivalent. A
-        // trailing-slash *policy* is a tracked hardening item.
+    // MARK: - Trailing-slash policy
+
+    @Test func lenientTreatsATrailingSlashAsTheSameResource() {
+        // The default, and what both Hummingbird and Vapor do. Previously this fell out of omitting empty
+        // segments rather than being chosen.
         var trie = RouteTrie()
         let index = trie.insert(method: .get, path: "/users").index
-        #expect(trie.freeze().resolve(method: .get, path: "/users/").index == index)
+        #expect(trie.freeze(trailingSlash: .lenient).resolve(method: .get, path: "/users/").index == index)
+    }
+
+    @Test func strictRejectsATrailingSlash() {
+        var trie = RouteTrie()
+        _ = trie.insert(method: .get, path: "/users")
+        let frozen = trie.freeze(trailingSlash: .strict)
+        #expect(frozen.resolve(method: .get, path: "/users").index == 0)
+        #expect(frozen.resolve(method: .get, path: "/users/") == .notFound)
+    }
+
+    @Test func strictStillServesTheRoot() {
+        // `/` is the root, not a trailing slash on something — there is no shorter form to prefer, and
+        // rejecting it would make the root unreachable.
+        var trie = RouteTrie()
+        let index = trie.insert(method: .get, path: "/").index
+        #expect(trie.freeze(trailingSlash: .strict).resolve(method: .get, path: "/").index == index)
+    }
+
+    @Test func strictAppliesBeforeTheQueryIsConsidered() {
+        // The slash is judged on the path, not on the raw target: `/users/?x=1` has a trailing slash and
+        // `/users?x=1` does not.
+        var trie = RouteTrie()
+        _ = trie.insert(method: .get, path: "/users")
+        let frozen = trie.freeze(trailingSlash: .strict)
+        #expect(frozen.resolve(method: .get, path: "/users?x=1").index == 0)
+        #expect(frozen.resolve(method: .get, path: "/users/?x=1") == .notFound)
+    }
+
+    @Test func aTemplateWrittenWithATrailingSlashNormalises() {
+        // Registration splits the same way, so `/users/` and `/users` are one node. Under `.strict` the
+        // canonical request form is therefore always slash-free, whichever way the route was written —
+        // which is why the policy governs requests only.
+        var trie = RouteTrie()
+        #expect(trie.insert(method: .get, path: "/users/").index == 0)
+        #expect(trie.insert(method: .get, path: "/users").duplicateOf == "/users/")
+    }
+
+    @Test func strictDoesNotAffectAnUnmatchedPath() {
+        var trie = RouteTrie()
+        _ = trie.insert(method: .get, path: "/users")
+        #expect(trie.freeze(trailingSlash: .strict).resolve(method: .get, path: "/nope") == .notFound)
     }
 }
