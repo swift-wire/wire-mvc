@@ -34,6 +34,17 @@ enum RouteInsertion: Sendable, Equatable {
     /// A route for this method already occupies the node this path reaches. `existing` is the template
     /// that claimed it, which may differ textually from the one being inserted — see `insert`.
     case duplicate(existing: String)
+    /// The template contains a segment this router cannot express — a catch-all or wildcard. `segment` is
+    /// the offending one.
+    ///
+    /// Rejected rather than accepted-and-mangled. `{path*}` reads as an ordinary parameter here: it begins
+    /// `{` and ends `}`, so it bound **one** segment under the literal name `"path*"` and answered 404 to
+    /// the multi-segment paths it was written for. The bridged runtimes each mangled it differently again
+    /// — Hummingbird as a single-segment capture named `path*`, Vapor as a literal segment. Three silent
+    /// wrong answers become one message.
+    case unsupportedSegment(String)
+    /// A `{name*}` appeared before the end of the template, so everything after it is unreachable.
+    case catchAllNotLast(String)
 }
 
 /// The `{name}` parameter edge out of a trie node — just the child it leads to.
@@ -69,6 +80,8 @@ struct RouteTrie {
         /// The template is carried at build time only, so a duplicate can name what it collides *with*.
         /// `freeze()` drops it — serving never needs it, so it costs nothing per request.
         var routes: [BuildRoute] = []
+        /// Routes registered as `{name*}` **at** this node — they claim the whole remaining path.
+        var catchAllRoutes: [BuildRoute] = []
     }
 
     private var nodes: [BuildNode] = [BuildNode()]
@@ -87,9 +100,22 @@ struct RouteTrie {
     /// edge and the first name wins — so registering the same method on both is a real collision, and
     /// the reported `existing` template is what makes that legible.
     mutating func insert(method: HTTPRequest.Method, path: String) -> RouteInsertion {
+        let allSegments = Self.segments(path)
+        // A catch-all claims everything after it, so anything following it is unreachable. Rejected rather
+        // than silently ignored — the same call Vapor's RoutingKit makes ("Catchall must be the last
+        // component in a path").
+        if let misplaced = allSegments.dropLast().first(where: Self.isCatchAll) {
+            return .catchAllNotLast(String(misplaced))
+        }
+        // Wildcard forms this router does not implement — Hummingbird's `*`, `*.jpg`, `file.*`. Only the
+        // recursive form has a meaning here, and mangling the others as ordinary parameters is what the
+        // diagnostic exists to prevent.
+        if let unsupported = allSegments.first(where: { Self.isWildcard($0) && !Self.isCatchAll($0) }) {
+            return .unsupportedSegment(String(unsupported))
+        }
         var current = 0
         var parameterNames: [String] = []
-        for segment in Self.segments(path) {
+        for segment in allSegments where !Self.isCatchAll(segment) {
             if segment.hasPrefix("{"), segment.hasSuffix("}") {
                 parameterNames.append(String(segment.dropFirst().dropLast()))
                 if let existing = nodes[current].parameterChild {
@@ -109,14 +135,23 @@ struct RouteTrie {
                 current = child
             }
         }
-        if let existing = nodes[current].routes.first(where: { $0.method == method }) {
+        let catchAllName = allSegments.last.flatMap { Self.isCatchAll($0) ? Self.wildcardName($0) : nil }
+        // The remainder is the last-named parameter, so a route's names still line up positionally with
+        // what the walk collects.
+        if let catchAllName { parameterNames.append(catchAllName) }
+
+        let siblings = catchAllName == nil ? nodes[current].routes : nodes[current].catchAllRoutes
+        if let existing = siblings.first(where: { $0.method == method }) {
             return .duplicate(existing: existing.template)
         }
         let index = routeCount
         routeCount += 1
-        nodes[current].routes.append(
-            BuildRoute(method: method, index: index, template: path, parameterNames: parameterNames)
-        )
+        let route = BuildRoute(method: method, index: index, template: path, parameterNames: parameterNames)
+        if catchAllName == nil {
+            nodes[current].routes.append(route)
+        } else {
+            nodes[current].catchAllRoutes.append(route)
+        }
         return .inserted(index: index)
     }
 
@@ -137,10 +172,39 @@ struct RouteTrie {
                             index: $0.index,
                             parameterNames: $0.parameterNames
                         )
+                    },
+                    catchAllRoutes: node.catchAllRoutes.map {
+                        FrozenRouteTrie.Route(
+                            method: $0.method,
+                            index: $0.index,
+                            parameterNames: $0.parameterNames
+                        )
                     }
                 )
             }
         )
+    }
+
+    /// Whether a template segment asks for wildcard matching, which this router does not implement.
+    ///
+    /// Recognises more spellings than the one convention this router would eventually adopt: `{path*}`,
+    /// a bare `*`, and `**` (Hummingbird's recursive form). Someone arriving from another framework
+    /// should meet the diagnostic rather than a mis-route, and the cost of over-recognising is one
+    /// rejected parameter name that ends in an asterisk — which is not a name anyone writes.
+    /// Whether a segment is the **recursive** catch-all this router implements — `{name*}`.
+    static func isCatchAll(_ segment: Substring) -> Bool {
+        segment.hasPrefix("{") && segment.hasSuffix("}") && segment.dropLast().hasSuffix("*")
+    }
+
+    /// The name a `{name*}` segment binds its remainder under.
+    static func wildcardName(_ segment: Substring) -> String {
+        String(segment.dropFirst().dropLast().dropLast())
+    }
+
+    static func isWildcard(_ segment: Substring) -> Bool {
+        if segment == "*" || segment == "**" { return true }
+        guard segment.hasPrefix("{"), segment.hasSuffix("}") else { return false }
+        return segment.dropLast().hasSuffix("*")
     }
 
     static func segments(_ path: String) -> [Substring] {
@@ -182,6 +246,8 @@ struct FrozenRouteTrie: Sendable {
         let literalChildren: [(segment: String, child: Int)]  // sorted by segment
         let parameterChild: ParameterEdge?
         let routes: [Route]
+        /// Routes claiming the whole remaining path from this node.
+        let catchAllRoutes: [Route]
     }
 
     let trailingSlash: TrailingSlashPolicy
@@ -202,16 +268,29 @@ struct FrozenRouteTrie: Sendable {
         // edge, so there is no single correct name at match time — `/users/{id}` and `/users/{userId}`
         // traverse the same edge, and each route is entitled to its own spelling.
         var parameterValues: [Substring] = []
-        for segment in requestPath.split(separator: "/", omittingEmptySubsequences: true) {
+        // The deepest node passed that carries a catch-all, with the values bound on the way and the
+        // remainder that would be left to it. Used **only** when the walk cannot advance, which is what
+        // makes precedence fall out rather than be coded: a literal edge is tried first, then the
+        // parameter edge, and the catch-all is what is left when neither matches.
+        var fallback: (node: Int, values: [Substring], remainder: Substring)?
+        let segments = requestPath.split(separator: "/", omittingEmptySubsequences: true)
+        for (position, segment) in segments.enumerated() {
             let node = nodes[current]
+            if !node.catchAllRoutes.isEmpty {
+                fallback = (current, parameterValues, Self.remainder(of: requestPath, from: segment))
+            }
             if let child = Self.literalChild(of: node, segment: String(segment)) {
                 current = child
             } else if let edge = node.parameterChild {
                 parameterValues.append(Self.percentDecoded(segment))
                 current = edge.child
+            } else if let fallback {
+                return Self.matchCatchAll(nodes[fallback.node], method: method, fallback: fallback)
+                    ?? .notFound
             } else {
                 return .notFound
             }
+            _ = position
         }
         let routes = nodes[current].routes
         if let route = routes.first(where: { $0.method == method }) {
@@ -225,6 +304,14 @@ struct FrozenRouteTrie: Sendable {
                     uniquingKeysWith: { _, later in later }
                 )
             )
+        }
+        // The walk consumed every segment, so an exact route wins if there is one; otherwise a catch-all
+        // remembered on the way still claims the request — `/files/a` against `/files/{path*}` reaches the
+        // `/files` node with nothing to match, and the remainder is `a`.
+        if routes.first(where: { $0.method == method }) == nil, let fallback,
+            let matched = Self.matchCatchAll(nodes[fallback.node], method: method, fallback: fallback)
+        {
+            return matched
         }
         // A node reached but carrying no routes is an *interior* node — `/users` when only
         // `/users/{id}` was registered. The path names nothing, so that is a 404, not "the wrong method
@@ -308,6 +395,33 @@ struct FrozenRouteTrie: Sendable {
         case UInt8(ascii: "A")...UInt8(ascii: "F"): byte - UInt8(ascii: "A") + 10
         default: nil
         }
+    }
+
+    /// The catch-all match at `node`, if it has one for `method`.
+    ///
+    /// The remainder is bound **undecoded**, unlike an ordinary parameter. A single segment has no
+    /// structure to lose, so decoding it is safe; a remainder spans separators, and decoding it would turn
+    /// `%2F` into a real path boundary — the traversal class that decoding-before-splitting causes, handed
+    /// straight to whatever resolves the value against a filesystem or a bucket. A handler that wants the
+    /// components decodes them itself, per segment, which is the only order that keeps the structure.
+    private static func matchCatchAll(
+        _ node: Node,
+        method: HTTPRequest.Method,
+        fallback: (node: Int, values: [Substring], remainder: Substring)
+    ) -> RouteResolution? {
+        guard let route = node.catchAllRoutes.first(where: { $0.method == method }) else { return nil }
+        return .matched(
+            index: route.index,
+            parameters: Dictionary(
+                zip(route.parameterNames, fallback.values + [fallback.remainder]),
+                uniquingKeysWith: { _, later in later }
+            )
+        )
+    }
+
+    /// The request path from `segment` to the end, as one slice — separators intact.
+    private static func remainder(of path: Substring, from segment: Substring) -> Substring {
+        path[segment.startIndex...]
     }
 
     private static func literalChild(of node: Node, segment: String) -> Int? {

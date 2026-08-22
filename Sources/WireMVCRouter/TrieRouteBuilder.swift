@@ -103,6 +103,22 @@ where
                 : "'\(path)' collides with '\(existing)' — they differ only in parameter *names*, "
                     + "which a router cannot tell apart, so only the first would ever be reached"
             preconditionFailure("duplicate route: \(method.rawValue) \(collision).")
+
+        case let .catchAllNotLast(segment):
+            preconditionFailure(
+                "route '\(path)': '\(segment)' claims the rest of the path, so the segments after it can "
+                    + "never match. A catch-all must be the last segment."
+            )
+
+        case let .unsupportedSegment(segment):
+            // The recursive catch-all `{name*}` is supported; these are the *other* wildcard shapes —
+            // Hummingbird's bare `*`, `*.jpg`, `file.*`. They have no meaning here, and left unchecked
+            // they read as ordinary parameters, which is a mis-route rather than an error.
+            preconditionFailure(
+                "route '\(path)' uses '\(segment)': the only wildcard WireMVC route templates express is "
+                    + "the trailing catch-all, '{name*}'. Register the concrete paths, or serve this shape "
+                    + "with the host framework's own router."
+            )
         }
     }
 

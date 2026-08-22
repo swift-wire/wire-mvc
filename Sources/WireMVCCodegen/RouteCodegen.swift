@@ -288,6 +288,9 @@ struct RouteBlockGenerator {
         controllerResponseHeaders: [ResponseHeaderEntry]
     ) -> String? {
         let path = joinPath(prefix, verb.path ?? "")
+        // Caught here rather than left to the router's startup precondition: the template is a literal in
+        // the source, so this is knowable at build time.
+        guard !recordWildcardSegment(in: path, at: function.name) else { return nil }
         let middleware = controllerMiddleware + middlewareConstructions(from: function.attributes)
         if hasRawRoute(function) {
             // A raw handler writes its own response, so it has no outcome for these to land in. Silently
@@ -527,7 +530,11 @@ extension RouteBlockGenerator {
             // only ever fail at runtime (`missingPathParameter`), so reject it at the seam. Keyed on the
             // `.path` obligation rather than the name `Path`, so a binding declared outside WireMVC gets the
             // same check: the obligation *is* "this one names a placeholder".
-            if namesPathPlaceholder(binding.wrapper), !path.contains("{\(bindingName)}") {
+            // `{name*}` provides the placeholder `name` too — a catch-all binds its remainder under the
+            // name without the marker, so a `@Path` naming it is satisfied.
+            if namesPathPlaceholder(binding.wrapper),
+                !path.contains("{\(bindingName)}"), !path.contains("{\(bindingName)*}")
+            {
                 diagnostics.append(
                     RouteCodegenDiagnostic(.pathPlaceholderMissing(name: bindingName, path: path), at: param)
                 )

@@ -8,6 +8,8 @@ public import SwiftSyntax
 public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
     case unannotatedParameter(String)
     case pathPlaceholderMissing(name: String, path: String)
+    case wildcardPathSegment(path: String, segment: String)
+    case catchAllNotLastSegment(path: String, segment: String)
     case missingResponseAnnotation(String)
     case responseModeOnVoid(String, annotation: String)
     case responseStatusOnValue(String)
@@ -44,6 +46,10 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
             "handler parameter '\(name)' needs a binding annotation — one of @Path, @Query, @JSONBody, @Header"
         case .pathPlaceholderMissing(let name, let path):
             "@Path '\(name)' has no matching '{\(name)}' placeholder in the route path \"\(path)\""
+        case .wildcardPathSegment(let path, let segment):
+            "route path \"\(path)\" uses '\(segment)': the only wildcard WireMVC route templates express is the trailing catch-all, '{name*}'"
+        case .catchAllNotLastSegment(let path, let segment):
+            "route path \"\(path)\": '\(segment)' claims the rest of the path, so the segments after it can never match — a catch-all must be the last segment"
         case .missingResponseAnnotation(let route):
             "route '\(route)' needs exactly one response annotation — @JSONResponse or @HTMLResponse (returns a body), @ResponseStatus (Void), or any mode declared with @ResponseMode"
         case .responseModeOnVoid(let route, let annotation):
@@ -120,6 +126,8 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
         switch self {
         case .unannotatedParameter: id = "unannotatedParameter"
         case .pathPlaceholderMissing: id = "pathPlaceholderMissing"
+        case .wildcardPathSegment: id = "wildcardPathSegment"
+        case .catchAllNotLastSegment: id = "catchAllNotLastSegment"
         case .missingResponseAnnotation: id = "missingResponseAnnotation"
         case .responseModeOnVoid: id = "responseModeOnVoid"
         case .responseStatusOnValue: id = "responseStatusOnValue"
