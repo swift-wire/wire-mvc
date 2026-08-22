@@ -288,6 +288,9 @@ struct RouteBlockGenerator {
         controllerResponseHeaders: [ResponseHeaderEntry]
     ) -> String? {
         let path = joinPath(prefix, verb.path ?? "")
+        // Caught here rather than left to the router's startup precondition: the template is a literal in
+        // the source, so this is knowable at build time.
+        guard !recordWildcardSegment(in: path, at: function.name) else { return nil }
         let middleware = controllerMiddleware + middlewareConstructions(from: function.attributes)
         if hasRawRoute(function) {
             // A raw handler writes its own response, so it has no outcome for these to land in. Silently

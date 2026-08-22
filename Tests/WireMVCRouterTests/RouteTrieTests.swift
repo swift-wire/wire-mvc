@@ -157,6 +157,38 @@ struct RouteTrieTests {
         #expect(frozen.resolve(method: .get, path: "/foxtrot") == .notFound)
     }
 
+    // MARK: - Wildcards, rejected rather than mangled
+
+    @Test func aCatchAllTemplateIsRejected() {
+        // Before this it read as an ordinary parameter — `{path*}` bound *one* segment under the literal
+        // name "path*", and answered 404 to exactly the multi-segment paths it was written for.
+        var trie = RouteTrie()
+        #expect(trie.insert(method: .get, path: "/files/{path*}") == .unsupportedSegment("{path*}"))
+    }
+
+    @Test func bareAndRecursiveWildcardsAreRejectedToo() {
+        // Spellings from the neighbours: Hummingbird has `*` and `**` (plus prefix/suffix forms), Vapor
+        // has `**`. Someone arriving from either should meet the message, not a mis-route.
+        var trie = RouteTrie()
+        #expect(trie.insert(method: .get, path: "/files/*") == .unsupportedSegment("*"))
+        #expect(trie.insert(method: .get, path: "/files/**") == .unsupportedSegment("**"))
+    }
+
+    @Test func aRejectedWildcardRegistersNothing() {
+        // Rejected before the walk, so it consumes no index and leaves no partial path behind.
+        var trie = RouteTrie()
+        #expect(trie.insert(method: .get, path: "/files/{path*}") == .unsupportedSegment("{path*}"))
+        #expect(trie.insert(method: .get, path: "/files/{name}").index == 0)
+        #expect(trie.freeze().resolve(method: .get, path: "/files/a").index == 0)
+    }
+
+    @Test func ordinaryParametersAreUnaffected() {
+        // The check is narrow: only a name ending in `*` trips it, which is not a name anyone writes.
+        var trie = RouteTrie()
+        #expect(trie.insert(method: .get, path: "/files/{path}").index == 0)
+        #expect(trie.insert(method: .post, path: "/a/{x}/b/{y}").index == 1)
+    }
+
     // MARK: - Precedence and ordering
 
     /// Each route names the values it matched, however *it* spelled them.

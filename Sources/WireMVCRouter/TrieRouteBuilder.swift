@@ -103,6 +103,21 @@ where
                 : "'\(path)' collides with '\(existing)' — they differ only in parameter *names*, "
                     + "which a router cannot tell apart, so only the first would ever be reached"
             preconditionFailure("duplicate route: \(method.rawValue) \(collision).")
+
+        case let .unsupportedSegment(segment):
+            // Fatal for the same reason a duplicate is: this is startup, and the alternatives are worse.
+            // Accepting it silently is what happened before — `{path*}` bound one segment under the name
+            // `"path*"` and 404'd the multi-segment requests it was written for.
+            //
+            // "Not yet expressible" rather than "not supported": both bridged runtimes *do* have
+            // wildcards (Hummingbird four forms, Vapor one), so this is a gap on WireMVC's side, and
+            // whether it closes at the mounting seam is what `Documentation/Notes/CatchAllMountingProbe.md`
+            // is for.
+            preconditionFailure(
+                "route '\(path)' uses '\(segment)': catch-all and wildcard segments are not yet "
+                    + "expressible in WireMVC route templates. Register the concrete paths, or serve this "
+                    + "shape with the host framework's own router."
+            )
         }
     }
 

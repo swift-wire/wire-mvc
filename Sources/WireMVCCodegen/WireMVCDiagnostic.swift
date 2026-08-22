@@ -8,6 +8,7 @@ public import SwiftSyntax
 public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
     case unannotatedParameter(String)
     case pathPlaceholderMissing(name: String, path: String)
+    case wildcardPathSegment(path: String, segment: String)
     case missingResponseAnnotation(String)
     case responseModeOnVoid(String, annotation: String)
     case responseStatusOnValue(String)
@@ -44,6 +45,8 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
             "handler parameter '\(name)' needs a binding annotation — one of @Path, @Query, @JSONBody, @Header"
         case .pathPlaceholderMissing(let name, let path):
             "@Path '\(name)' has no matching '{\(name)}' placeholder in the route path \"\(path)\""
+        case .wildcardPathSegment(let path, let segment):
+            "route path \"\(path)\" uses '\(segment)': catch-all and wildcard segments are not yet expressible in WireMVC route templates. Register the concrete paths, or serve this shape with the host framework's own router."
         case .missingResponseAnnotation(let route):
             "route '\(route)' needs exactly one response annotation — @JSONResponse or @HTMLResponse (returns a body), @ResponseStatus (Void), or any mode declared with @ResponseMode"
         case .responseModeOnVoid(let route, let annotation):
@@ -120,6 +123,7 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
         switch self {
         case .unannotatedParameter: id = "unannotatedParameter"
         case .pathPlaceholderMissing: id = "pathPlaceholderMissing"
+        case .wildcardPathSegment: id = "wildcardPathSegment"
         case .missingResponseAnnotation: id = "missingResponseAnnotation"
         case .responseModeOnVoid: id = "responseModeOnVoid"
         case .responseStatusOnValue: id = "responseStatusOnValue"

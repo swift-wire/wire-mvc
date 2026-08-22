@@ -229,6 +229,42 @@ struct UserBindingIntegrationTests {
         public struct FormBody<Value: Decodable & Sendable>: RequestBound {}
         """
 
+    @Test("a wildcard route template is an error at build time, not a mis-route at runtime")
+    func wildcardTemplateIsDiagnosed() {
+        let (_, diagnostics) = generate(
+            """
+            @Controller("/files")
+            public struct FilesController: Sendable {
+                @Get("/{path*}")
+                @JSONResponse
+                public func serve(@Path path: String) async throws -> String { path }
+            }
+            """
+        )
+        #expect(diagnostics.count == 1, "got: \(diagnostics)")
+        // The offending segment is named, and so is the way out — the message has to be actionable, since
+        // the alternative it replaces (a route that binds one segment under the name "path*" and 404s
+        // everything it was written for) gave no clue at all.
+        let message = diagnostics.first ?? ""
+        #expect(message.contains("{path*}"))
+        #expect(message.contains("not yet expressible"))
+    }
+
+    @Test("the wildcard check does not catch an ordinary parameter")
+    func ordinaryParameterIsNotDiagnosed() {
+        let (_, diagnostics) = generate(
+            """
+            @Controller("/files")
+            public struct FilesController: Sendable {
+                @Get("/{path}")
+                @JSONResponse
+                public func serve(@Path path: String) async throws -> String { path }
+            }
+            """
+        )
+        #expect(diagnostics.isEmpty, "got: \(diagnostics)")
+    }
+
     @Test("a user binding is recognised, so its parameter is not diagnosed")
     func recognised() {
         let (source, diagnostics) = generate(

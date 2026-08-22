@@ -34,6 +34,15 @@ enum RouteInsertion: Sendable, Equatable {
     /// A route for this method already occupies the node this path reaches. `existing` is the template
     /// that claimed it, which may differ textually from the one being inserted — see `insert`.
     case duplicate(existing: String)
+    /// The template contains a segment this router cannot express — a catch-all or wildcard. `segment` is
+    /// the offending one.
+    ///
+    /// Rejected rather than accepted-and-mangled. `{path*}` reads as an ordinary parameter here: it begins
+    /// `{` and ends `}`, so it bound **one** segment under the literal name `"path*"` and answered 404 to
+    /// the multi-segment paths it was written for. The bridged runtimes each mangled it differently again
+    /// — Hummingbird as a single-segment capture named `path*`, Vapor as a literal segment. Three silent
+    /// wrong answers become one message.
+    case unsupportedSegment(String)
 }
 
 /// The `{name}` parameter edge out of a trie node — just the child it leads to.
@@ -87,6 +96,9 @@ struct RouteTrie {
     /// edge and the first name wins — so registering the same method on both is a real collision, and
     /// the reported `existing` template is what makes that legible.
     mutating func insert(method: HTTPRequest.Method, path: String) -> RouteInsertion {
+        if let unsupported = Self.segments(path).first(where: Self.isWildcard) {
+            return .unsupportedSegment(String(unsupported))
+        }
         var current = 0
         var parameterNames: [String] = []
         for segment in Self.segments(path) {
@@ -141,6 +153,18 @@ struct RouteTrie {
                 )
             }
         )
+    }
+
+    /// Whether a template segment asks for wildcard matching, which this router does not implement.
+    ///
+    /// Recognises more spellings than the one convention this router would eventually adopt: `{path*}`,
+    /// a bare `*`, and `**` (Hummingbird's recursive form). Someone arriving from another framework
+    /// should meet the diagnostic rather than a mis-route, and the cost of over-recognising is one
+    /// rejected parameter name that ends in an asterisk — which is not a name anyone writes.
+    static func isWildcard(_ segment: Substring) -> Bool {
+        if segment == "*" || segment == "**" { return true }
+        guard segment.hasPrefix("{"), segment.hasSuffix("}") else { return false }
+        return segment.dropLast().hasSuffix("*")
     }
 
     static func segments(_ path: String) -> [Substring] {

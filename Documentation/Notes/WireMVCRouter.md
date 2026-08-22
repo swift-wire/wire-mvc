@@ -80,9 +80,17 @@ What remains, roughly by value; each is additive and testable through `RouteTrie
 
    Neither exposes a hook for it — both construct their not-found responder internally, so the
    customisation point is error-handling middleware catching the 404, not a registered fallback. Closing
-   the divergence would therefore mean intercepting misses inside the `ServerTransport` bridge, which is
-   ownership WireMVC declines on those runtimes for the same reason file serving is native-path-only: it
-   collates onto the host's router rather than owning it.
+   the divergence *through the bridge* would therefore mean intercepting misses inside it, which is
+   ownership the `ServerTransport` path does not take: there, WireMVC collates onto the host's router
+   rather than owning it, the same position file serving sits in.
+
+   That is a statement about the bridge, not about **native per-framework adapters**, which are an open
+   question awaiting a rationale rather than a decision already taken. The arguments for them are the
+   `ServerTransport` ceiling items — connection metadata, protocol upgrade, non-`{name}` path syntax — and
+   the argument against is portability. Tracing was measured and is *not* among the arguments for: ambient
+   context crosses the bridge intact on the path WireMVC uses (swift-wire's
+   [RemainingSurfaceWork.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/RemainingSurfaceWork.md)).
+   A 405 that matched the native path would be one more item on the *for* side, not a reason on its own.
 2. **Full precedence** — *order-independence shipped; parameter-beats-catch-all waits on catch-all.*
 
    The half that was separable is done, and it was hiding a silent defect rather than a missing feature.
@@ -101,7 +109,31 @@ What remains, roughly by value; each is additive and testable through `RouteTrie
 
    **Parameter-beats-catch-all is the remaining half**, and it cannot be built before catch-all exists —
    see item 3. It is a precedence rule between two things when only one of them is implemented.
-3. **Catch-all / wildcard params.** `{path*}` capturing the remainder (proxying, static files).
+3. **Catch-all / wildcard params** — *rejected with a diagnostic; the capability is probed, not built.*
+
+   Not implemented, and until now not *refused* either, which was the worse state: `{path*}` reads as an
+   ordinary parameter, so it bound **one** segment under the literal name `"path*"` and answered 404 to
+   exactly the multi-segment requests it was written for. The bridged runtimes mangled it differently
+   again — Hummingbird as a single-segment capture named `path*`, Vapor as a *literal* segment. Three
+   silent wrong answers.
+
+   Now one message, at two levels: a **build error** on the route template (the literal is in the source,
+   so this is knowable then), and a startup **precondition** in `RouteTrie` as the backstop for builders
+   that never pass through codegen. Both recognise `{name*}`, a bare `*`, and `**` — more spellings than
+   the one convention WireMVC would adopt, so someone arriving from Hummingbird or Vapor meets the message
+   rather than a mis-route.
+
+   **The wording is "not yet expressible", not "not supported", deliberately.** Both bridged runtimes
+   *have* wildcards — Hummingbird four forms (`*`, `*.jpg`, `file.*`, `**`), Vapor one (`.catchall`) — so
+   this is a gap on WireMVC's side, and routing through `ServerTransport` **subtracts** a capability the
+   host already has. That is a different kind of thing from the convention divergences recorded elsewhere
+   in this note, which are each runtime behaving as its own ecosystem expects and are not defects.
+
+   Whether the subtraction closes at a small seam or needs a per-framework adapter is the open question,
+   and it is measurable rather than arguable: see
+   [CatchAllMountingProbe.md](CatchAllMountingProbe.md). Building it native-only with an explicit bridge
+   refusal is the fallback if that probe comes back negative — but it would permanently encode a
+   subtraction on runtimes that have the feature, so it is not the first move.
 4. ~~**Trailing-slash policy.**~~ **Shipped, as two of the three.** `TrailingSlashPolicy` is chosen where
    an app builds its router — `TrieRouteBuilder(for: server, trailingSlash:)`, i.e. its
    `createRouteBuilder(for:)` — because it is a property of the app's URL contract, not of a route.
