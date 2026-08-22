@@ -36,9 +36,12 @@ enum RouteInsertion: Sendable, Equatable {
     case duplicate(existing: String)
 }
 
-/// A `{name}` parameter edge out of a trie node: the segment name and the child node it leads to.
+/// The `{name}` parameter edge out of a trie node — just the child it leads to.
+///
+/// It carries **no name**. A node has one parameter edge, so a name stored here would be whichever route
+/// registered first, and every other route through the node would bind its value under that route's
+/// spelling. Names belong to the route, which is what makes resolution independent of registration order.
 struct ParameterEdge: Sendable, Equatable {
-    let name: String
     let child: Int
 }
 
@@ -48,9 +51,12 @@ struct RouteTrie {
     struct BuildNode {
         var literalChildren: [String: Int] = [:]
         var parameterChild: ParameterEdge?
+        /// `parameterNames` are this route's own `{name}`s, in the order its path passes parameter edges,
+        /// so each route names the values it matched however it spelled them.
+        ///
         /// The template is carried at build time only, so a duplicate can name what it collides *with*.
         /// `freeze()` drops it — serving never needs it, so it costs nothing per request.
-        var routes: [(method: HTTPRequest.Method, index: Int, template: String)] = []
+        var routes: [(method: HTTPRequest.Method, index: Int, template: String, parameterNames: [String])] = []
     }
 
     private var nodes: [BuildNode] = [BuildNode()]
@@ -70,15 +76,16 @@ struct RouteTrie {
     /// the reported `existing` template is what makes that legible.
     mutating func insert(method: HTTPRequest.Method, path: String) -> RouteInsertion {
         var current = 0
+        var parameterNames: [String] = []
         for segment in Self.segments(path) {
             if segment.hasPrefix("{"), segment.hasSuffix("}") {
-                let name = String(segment.dropFirst().dropLast())
+                parameterNames.append(String(segment.dropFirst().dropLast()))
                 if let existing = nodes[current].parameterChild {
                     current = existing.child
                 } else {
                     nodes.append(BuildNode())
                     let child = nodes.count - 1
-                    nodes[current].parameterChild = ParameterEdge(name: name, child: child)
+                    nodes[current].parameterChild = ParameterEdge(child: child)
                     current = child
                 }
             } else if let child = nodes[current].literalChildren[String(segment)] {
@@ -95,7 +102,7 @@ struct RouteTrie {
         }
         let index = routeCount
         routeCount += 1
-        nodes[current].routes.append((method, index, path))
+        nodes[current].routes.append((method, index, path, parameterNames))
         return .inserted(index: index)
     }
 
@@ -110,7 +117,9 @@ struct RouteTrie {
                         .sorted { $0.key < $1.key }
                         .map { (segment: $0.key, child: $0.value) },
                     parameterChild: node.parameterChild,
-                    routes: node.routes.map { (method: $0.method, index: $0.index) }
+                    routes: node.routes.map {
+                        (method: $0.method, index: $0.index, parameterNames: $0.parameterNames)
+                    }
                 )
             }
         )
@@ -145,7 +154,7 @@ struct FrozenRouteTrie: Sendable {
     struct Node: Sendable {
         let literalChildren: [(segment: String, child: Int)]  // sorted by segment
         let parameterChild: ParameterEdge?
-        let routes: [(method: HTTPRequest.Method, index: Int)]
+        let routes: [(method: HTTPRequest.Method, index: Int, parameterNames: [String])]
     }
 
     let trailingSlash: TrailingSlashPolicy
@@ -162,13 +171,16 @@ struct FrozenRouteTrie: Sendable {
             return .notFound
         }
         var current = 0
-        var parameters: [String: Substring] = [:]
+        // Collected **positionally**, and named only once a route is chosen. A node has one parameter
+        // edge, so there is no single correct name at match time — `/users/{id}` and `/users/{userId}`
+        // traverse the same edge, and each route is entitled to its own spelling.
+        var parameterValues: [Substring] = []
         for segment in requestPath.split(separator: "/", omittingEmptySubsequences: true) {
             let node = nodes[current]
             if let child = Self.literalChild(of: node, segment: String(segment)) {
                 current = child
             } else if let edge = node.parameterChild {
-                parameters[edge.name] = Self.percentDecoded(segment)
+                parameterValues.append(Self.percentDecoded(segment))
                 current = edge.child
             } else {
                 return .notFound
@@ -176,7 +188,16 @@ struct FrozenRouteTrie: Sendable {
         }
         let routes = nodes[current].routes
         if let route = routes.first(where: { $0.method == method }) {
-            return .matched(index: route.index, parameters: parameters)
+            // `parameterNames` and `parameterValues` are the same length by construction: both count the
+            // parameter edges on the path from the root to this node, one filled at registration and the
+            // other at resolution. `zip` is belt-and-braces rather than load-bearing.
+            return .matched(
+                index: route.index,
+                parameters: Dictionary(
+                    zip(route.parameterNames, parameterValues),
+                    uniquingKeysWith: { _, later in later }
+                )
+            )
         }
         // A node reached but carrying no routes is an *interior* node — `/users` when only
         // `/users/{id}` was registered. The path names nothing, so that is a 404, not "the wrong method
@@ -192,7 +213,7 @@ struct FrozenRouteTrie: Sendable {
     /// the same node a matching request would have been dispatched from. A future backtracking matcher
     /// would need to union across the candidates it abandoned.
     private static func allowedMethods(
-        of routes: [(method: HTTPRequest.Method, index: Int)]
+        of routes: [(method: HTTPRequest.Method, index: Int, parameterNames: [String])]
     )
         -> [HTTPRequest.Method]
     {

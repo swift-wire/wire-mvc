@@ -157,6 +157,75 @@ struct RouteTrieTests {
         #expect(frozen.resolve(method: .get, path: "/foxtrot") == .notFound)
     }
 
+    // MARK: - Precedence and ordering
+
+    /// Each route names the values it matched, however *it* spelled them.
+    ///
+    /// The node has one parameter edge, so a name stored on the edge would be whichever route registered
+    /// first — and before this, `DELETE /users/{userId}` bound its value under `"id"`, silently. A
+    /// `@Path userId` binding would look up `"userId"`, find nothing, and fail somewhere unrelated to the
+    /// registration order that caused it.
+    @Test func eachRouteNamesItsOwnParameters() {
+        var trie = RouteTrie()
+        _ = trie.insert(method: .get, path: "/users/{id}")
+        _ = trie.insert(method: .delete, path: "/users/{userId}")
+        let frozen = trie.freeze()
+        #expect(frozen.resolve(method: .get, path: "/users/9").parameters?["id"].map(String.init) == "9")
+        #expect(
+            frozen.resolve(method: .delete, path: "/users/9").parameters?["userId"].map(String.init) == "9"
+        )
+    }
+
+    /// The same, with the registration order reversed — which is the actual claim: the outcome does not
+    /// depend on who registered first.
+    @Test func parameterNamingIsIndependentOfRegistrationOrder() {
+        var forward = RouteTrie()
+        _ = forward.insert(method: .get, path: "/users/{id}")
+        _ = forward.insert(method: .delete, path: "/users/{userId}")
+
+        var reversed = RouteTrie()
+        _ = reversed.insert(method: .delete, path: "/users/{userId}")
+        _ = reversed.insert(method: .get, path: "/users/{id}")
+
+        for frozen in [forward.freeze(), reversed.freeze()] {
+            #expect(frozen.resolve(method: .get, path: "/users/9").parameters?.keys.sorted() == ["id"])
+            #expect(
+                frozen.resolve(method: .delete, path: "/users/9").parameters?.keys.sorted() == ["userId"]
+            )
+        }
+    }
+
+    /// Several parameters on one path keep their positions, so names cannot slide onto the wrong value.
+    @Test func multipleParametersAreNamedPositionally() {
+        var trie = RouteTrie()
+        _ = trie.insert(method: .get, path: "/a/{x}/b/{y}")
+        _ = trie.insert(method: .post, path: "/a/{first}/b/{second}")
+        let frozen = trie.freeze()
+
+        let get = frozen.resolve(method: .get, path: "/a/1/b/2")
+        #expect(get.parameters?["x"].map(String.init) == "1")
+        #expect(get.parameters?["y"].map(String.init) == "2")
+
+        let post = frozen.resolve(method: .post, path: "/a/1/b/2")
+        #expect(post.parameters?["first"].map(String.init) == "1")
+        #expect(post.parameters?["second"].map(String.init) == "2")
+    }
+
+    /// Literal-beats-parameter was already order-independent — it is decided by structure, not by which
+    /// route arrived first. Pinned both ways round so it stays that way.
+    @Test func literalBeatsParameterWhicheverRegistersFirst() {
+        var literalFirst = RouteTrie()
+        let me1 = literalFirst.insert(method: .get, path: "/users/me").index
+        _ = literalFirst.insert(method: .get, path: "/users/{id}")
+
+        var parameterFirst = RouteTrie()
+        _ = parameterFirst.insert(method: .get, path: "/users/{id}")
+        let me2 = parameterFirst.insert(method: .get, path: "/users/me").index
+
+        #expect(literalFirst.freeze().resolve(method: .get, path: "/users/me").index == me1)
+        #expect(parameterFirst.freeze().resolve(method: .get, path: "/users/me").index == me2)
+    }
+
     // MARK: - Duplicate routes
 
     @Test func registeringTheSameMethodAndPathTwiceIsADuplicate() {
