@@ -92,13 +92,39 @@ public struct WireMVCOutcome: Sendable {
     public func send<Sender: HTTPResponseSender & ~Copyable>(
         on sender: consuming Sender
     ) async throws where Sender.Writer: ~Copyable {
-        let response = HTTPResponse(status: status, headerFields: headerFields)
+        // The outcome is computed before the sender is touched, so the body — and therefore its length —
+        // is already in hand.
+        var response = HTTPResponse(status: status, headerFields: headerFields)
+        response.stateLengthIfAbsent(body?.count ?? 0)
         if let body {
             var buffer = UniqueArray<UInt8>(copying: body)
             try await sender.sendAndFinish(response, buffer: &buffer)
         } else {
             try await sender.sendAndFinish(response)
         }
+    }
+}
+
+extension HTTPResponse {
+    /// State `Content-Length` when the length is known, the field is absent, and the status permits it.
+    ///
+    /// Every one-shot response WireMVC writes goes through here, because nothing below it infers a length
+    /// — not the `ServerTransport` bridge, not `NIOHTTPServer`, whose only `Content-Length` is the one it
+    /// writes for an aborted request. A response that does not say how long it is goes out
+    /// `Transfer-Encoding: chunked`, which measured a p99 tail on every server tested (+12 µs on
+    /// Hummingbird, +14 on Vapor, +19 on the proposal server) and is worse for `HEAD`, caching and proxies
+    /// besides. Public because a hand-written raw route that writes its own head needs the same rule.
+    ///
+    /// RFC 9110 §8.6 excludes `1xx` and `204`. `304` is excluded for a different reason: it carries the
+    /// length the `200` *would* have had, which a response that never computed that body cannot know, so
+    /// stating `0` would be a lie rather than an omission.
+    ///
+    /// An existing value is never replaced. That is what lets a `HEAD` response state the `GET` body's
+    /// length, which is deliberately not the length of what it writes.
+    public mutating func stateLengthIfAbsent(_ length: Int) {
+        guard headerFields[.contentLength] == nil else { return }
+        guard status.kind != .informational, status.code != 204, status.code != 304 else { return }
+        headerFields[.contentLength] = String(length)
     }
 }
 

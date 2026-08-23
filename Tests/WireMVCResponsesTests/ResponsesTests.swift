@@ -153,6 +153,72 @@ struct ResponsesTests {
         #expect(record.body == Array("plain".utf8))
     }
 
+    /// The same shape of bug as `jsonSeedsContentType`, found by measurement rather than by reading: the
+    /// outcome holds the encoded body, so it knows the length, and used not to say so. Nothing downstream
+    /// infers it — not the router, not the `ServerTransport` bridge, not `NIOHTTPServer`, whose only
+    /// `Content-Length` is the one it writes for an aborted request — so every response went out
+    /// `Transfer-Encoding: chunked`, on every runtime.
+    @Test
+    func bodyStatesItsLength() async throws {
+        let record = try await sent(WireMVCOutcome.body(Array("plain".utf8), .ok))
+        #expect(record.head?.headerFields[.contentLength] == "5")
+    }
+
+    /// Bytes, not characters — the one way a hand-written length goes wrong. `"héllo→"` is six characters
+    /// and nine bytes.
+    @Test
+    func lengthCountsBytesNotCharacters() async throws {
+        let record = try await sent(WireMVCOutcome.body(Array("héllo→".utf8), .ok))
+        #expect(record.head?.headerFields[.contentLength] == "9")
+    }
+
+    @Test
+    func jsonStatesItsLengthBesideItsType() async throws {
+        let outcome = try WireMVCOutcome.json(Payload(name: "wire"))
+        let record = try await sent(outcome)
+        #expect(record.head?.headerFields[.contentType] == "application/json")
+        #expect(record.head?.headerFields[.contentLength] == String(outcome.body?.count ?? -1))
+    }
+
+    /// A bodiless response has a known length too. `404` with nothing to say is still `0` bytes, and
+    /// leaving it unstated frames it as chunked exactly as a body would be.
+    @Test
+    func bodilessResponseStatesZero() async throws {
+        let record = try await sent(WireMVCOutcome.status(.notFound))
+        #expect(record.head?.headerFields[.contentLength] == "0")
+    }
+
+    /// RFC 9110 §8.6: a server must not send `Content-Length` on `1xx` or `204`. `304` is excluded for a
+    /// different reason — it carries the length the `200` *would* have had, which this outcome never
+    /// computed, so `0` would be a lie rather than an omission.
+    @Test(arguments: [HTTPResponse.Status.continue, .noContent, .notModified])
+    func statusesThatForbidALengthGetNone(_ status: HTTPResponse.Status) async throws {
+        let record = try await sent(WireMVCOutcome.status(status))
+        #expect(record.head?.headerFields[.contentLength] == nil)
+    }
+
+    /// A caller who states a length owns it. Overwriting would break the one case where the stated length
+    /// is deliberately not the buffer's — a `HEAD` response, whose length is the `GET` body's.
+    @Test
+    func explicitLengthIsNotOverwritten() async throws {
+        let outcome = WireMVCOutcome(
+            status: .ok,
+            headerFields: [.contentLength: "99"],
+            body: Array("plain".utf8)
+        )
+        let record = try await sent(outcome)
+        #expect(record.head?.headerFields[.contentLength] == "99")
+    }
+
+    /// `send(on:)` is non-mutating and is called on a value the terminal may still hold. The length is
+    /// added to the response it builds, not written back into the outcome.
+    @Test
+    func sendingDoesNotMutateTheOutcome() async throws {
+        let outcome = WireMVCOutcome.body(Array("plain".utf8), .ok)
+        _ = try await sent(outcome)
+        #expect(outcome.headerFields[.contentLength] == nil)
+    }
+
     /// The factories are the pre-struct spelling: `.status(_)` and `.body(_:_:)` still construct, so no
     /// existing construction site (including the emitted witness) had to change.
     @Test
