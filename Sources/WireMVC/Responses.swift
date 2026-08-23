@@ -98,7 +98,17 @@ public struct WireMVCOutcome: Sendable {
         response.stateLengthIfAbsent(body?.count ?? 0)
         if let body {
             var buffer = UniqueArray<UInt8>(copying: body)
-            try await sender.sendAndFinish(response, buffer: &buffer)
+            // `trailer: nil` **explicitly**, not by omission. The two-argument spelling binds to the
+            // proposal's protocol extension — the requirement has no default argument, so it cannot match
+            // a two-argument call — and that extension expands to `send` + `finish`, never dispatching to
+            // the conformer's own witness. An outcome has no trailer either way, so the arguments are
+            // equivalent; only the dispatch differs.
+            //
+            // It differs by a lot. `BridgeResponseSender` fuses head and body into a known-length response
+            // in its witness and hands back a *streaming* writer from `send`, so every buffered response
+            // was taking the streaming path: measured at 5 allocations per request through the Hummingbird
+            // bridge, which has a `contentLength:` fast path that only a known-length body can reach.
+            try await sender.sendAndFinish(response, buffer: &buffer, trailer: nil)
         } else {
             try await sender.sendAndFinish(response)
         }
