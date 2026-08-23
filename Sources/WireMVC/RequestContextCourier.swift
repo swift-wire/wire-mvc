@@ -226,12 +226,8 @@ where Base.Writer: ~Copyable {
         // Measured on a raw route writing two fields of its own: 2.75 → 1.92 µs and 17 → 5 allocations.
         // The empty-contribution guard matters as much — a raw route on a graph with no contributing
         // middleware then copies nothing at all.
-        let contributions = try await registry.drain()
-        guard !contributions.isEmpty else { return response }
         var resolved = response
-        for contribution in contributions {
-            WireMVCResponseHeaders.apply(contribution, to: &resolved.headerFields)
-        }
+        try await registry.drain(into: &resolved.headerFields)
         return resolved
     }
 }
