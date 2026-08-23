@@ -23,13 +23,12 @@ public import SwiftSyntax
 // union of the attributes it was seen with, and no access-level modifier. Internal is always enough for
 // the code this generator emits.
 //
-// `@_exported` is the exception that keeps its `public`. It is not needed by the generated file — it
-// re-exports a module to whoever imports *this* one — so on the face of it the generator has no business
-// carrying WireMVC's `Exports.swift` re-exports into the consumer's module. But dropping it is a
-// source-breaking change rather than a tidy-up: a consumer file that names `HTTPResponse.Status` without
-// importing `HTTPTypes` itself compiles today only because that re-export reached it through the
-// generated file, and would stop compiling. That is a decision about a package's API surface, not about
-// generated-file hygiene, so it is left alone here.
+// `@_exported` goes with the access level, and for a different reason. It re-exports a module to whoever
+// imports *this* one — nothing the generated file needs, and not a property of the consumer that this
+// generator is entitled to decide. Carried over it decides one anyway: WireMVC's `Exports.swift`
+// re-exports `AsyncStreaming`/`HTTPAPIs`/`HTTPTypes`/`Middleware`, so the module holding
+// `_WireRoutes.swift` re-exported them too — which is why a file there could name `HTTPResponse.Status`
+// while importing neither `HTTPTypes` nor `WireMVC`. A file that wants those types imports them.
 
 /// The canonical, deduplicated, sorted import lines for a generated file.
 ///
@@ -75,28 +74,16 @@ private struct ImportSpelling {
     /// declarations, a concurrency-checking relaxation, internal visibility — and the generated file may
     /// lean on any of them, since it composes declarations discovered across all of those files.
     private var attributes: Set<String> = []
-    /// The access modifier an `@_exported` spelling carried, when one did — the outer `Optional` says
-    /// whether the module is re-exported at all, the inner one whether that spelling wrote a modifier.
-    /// Every other access level is dropped.
-    private var exportedModifier: String??
-
     mutating func absorb(_ node: ImportDeclSyntax) {
         for element in node.attributes {
-            guard case .attribute(let attribute) = element else { continue }
+            guard case .attribute(let attribute) = element, !isExported(attribute) else { continue }
             attributes.insert(attribute.trimmedDescription)
         }
-        guard node.attributes.contains(where: isExported) else { return }
-        let modifier = node.modifiers.first?.name.text
-        // Widest wins, so an `@_exported public import` in one file is not narrowed by an
-        // `@_exported import` in another — which would re-export less than the package means to.
-        if exportedModifier == nil || modifier == "public" { exportedModifier = .some(modifier) }
     }
 
     func rendered(importing module: ImportModule) -> String {
         let specifier = module.kindSpecifier.map { "\($0) " } ?? ""
-        let modifier = (exportedModifier ?? nil).map { "\($0) " } ?? ""
-        return (attributes.sorted() + ["\(modifier)import \(specifier)\(module.path)"])
-            .joined(separator: " ")
+        return (attributes.sorted() + ["import \(specifier)\(module.path)"]).joined(separator: " ")
     }
 }
 
@@ -107,22 +94,23 @@ private func soleImportDeclaration(of snippet: SourceFileSyntax) -> ImportDeclSy
     return snippet.statements.first?.item.as(ImportDeclSyntax.self)
 }
 
-private func isExported(_ element: AttributeListSyntax.Element) -> Bool {
-    guard case .attribute(let attribute) = element else { return false }
-    return attribute.attributeName.trimmedDescription == "_exported"
+private func isExported(_ attribute: AttributeSyntax) -> Bool {
+    attribute.attributeName.trimmedDescription == "_exported"
 }
 
 /// Rewrites every `import` declaration in a parsed snippet to its canonical form in place — used for an
 /// `#if` block, where the clauses have to stay put and only the declarations inside them change.
 private final class ImportNormalizer: SyntaxRewriter {
     override func visit(_ node: ImportDeclSyntax) -> DeclSyntax {
-        // An `@_exported` import keeps its access level, for the reason given above.
-        guard !node.attributes.contains(where: isExported) else { return DeclSyntax(node) }
         // Whatever preceded the declaration — the newline and indentation that place it inside an `#if`
         // clause — hangs off its first token, which is about to be removed along with the modifier. Put it
         // back on whichever token leads the canonical form, or the clause collapses onto its `#if` line.
         let leadingTrivia = node.leadingTrivia
         var canonical = node
+        canonical.attributes = node.attributes.filter { element in
+            guard case .attribute(let attribute) = element else { return true }
+            return !isExported(attribute)
+        }
         // Dropping the modifier list drops the `public`/`package` token *and* the space that followed it,
         // so nothing else needs re-spacing: what precedes `import` is now either nothing or an attribute
         // that carries its own trailing space.

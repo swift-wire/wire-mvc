@@ -1,4 +1,4 @@
-import HTTPTypes
+package import HTTPTypes
 package import Wire
 import WireMVC
 package import WireMVCElementary
