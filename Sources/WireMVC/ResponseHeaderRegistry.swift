@@ -36,6 +36,10 @@ public final class ResponseHeaderRegistry {
     /// registration. A plain `add` is stored as an already-known list to keep one ordered sequence of
     /// calls — the thing the reverse applies to.
     private enum Registration {
+        /// One contribution, stored inline. The overwhelmingly common shape — every contributor in this
+        /// package and every one written against it so far adds a single field per call — and the case
+        /// that keeps a registration off the heap entirely.
+        case value(ResponseHeaderContribution)
         case values([ResponseHeaderContribution])
         case deferred(() async throws -> [ResponseHeaderContribution])
     }
@@ -44,7 +48,17 @@ public final class ResponseHeaderRegistry {
 
     public init() {}
 
-    /// Contribute fields the middleware already knows.
+    /// Contribute one field the middleware already knows.
+    ///
+    /// Separate from the variadic overload rather than folded into it, because a variadic parameter builds
+    /// an `Array` at the call site whatever it is passed: `add(.set(name, value))` allocated one array for
+    /// the argument and boxed it into `.values`, two allocations to carry a single field. Swift prefers
+    /// this overload for a one-argument call, so every existing caller gets it without changing.
+    public func add(_ contribution: ResponseHeaderContribution) {
+        registrations.append(.value(contribution))
+    }
+
+    /// Contribute several fields at once.
     public func add(_ contributions: ResponseHeaderContribution...) {
         registrations.append(.values(contributions))
     }
@@ -62,6 +76,7 @@ public final class ResponseHeaderRegistry {
         var contributions: [ResponseHeaderContribution] = []
         for registration in registrations.reversed() {
             switch registration {
+            case let .value(value): contributions.append(value)
             case let .values(values): contributions.append(contentsOf: values)
             case let .deferred(contribute): contributions.append(contentsOf: try await contribute())
             }
