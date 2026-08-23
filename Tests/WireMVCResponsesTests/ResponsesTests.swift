@@ -366,6 +366,18 @@ private func applying(to record: RecordedResponse) -> ResponseHeaderApplyingSend
     ResponseHeaderApplyingSender(wrapping: RecordingSender(record: record), registry: ResponseHeaderRegistry())
 }
 
+/// A raw route that writes **its own header fields** alongside its body — what a real one does, and the
+/// case that distinguishes applying contributions onto the written head from rebuilding the head around
+/// them.
+private func rawRoute<Sender: HTTPResponseSender & ~Copyable>(
+    sending sender: consuming Sender,
+    fields: HTTPFields,
+    body: [UInt8]
+) async throws where Sender.Writer: ~Copyable {
+    var buffer = UniqueArray<UInt8>(copying: body)
+    try await sender.sendAndFinish(HTTPResponse(status: .ok, headerFields: fields), buffer: &buffer)
+}
+
 @Suite("Raw route framing")
 struct RawRouteFramingTests {
     /// The reason ``ResponseHeaderApplyingSender/send(_:)`` defers its head. A two-argument
@@ -400,6 +412,105 @@ struct RawRouteFramingTests {
         try await rawStreamingRoute(sending: applying(to: record), chunks: [Array("one".utf8)])
         #expect(record.head?.status == .ok)
         #expect(record.body == Array("one".utf8))
+    }
+
+    /// The handler's own fields survive a contribution, unreordered and unduplicated.
+    ///
+    /// `applying(to:)` used to rebuild the head: start from an empty `HTTPFields`, replay every field the
+    /// handler wrote into it, then apply the contributions. It now applies contributions straight onto the
+    /// head instead, which is only equivalent if the replay was a no-op — so these pin that it was.
+    @Test
+    func handlerFieldsSurviveAContribution() async throws {
+        let record = RecordedResponse()
+        let registry = ResponseHeaderRegistry()
+        registry.add(.set(.init("x-trace")!, "abc"))
+        let sender = ResponseHeaderApplyingSender(
+            wrapping: RecordingSender(record: record),
+            registry: registry
+        )
+        try await rawRoute(
+            sending: sender,
+            fields: [.contentType: "text/plain", .cacheControl: "no-store"],
+            body: Array("plain".utf8)
+        )
+        #expect(record.head?.headerFields[.contentType] == "text/plain")
+        #expect(record.head?.headerFields[.cacheControl] == "no-store")
+        #expect(record.head?.headerFields[.init("x-trace")!] == "abc")
+    }
+
+    /// A handler writing the *same name twice* — `Set-Cookie` is the case that cannot be folded — must
+    /// keep both lines. The replay preserved repeated fields; applying onto the head has to as well.
+    @Test
+    func repeatedHandlerFieldsSurviveAContribution() async throws {
+        let record = RecordedResponse()
+        let registry = ResponseHeaderRegistry()
+        registry.add(.set(.init("x-trace")!, "abc"))
+        var fields = HTTPFields()
+        fields.append(HTTPField(name: .setCookie, value: "a=1"))
+        fields.append(HTTPField(name: .setCookie, value: "b=2"))
+        let sender = ResponseHeaderApplyingSender(
+            wrapping: RecordingSender(record: record),
+            registry: registry
+        )
+        try await rawRoute(sending: sender, fields: fields, body: Array("plain".utf8))
+        #expect(record.head?.headerFields[values: .setCookie] == ["a=1", "b=2"])
+        #expect(record.head?.headerFields[.init("x-trace")!] == "abc")
+    }
+
+    /// `.setIfAbsent` must defer to what the *handler* wrote, which only works if the handler's fields are
+    /// already in place when contributions are applied.
+    @Test
+    func setIfAbsentDefersToAHandlerWrittenField() async throws {
+        let record = RecordedResponse()
+        let registry = ResponseHeaderRegistry()
+        registry.add(.setIfAbsent(.contentType, "application/json"))
+        registry.add(.setIfAbsent(.cacheControl, "no-store"))
+        let sender = ResponseHeaderApplyingSender(
+            wrapping: RecordingSender(record: record),
+            registry: registry
+        )
+        try await rawRoute(
+            sending: sender,
+            fields: [.contentType: "text/plain"],
+            body: Array("plain".utf8)
+        )
+        #expect(record.head?.headerFields[.contentType] == "text/plain", "the handler's own wins")
+        #expect(record.head?.headerFields[.cacheControl] == "no-store", "the absent one is filled in")
+    }
+
+    /// A contribution replacing a field the handler wrote — `.set` beats the handler, `.setIfAbsent` does
+    /// not, and that ordering is what the middleware-last tier means.
+    @Test
+    func setOverridesAHandlerWrittenField() async throws {
+        let record = RecordedResponse()
+        let registry = ResponseHeaderRegistry()
+        registry.add(.set(.cacheControl, "public"))
+        let sender = ResponseHeaderApplyingSender(
+            wrapping: RecordingSender(record: record),
+            registry: registry
+        )
+        try await rawRoute(
+            sending: sender,
+            fields: [.cacheControl: "no-store"],
+            body: Array("plain".utf8)
+        )
+        #expect(record.head?.headerFields[.cacheControl] == "public")
+        #expect(record.head?.headerFields[values: .cacheControl].count == 1)
+    }
+
+    /// Nothing contributed: the head must arrive exactly as written. The empty-contribution guard returns
+    /// the response untouched, so this pins that "untouched" really is untouched.
+    @Test
+    func headIsUnchangedWhenNothingContributes() async throws {
+        let record = RecordedResponse()
+        try await rawRoute(
+            sending: applying(to: record),
+            fields: [.contentType: "text/plain", .cacheControl: "no-store"],
+            body: Array("plain".utf8)
+        )
+        #expect(record.head?.headerFields[.contentType] == "text/plain")
+        #expect(record.head?.headerFields[.cacheControl] == "no-store")
+        #expect(record.head?.headerFields[.contentLength] == "5", "the length is still stated")
     }
 
     /// Contributed headers still reach a raw route's head — the reason the wrapper exists at all, which
