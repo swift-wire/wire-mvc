@@ -302,56 +302,7 @@ private struct ServerTransportRouteBuilder: HTTPServerRouteBuilder {
             }
             let handler = route.handler
             try transport.register(
-                { request, requestBody, metadata in
-                    let channel = ResponseChannel()
-                    // Unstructured by necessity: the handler produces the streamed body the transport
-                    // consumes *after* this closure returns, so it can't be a structured child. For a
-                    // streamed response its lifetime is bound to the returned body (see `StreamedResponseBody`);
-                    // for a one-shot response it finishes before the closure returns.
-                    let task = Task {
-                        do {
-                            try await handler(
-                                request,
-                                WireMVCContext(
-                                    base: BridgeRequestContext(),
-                                    responseHeaders: ResponseHeaderRegistry()
-                                ),
-                                metadata.pathParameters,
-                                BridgeReader(requestBody),
-                                BridgeResponseSender(channel: channel)
-                            )
-                            channel.handlerFinished()
-                        } catch {
-                            channel.handlerThrew(error)
-                        }
-                    }
-                    // `Task {}` inherits task-locals and priority but **not** cancellation, so the
-                    // handler has to be cancelled explicitly when the request is. Without this a client
-                    // that disconnects before the head is sent leaves the handler running to completion
-                    // for a response nobody will read — the streaming path is already covered further
-                    // down (releasing the body releases `HandlerTaskHandle`, whose `deinit` cancels),
-                    // but before a head exists there is no body to release.
-                    let start = await withTaskCancellationHandler {
-                        await channel.awaitStart()
-                    } onCancel: {
-                        task.cancel()
-                    }
-                    switch start {
-                    case let .complete(head, responseBytes):
-                        return (head, responseBytes.isEmpty ? nil : HTTPBody(Data(responseBytes)))
-                    case let .streaming(head):
-                        // Bind the handler task's lifetime to the streamed body: the `map` closure
-                        // captures `handle`, so releasing the body (transport done / client disconnect)
-                        // releases `handle`, whose `deinit` cancels the task.
-                        let handle = HandlerTaskHandle(task)
-                        let body = channel.body.map { chunk in withExtendedLifetime(handle) { chunk } }
-                        return (head, HTTPBody(body, length: .unknown, iterationBehavior: .single))
-                    case let .failed(error):
-                        throw error
-                    case .finishedWithoutResponse:
-                        return (HTTPResponse(status: .internalServerError), nil)
-                    }
-                },
+                Self.makeHandler(for: handler),
                 method: route.method,
                 path: route.path
             )
@@ -360,6 +311,71 @@ private struct ServerTransportRouteBuilder: HTTPServerRouteBuilder {
 }
 
 extension ServerTransportRouteBuilder {
+    /// The per-request work for one route, as a closure in `ServerTransport`'s currency types.
+    ///
+    /// Separated from the registration loop so that loop reads as what it is — a shape check and a
+    /// `register` — rather than fifty lines of per-request work indented inside it.
+    ///
+    /// Nothing here is framework-specific: it speaks `HTTPRequest`/`HTTPBody`/`ServerRequestMetadata`,
+    /// which is what both OpenAPI adapters convert *to* before calling a handler. So if a route ever needs
+    /// mounting some other way — a host router's own API, for a shape `ServerTransport` cannot express —
+    /// this is reusable as it stands, and a route mounted that way would behave identically to a bridged
+    /// one because it would be the same closure.
+    static func makeHandler(
+        for handler: @escaping Handler
+    ) -> @Sendable (HTTPRequest, HTTPBody?, ServerRequestMetadata) async throws -> (HTTPResponse, HTTPBody?) {
+        { request, requestBody, metadata in
+            let channel = ResponseChannel()
+            // Unstructured by necessity: the handler produces the streamed body the transport
+            // consumes *after* this closure returns, so it can't be a structured child. For a
+            // streamed response its lifetime is bound to the returned body (see `StreamedResponseBody`);
+            // for a one-shot response it finishes before the closure returns.
+            let task = Task {
+                do {
+                    try await handler(
+                        request,
+                        WireMVCContext(
+                            base: BridgeRequestContext(),
+                            responseHeaders: ResponseHeaderRegistry()
+                        ),
+                        metadata.pathParameters,
+                        BridgeReader(requestBody),
+                        BridgeResponseSender(channel: channel)
+                    )
+                    channel.handlerFinished()
+                } catch {
+                    channel.handlerThrew(error)
+                }
+            }
+            // `Task {}` inherits task-locals and priority but **not** cancellation, so the
+            // handler has to be cancelled explicitly when the request is. Without this a client
+            // that disconnects before the head is sent leaves the handler running to completion
+            // for a response nobody will read — the streaming path is already covered further
+            // down (releasing the body releases `HandlerTaskHandle`, whose `deinit` cancels),
+            // but before a head exists there is no body to release.
+            let start = await withTaskCancellationHandler {
+                await channel.awaitStart()
+            } onCancel: {
+                task.cancel()
+            }
+            switch start {
+            case let .complete(head, responseBytes):
+                return (head, responseBytes.isEmpty ? nil : HTTPBody(Data(responseBytes)))
+            case let .streaming(head):
+                // Bind the handler task's lifetime to the streamed body: the `map` closure
+                // captures `handle`, so releasing the body (transport done / client disconnect)
+                // releases `handle`, whose `deinit` cancels the task.
+                let handle = HandlerTaskHandle(task)
+                let body = channel.body.map { chunk in withExtendedLifetime(handle) { chunk } }
+                return (head, HTTPBody(body, length: .unknown, iterationBehavior: .single))
+            case let .failed(error):
+                throw error
+            case .finishedWithoutResponse:
+                return (HTTPResponse(status: .internalServerError), nil)
+            }
+        }
+    }
+
     /// The trailing `{name*}` in a route template, or `nil`.
     static func catchAllSegment(in path: String) -> String? {
         path.split(separator: "/", omittingEmptySubsequences: true)
