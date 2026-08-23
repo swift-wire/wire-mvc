@@ -162,7 +162,7 @@ where
 public struct ResponseHeaderApplyingSender<Base: HTTPResponseSender & ~Copyable>: HTTPResponseSender,
     ~Copyable
 where Base.Writer: ~Copyable {
-    public typealias Writer = ResponseHeaderApplyingWriter<Base>
+    public typealias Writer = Base.Writer
 
     var base: Base
     let registry: ResponseHeaderRegistry
@@ -177,23 +177,22 @@ where Base.Writer: ~Copyable {
         try await base.sendInformational(response)
     }
 
-    /// Resolves the head but **does not write it**, handing both to the writer instead.
+    /// Writes the resolved head immediately and hands back the base sender's own writer.
     ///
-    /// The deferral is what lets a raw route state a `Content-Length`, and it is needed because of an
-    /// overload-resolution trap rather than a design choice. The proposal declares
-    /// `sendAndFinish(_:buffer:trailer:)` as a requirement *and* supplies a same-signature extension with
-    /// `trailer` defaulted; a two-argument call — the spelling nearly every raw route uses — can only match
-    /// the extension, which expands to `send(_:)` + `finish(_:)` and never reaches a conformer's override.
-    /// So the three-argument witness below is unreachable from ordinary raw-route code, and the only place
-    /// left that sees the head *and* the whole body is the writer's `finish`.
+    /// A streaming raw route has no length to state, so there is nothing to wait for. A *buffered* raw
+    /// route reaches ``sendAndFinish(_:buffer:trailer:)`` below, which sees head and body together — but
+    /// only if it is spelled with three arguments. The two-argument spelling binds to the proposal's
+    /// protocol extension, which expands to `send` + `finish` and arrives here instead, where the body is
+    /// not yet known.
     ///
-    /// The cost: a raw route that streams sees its head flushed on the first `write` rather than on `send`.
-    /// Typed routes are unaffected (``WireMVCOutcome`` states its own length before sending) and so are
-    /// transformed-sender routes like SSE and multipart, which are not wrapped at all.
+    /// This briefly held the head back inside a writer so that path could state a length too. That has
+    /// been removed: the shadowing is fixed upstream rather than worked around here, and until that lands
+    /// a raw route spelled with two arguments frames as chunked. Every call site in this package uses one
+    /// or three arguments and is unaffected.
     public consuming func send(_ response: HTTPResponse) async throws -> Writer {
         let resolved = try await applying(to: response)
         let inner = consume self.base
-        return ResponseHeaderApplyingWriter(deferring: resolved, to: inner)
+        return try await inner.send(resolved)
     }
 
     public consuming func sendAndFinish<Buffer: RangeReplaceableContainer<UInt8> & ~Copyable>(
@@ -229,85 +228,5 @@ where Base.Writer: ~Copyable {
         var resolved = response
         try await registry.drain(into: &resolved.headerFields)
         return resolved
-    }
-}
-
-/// The writer ``ResponseHeaderApplyingSender/send(_:)`` returns, holding the resolved head until it knows
-/// whether the body is streamed or complete.
-///
-/// Two outcomes, and the state machine exists only to tell them apart:
-///
-/// - `finish` before any `write` — the whole body is in hand, so the head can state a `Content-Length` and
-///   head and body go out in a single call on the base sender.
-/// - `write` first — the body is streamed, no length can be known, so the head is flushed as it stands and
-///   everything after it forwards to the base writer.
-public struct ResponseHeaderApplyingWriter<Base: HTTPResponseSender & ~Copyable>: CallerAsyncWriter,
-    ~Copyable
-where Base.Writer: ~Copyable {
-    public typealias WriteElement = UInt8
-    /// `any Error`, not the base writer's failure type: flushing a deferred head calls `Base.send`, whose
-    /// errors are untyped, so this writer can fail in ways the base writer alone cannot.
-    public typealias WriteFailure = any Error
-    public typealias FinalElement = HTTPFields?
-
-    private enum State: ~Copyable {
-        /// The head is resolved but unwritten, and the base sender is still whole.
-        case deferred(Base, HTTPResponse)
-        /// The head is written; the base writer owns the rest.
-        case flushed(Base.Writer)
-        /// Transient. The value is in flight inside a `write`, so the property is reinitialised before any
-        /// `await` rather than after it — a throw part-way through a transition must not leave `self`
-        /// consumed. Reaching it means a previous `write` failed, and the request is already failing.
-        case inFlight
-    }
-
-    private var state: State
-
-    init(deferring head: HTTPResponse, to base: consuming Base) {
-        self.state = .deferred(base, head)
-    }
-
-    private init(state: consuming State) {
-        self.state = state
-    }
-
-    public mutating func write<Buffer: RangeReplaceableContainer<UInt8> & ~Copyable>(
-        buffer: inout Buffer
-    ) async throws(WriteFailure) where Buffer.Element: ~Copyable {
-        // `self`, not `self.state`: consuming a stored property leaves `self` partially initialised, and
-        // only a whole-value reinitialisation puts it back. The placeholder goes in before the first
-        // `await` so a throw part-way through a transition cannot leave `self` consumed.
-        let taken = consume self.state
-        self = Self(state: .inFlight)
-        switch taken {
-        case .deferred(let base, let head):
-            // A streamed body: the length is genuinely unknown here, so the head goes as it stands.
-            var writer = try await base.send(head)
-            try await writer.write(buffer: &buffer)
-            self = Self(state: .flushed(writer))
-        case .flushed(var writer):
-            try await writer.write(buffer: &buffer)
-            self = Self(state: .flushed(writer))
-        case .inFlight:
-            fatalError("ResponseHeaderApplyingWriter written to after a write failed part-way through")
-        }
-    }
-
-    public consuming func finish<Buffer: RangeReplaceableContainer<UInt8> & ~Copyable>(
-        buffer: inout Buffer,
-        finalElement: consuming FinalElement
-    ) async throws(WriteFailure) where Buffer.Element: ~Copyable {
-        switch consume state {
-        case .deferred(let base, var head):
-            let trailer = finalElement
-            // No `write` came first, so this buffer is the whole body. A trailer forces chunked framing,
-            // so a length is stated only without one.
-            if trailer == nil { head.stateLengthIfAbsent(buffer.count) }
-            try await base.sendAndFinish(head, buffer: &buffer, trailer: trailer)
-        case .flushed(let writer):
-            try await writer.finish(buffer: &buffer, finalElement: finalElement)
-        case .inFlight:
-            fatalError("ResponseHeaderApplyingWriter finished after a write failed part-way through")
-        }
     }
 }

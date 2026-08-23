@@ -460,6 +460,16 @@ private func rawRoute<Sender: HTTPResponseSender & ~Copyable>(
     try await sender.sendAndFinish(HTTPResponse(status: .ok), buffer: &buffer)
 }
 
+/// A raw route spelled with **three** arguments, which reaches a conformer's own `sendAndFinish` where
+/// the two-argument spelling binds to the proposal's extension instead.
+private func rawRouteStatingTrailer<Sender: HTTPResponseSender & ~Copyable>(
+    sending sender: consuming Sender,
+    body: [UInt8]
+) async throws where Sender.Writer: ~Copyable {
+    var buffer = UniqueArray<UInt8>(copying: body)
+    try await sender.sendAndFinish(HTTPResponse(status: .ok), buffer: &buffer, trailer: nil)
+}
+
 /// A raw route that *streams*: asks for a writer, then writes. Generic for the same reason.
 private func rawStreamingRoute<Sender: HTTPResponseSender & ~Copyable>(
     sending sender: consuming Sender,
@@ -552,16 +562,35 @@ struct ResponseHeaderRegistryTests {
 
 @Suite("Raw route framing")
 struct RawRouteFramingTests {
-    /// The reason ``ResponseHeaderApplyingSender/send(_:)`` defers its head. A two-argument
-    /// `sendAndFinish` cannot reach the three-argument witness — the proposal's same-signature extension
-    /// wins the overload — so it expands to `send` + `finish`, and only the writer sees both the head and
-    /// the whole body.
+    /// A raw route that reaches the wrapper's own `sendAndFinish` gets its length stated, because that is
+    /// the one place holding both the head and the whole body.
     @Test
-    func rawRouteThroughTheCourierStatesALength() async throws {
+    func threeArgumentRawRouteStatesALength() async throws {
         let record = RecordedResponse()
-        try await rawRoute(sending: applying(to: record), body: Array("plain".utf8))
+        try await rawRouteStatingTrailer(sending: applying(to: record), body: Array("plain".utf8))
         #expect(record.head?.headerFields[.contentLength] == "5")
         #expect(record.body == Array("plain".utf8))
+    }
+
+    /// The two-argument spelling does **not**, and this pins that limitation rather than hiding it.
+    ///
+    /// A two-argument call cannot match the three-parameter requirement — Swift forbids defaults on
+    /// protocol requirements, so the proposal's same-signature extension carries them and wins the
+    /// overload — and that extension expands to `send` + `finish`, arriving at the wrapper before the body
+    /// is known. The head is written without a length and the response frames as chunked.
+    ///
+    /// This was previously worked around by holding the head inside a writer until `finish`. That was
+    /// removed in favour of fixing the shadowing upstream, where it belongs.
+    ///
+    /// > Note: **this test is expected to fail once that lands.** When it does, a two-argument call will
+    /// > forward to the requirement and reach the witness, and the assertion below should be inverted to
+    /// > match `threeArgumentRawRouteStatesALength`.
+    @Test
+    func twoArgumentRawRouteDoesNotYetStateALength() async throws {
+        let record = RecordedResponse()
+        try await rawRoute(sending: applying(to: record), body: Array("plain".utf8))
+        #expect(record.head?.headerFields[.contentLength] == nil)
+        #expect(record.body == Array("plain".utf8), "the response is still sent, just chunked")
     }
 
     /// A streamed body has no length to state, and must not acquire a wrong one.
@@ -682,7 +711,6 @@ struct RawRouteFramingTests {
         )
         #expect(record.head?.headerFields[.contentType] == "text/plain")
         #expect(record.head?.headerFields[.cacheControl] == "no-store")
-        #expect(record.head?.headerFields[.contentLength] == "5", "the length is still stated")
     }
 
     /// Contributed headers still reach a raw route's head — the reason the wrapper exists at all, which
@@ -698,6 +726,5 @@ struct RawRouteFramingTests {
         )
         try await rawRoute(sending: sender, body: Array("plain".utf8))
         #expect(record.head?.headerFields[.init("x-trace")!] == "abc")
-        #expect(record.head?.headerFields[.contentLength] == "5")
     }
 }
