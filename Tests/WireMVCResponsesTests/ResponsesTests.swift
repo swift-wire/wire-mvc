@@ -304,3 +304,85 @@ struct ResponseHeaderTests {
         #expect(fields[.vary] == "Accept-Encoding, Origin", "the joined getter is lossy — read with [values:]")
     }
 }
+
+/// A *raw* route: generic over its sender, exactly as generated raw-route code is. The genericity is the
+/// point — inside it, `sendAndFinish` resolves against the protocol, not against whatever concrete sender
+/// was passed in.
+private func rawRoute<Sender: HTTPResponseSender & ~Copyable>(
+    sending sender: consuming Sender,
+    body: [UInt8]
+) async throws where Sender.Writer: ~Copyable {
+    var buffer = UniqueArray<UInt8>(copying: body)
+    try await sender.sendAndFinish(HTTPResponse(status: .ok), buffer: &buffer)
+}
+
+/// A raw route that *streams*: asks for a writer, then writes. Generic for the same reason.
+private func rawStreamingRoute<Sender: HTTPResponseSender & ~Copyable>(
+    sending sender: consuming Sender,
+    chunks: [[UInt8]]
+) async throws where Sender.Writer: ~Copyable {
+    var writer = try await sender.send(HTTPResponse(status: .ok))
+    for chunk in chunks.dropLast() {
+        var buffer = UniqueArray<UInt8>(copying: chunk)
+        try await writer.write(buffer: &buffer)
+    }
+    var last = UniqueArray<UInt8>(copying: chunks.last ?? [])
+    try await writer.finish(buffer: &last, finalElement: nil)
+}
+
+private func applying(to record: RecordedResponse) -> ResponseHeaderApplyingSender<RecordingSender> {
+    ResponseHeaderApplyingSender(wrapping: RecordingSender(record: record), registry: ResponseHeaderRegistry())
+}
+
+@Suite("Raw route framing")
+struct RawRouteFramingTests {
+    /// The reason ``ResponseHeaderApplyingSender/send(_:)`` defers its head. A two-argument
+    /// `sendAndFinish` cannot reach the three-argument witness — the proposal's same-signature extension
+    /// wins the overload — so it expands to `send` + `finish`, and only the writer sees both the head and
+    /// the whole body.
+    @Test
+    func rawRouteThroughTheCourierStatesALength() async throws {
+        let record = RecordedResponse()
+        try await rawRoute(sending: applying(to: record), body: Array("plain".utf8))
+        #expect(record.head?.headerFields[.contentLength] == "5")
+        #expect(record.body == Array("plain".utf8))
+    }
+
+    /// A streamed body has no length to state, and must not acquire a wrong one.
+    @Test
+    func streamedRawRouteStatesNoLength() async throws {
+        let record = RecordedResponse()
+        try await rawStreamingRoute(
+            sending: applying(to: record),
+            chunks: [Array("one".utf8), Array("two".utf8)]
+        )
+        #expect(record.head?.headerFields[.contentLength] == nil)
+        #expect(record.body == Array("onetwo".utf8))
+    }
+
+    /// Deferring the head must not lose it: a streamed route still writes a head, and still writes it
+    /// before the body it belongs to.
+    @Test
+    func streamedRawRouteStillSendsItsHead() async throws {
+        let record = RecordedResponse()
+        try await rawStreamingRoute(sending: applying(to: record), chunks: [Array("one".utf8)])
+        #expect(record.head?.status == .ok)
+        #expect(record.body == Array("one".utf8))
+    }
+
+    /// Contributed headers still reach a raw route's head — the reason the wrapper exists at all, which
+    /// the deferral must not regress.
+    @Test
+    func contributedHeadersStillReachARawHead() async throws {
+        let record = RecordedResponse()
+        let registry = ResponseHeaderRegistry()
+        registry.add(.set(.init("x-trace")!, "abc"))
+        let sender = ResponseHeaderApplyingSender(
+            wrapping: RecordingSender(record: record),
+            registry: registry
+        )
+        try await rawRoute(sending: sender, body: Array("plain".utf8))
+        #expect(record.head?.headerFields[.init("x-trace")!] == "abc")
+        #expect(record.head?.headerFields[.contentLength] == "5")
+    }
+}
