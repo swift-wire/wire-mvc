@@ -195,7 +195,10 @@ public enum WireMVCResponseHeaders {
     /// that means to defer to the route says so with `.setIfAbsent` rather than by position.
     public static func resolved(
         statics: [ResponseHeaderContribution] = [],
-        returned: HTTPFields = [:],
+        // `HTTPFields()`, not `[:]`. The dictionary literal goes through `init(dictionaryLiteral:)` and
+        // allocates at every call site that omits this argument — which is every typed route, since only a
+        // handler returning response fields in its tuple passes one. Measured: one allocation per call.
+        returned: HTTPFields = HTTPFields(),
         middleware: [ResponseHeaderContribution] = []
     ) -> HTTPFields {
         var fields = HTTPFields()
