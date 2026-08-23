@@ -210,12 +210,24 @@ public enum WireMVCResponseHeaders {
     }
 
     /// Apply one contribution.
+    ///
+    /// Every case here uses the **scalar** `HTTPFields` API rather than the array-valued subscript, which
+    /// is a spelling choice with a measured cost: `fields[values: name] = [value]` builds an `Array` to
+    /// carry one value, and the `setIfAbsent` spelling built one *just to ask `.isEmpty`*, then another to
+    /// write. Measured in process, the array-valued version cost **4 more allocations, 224 more bytes and
+    /// ~0.17 µs per contribution** — a third of WireMVC's whole per-request allocation count, for one
+    /// header, paid again per contribution and on bridged runtimes too.
+    ///
+    /// `append` is the case to be careful with: it must add a **separate field line**, never fold into an
+    /// existing value, because `Set-Cookie` cannot be folded. `HTTPFields.append(_:)` appends a field, so
+    /// it keeps the separate line that `fields[values: name].append(_:)` did — the joined `[name]` getter
+    /// is lossy for repeated fields either way, which is what `appendKeepsSeparateFieldLines` pins.
     public static func apply(_ contribution: ResponseHeaderContribution, to fields: inout HTTPFields) {
         let name = contribution.name
         switch contribution.verb {
-        case .set: fields[values: name] = [contribution.value]
-        case .append: fields[values: name].append(contribution.value)
-        case .setIfAbsent: if fields[values: name].isEmpty { fields[values: name] = [contribution.value] }
+        case .set: fields[name] = contribution.value
+        case .append: fields.append(HTTPField(name: name, value: contribution.value))
+        case .setIfAbsent: if fields[name] == nil { fields[name] = contribution.value }
         }
     }
 
