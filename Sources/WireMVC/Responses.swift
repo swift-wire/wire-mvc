@@ -201,11 +201,20 @@ public enum WireMVCResponseHeaders {
         returned: HTTPFields = HTTPFields(),
         middleware: [ResponseHeaderContribution] = []
     ) -> HTTPFields {
-        var fields = HTTPFields()
-        for contribution in statics {
-            apply(contribution, to: &fields)
+        var fields: HTTPFields
+        if statics.isEmpty {
+            // Nothing precedes the returned fields, so replaying them into an empty set would reproduce
+            // exactly what they already are — `applying` maintains a `Set<HTTPField.Name>` and rebuilds a
+            // value it was handed. Start from them instead. With statics present this shortcut is wrong:
+            // they have to go in first so the returned fields can override them per name.
+            fields = returned
+        } else {
+            fields = HTTPFields()
+            for contribution in statics {
+                apply(contribution, to: &fields)
+            }
+            fields = applying(returned: returned, to: fields)
         }
-        fields = applying(returned: returned, to: fields)
         for contribution in middleware {
             apply(contribution, to: &fields)
         }
