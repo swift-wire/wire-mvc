@@ -405,6 +405,66 @@ private func rawRoute<Sender: HTTPResponseSender & ~Copyable>(
     try await sender.sendAndFinish(HTTPResponse(status: .ok, headerFields: fields), buffer: &buffer)
 }
 
+@Suite("ResponseHeaderRegistry")
+struct ResponseHeaderRegistryTests {
+    private func name(_ index: Int) -> HTTPField.Name { HTTPField.Name("x-h\(index)")! }
+
+    /// Registrations past the inline capacity spill to the heap, and the spill must be invisible: same
+    /// order, same drain, same result. Nothing else exercises more than a couple of registrations, so
+    /// without this the overflow branch is dead code that happens to compile.
+    @Test(arguments: [1, 4, 5, 9])
+    func everyRegistrationSurvivesRegardlessOfCount(_ count: Int) async throws {
+        let registry = ResponseHeaderRegistry()
+        for index in 0..<count { registry.add(.set(name(index), "\(index)")) }
+
+        var fields = HTTPFields()
+        try await registry.drain(into: &fields)
+        for index in 0..<count {
+            #expect(fields[name(index)] == "\(index)", "field \(index) of \(count)")
+        }
+    }
+
+    /// Drain applies registration calls **in reverse**, so the outermost middleware — which registers
+    /// first, on the way in — applies last and wins. That ordering has to hold across the inline/overflow
+    /// boundary, which is exactly where an off-by-one in the backwards walk would hide.
+    @Test(arguments: [2, 4, 5, 7])
+    func theFirstRegistrationWinsAcrossTheOverflowBoundary(_ count: Int) async throws {
+        let registry = ResponseHeaderRegistry()
+        let contested = HTTPField.Name("x-contested")!
+        for index in 0..<count { registry.add(.set(contested, "\(index)")) }
+
+        var fields = HTTPFields()
+        try await registry.drain(into: &fields)
+        #expect(fields[contested] == "0", "the earliest registration applies last and wins")
+        #expect(fields[values: contested].count == 1)
+    }
+
+    /// `drain(into:)` and `drain()` are two spellings of one traversal and must not disagree — including
+    /// past the inline capacity, and including a deferred contribution among the immediate ones.
+    @Test
+    func bothDrainSpellingsAgree() async throws {
+        func populate(_ registry: ResponseHeaderRegistry) {
+            for index in 0..<6 { registry.add(.set(name(index), "\(index)")) }
+            registry.onSend { [.set(HTTPField.Name("x-deferred")!, "late")] }
+        }
+
+        let viaInto = ResponseHeaderRegistry()
+        populate(viaInto)
+        var fields = HTTPFields()
+        try await viaInto.drain(into: &fields)
+
+        let viaArray = ResponseHeaderRegistry()
+        populate(viaArray)
+        var expected = HTTPFields()
+        for contribution in try await viaArray.drain() {
+            WireMVCResponseHeaders.apply(contribution, to: &expected)
+        }
+
+        #expect(fields == expected)
+        #expect(fields[HTTPField.Name("x-deferred")!] == "late")
+    }
+}
+
 @Suite("Raw route framing")
 struct RawRouteFramingTests {
     /// The reason ``ResponseHeaderApplyingSender/send(_:)`` defers its head. A two-argument
