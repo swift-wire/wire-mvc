@@ -44,7 +44,36 @@ public final class ResponseHeaderRegistry {
         case deferred(() async throws -> [ResponseHeaderContribution])
     }
 
-    private var registrations: [Registration] = []
+    /// Registrations, the first ``inlineCapacity`` of them **without touching the heap**.
+    ///
+    /// A `[Registration]` grows on the first `add`, so a route with one contributing middleware paid an
+    /// allocation for a single element. Almost every request registers a handful at most — a CORS header,
+    /// a cache policy, a trace id — so the common case fits inline and the array is only built when it
+    /// genuinely overflows.
+    private static let inlineCapacity = 4
+    private var inline: InlineArray<4, Registration?> = .init(repeating: nil)
+    private var inlineCount = 0
+    private var overflow: [Registration] = []
+
+    private func append(_ registration: Registration) {
+        if inlineCount < Self.inlineCapacity {
+            inline[inlineCount] = registration
+            inlineCount += 1
+        } else {
+            overflow.append(registration)
+        }
+    }
+
+    /// The registration at `index` counting **backwards** from the newest — the order drain applies them
+    /// in. Walking by index rather than materialising a reversed list keeps the inline storage inline;
+    /// building an `Array` to reverse would give back the allocation this exists to avoid.
+    private var registrationCount: Int { inlineCount + overflow.count }
+
+    private func registration(fromNewest index: Int) -> Registration? {
+        let forward = registrationCount - 1 - index
+        if forward < inlineCount { return inline[forward] }
+        return overflow[forward - inlineCount]
+    }
 
     public init() {}
 
@@ -55,26 +84,46 @@ public final class ResponseHeaderRegistry {
     /// the argument and boxed it into `.values`, two allocations to carry a single field. Swift prefers
     /// this overload for a one-argument call, so every existing caller gets it without changing.
     public func add(_ contribution: ResponseHeaderContribution) {
-        registrations.append(.value(contribution))
+        append(.value(contribution))
     }
 
     /// Contribute several fields at once.
     public func add(_ contributions: ResponseHeaderContribution...) {
-        registrations.append(.values(contributions))
+        append(.values(contributions))
     }
 
     /// Contribute fields that cannot be known until the handler has run — a session cookie, an ETag
     /// computed from what was written. The closure runs once, at drain, inside the terminal's `do`, so a
     /// throw from it maps through `@ErrorResponse` like any other route error.
     public func onSend(_ contribute: @escaping () async throws -> [ResponseHeaderContribution]) {
-        registrations.append(.deferred(contribute))
+        append(.deferred(contribute))
+    }
+
+    /// Evaluate every registration straight into `fields`, outermost last — the same order ``drain()``
+    /// produces, without the array in between.
+    ///
+    /// Every caller of ``drain()`` immediately iterates what it returns and applies each element, so the
+    /// returned array exists only to cross a function boundary. This applies as it walks.
+    public func drain(into fields: inout HTTPFields) async throws {
+        for index in 0..<registrationCount {
+            guard let registration = registration(fromNewest: index) else { continue }
+            switch registration {
+            case let .value(value):
+                WireMVCResponseHeaders.apply(value, to: &fields)
+            case let .values(values):
+                for value in values { WireMVCResponseHeaders.apply(value, to: &fields) }
+            case let .deferred(contribute):
+                for value in try await contribute() { WireMVCResponseHeaders.apply(value, to: &fields) }
+            }
+        }
     }
 
     /// Evaluate every registration, outermost last. Called by the route terminal (and by
     /// ``RequestResponseMiddlewareBox/respondingWith(_:)`` on the gate path) — not by user code.
     public func drain() async throws -> [ResponseHeaderContribution] {
         var contributions: [ResponseHeaderContribution] = []
-        for registration in registrations.reversed() {
+        for index in 0..<registrationCount {
+            guard let registration = registration(fromNewest: index) else { continue }
             switch registration {
             case let .value(value): contributions.append(value)
             case let .values(values): contributions.append(contentsOf: values)
