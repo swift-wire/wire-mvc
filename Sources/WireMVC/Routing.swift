@@ -7,7 +7,16 @@ public import HTTPTypes
 /// must match the server's, per `HTTPServer.serve`'s `Handler.Reader == Reader`), so it is never
 /// boxed as `any`. WireMVC stays router-agnostic — it depends only on this protocol; a concrete
 /// builder (also an `HTTPServerRequestHandler`, so it can serve) is supplied by the caller.
-public protocol HTTPServerRouteBuilder<RequestContext, Reader, ResponseSender> {
+///
+/// `SendableMetatype` because `register`'s handler is `@escaping @Sendable`: a generated witness is
+/// generic over the builder, so every route closure it registers carries `Builder`'s metadata and
+/// conformances into a concurrent context. Without the refinement each one is a warning the consumer
+/// cannot act on — the closure is generated, and the conformance it is being warned about is WireMVC's.
+/// Stated on the protocol rather than on each generic parameter so an app's `createRouteBuilder(for:)`
+/// keeps the signature it already has, and an opaque `some FinalizableHTTPServerRouteBuilder<…>` return
+/// carries the guarantee. It costs a conformer nothing: a concrete type satisfies it implicitly, and so
+/// does a generic one — only a *generic parameter* standing in for a builder would have to say so.
+public protocol HTTPServerRouteBuilder<RequestContext, Reader, ResponseSender>: SendableMetatype {
     associatedtype RequestContext: HTTPServerCapability.RequestContext, ~Copyable
     associatedtype Reader: AsyncReader, ~Copyable, SendableMetatype
     where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields?

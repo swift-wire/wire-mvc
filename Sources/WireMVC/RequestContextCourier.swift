@@ -4,7 +4,12 @@ public import HTTPTypes
 
 /// A request context that carries the response-header registry — the capability the front layer reads to
 /// build its box, so it never has to name the concrete courier.
-public protocol ResponseHeaderCarrying: HTTPServerCapability.RequestContext, ~Copyable {
+///
+/// `SendableMetatype` for the same reason ``HTTPServerRouteBuilder`` is: every generated route closure
+/// reads `requestContext.responseHeaders` inside an `@escaping @Sendable` handler, which carries this
+/// conformance across. The two together are what make the generated file quiet — the builder covers the
+/// closure's own generic environment, this covers the context it reaches through.
+public protocol ResponseHeaderCarrying: HTTPServerCapability.RequestContext, SendableMetatype, ~Copyable {
     /// The app's real context, underneath the courier — what a route's box is built over, so nothing below
     /// routing meets the courier.
     associatedtype Base: HTTPServerCapability.RequestContext & ~Copyable
