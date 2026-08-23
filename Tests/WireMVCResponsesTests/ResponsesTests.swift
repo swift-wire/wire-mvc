@@ -303,6 +303,38 @@ struct ResponseHeaderTests {
         #expect(fields.filter { $0.name == .vary }.count == 2)
         #expect(fields[.vary] == "Accept-Encoding, Origin", "the joined getter is lossy — read with [values:]")
     }
+
+    /// `.set` must clear **every** value a name already has, not just the first. Untested until `apply`
+    /// moved from the array-valued subscript to the scalar one — the old spelling got this from assigning
+    /// a whole array, the new one from `HTTPFields` replacing all fields for a name.
+    @Test
+    func setReplacesEveryExistingValue() {
+        let fields = WireMVCResponseHeaders.resolved(statics: [
+            .set(.vary, "Accept-Encoding"),
+            .append(.vary, "Origin"),
+            .set(.vary, "Accept"),
+        ])
+        #expect(fields[values: .vary] == ["Accept"])
+        #expect(fields.filter { $0.name == .vary }.count == 1)
+    }
+
+    /// The one behaviour the scalar spelling changed, pinned so it is known rather than discovered.
+    ///
+    /// `HTTPFields`' scalar setter special-cases `Cookie`: it splits on `"; "` into separate fields, where
+    /// assigning `[value]` through the array-valued subscript stored one field containing the separator.
+    /// It only matters for a contribution that sets `Cookie` on a *response*, which is a request header
+    /// and malformed there anyway — and `Set-Cookie`, the response one, is not special-cased at all.
+    @Test
+    func setOnCookieSplitsOnItsSeparator() {
+        let fields = WireMVCResponseHeaders.resolved(statics: [.set(.cookie, "a=1; b=2")])
+        #expect(fields[values: .cookie] == ["a=1", "b=2"])
+
+        let setCookie = WireMVCResponseHeaders.resolved(statics: [
+            .set(.setCookie, "a=1"),
+            .append(.setCookie, "b=2"),
+        ])
+        #expect(setCookie[values: .setCookie] == ["a=1", "b=2"], "Set-Cookie is unaffected")
+    }
 }
 
 /// A *raw* route: generic over its sender, exactly as generated raw-route code is. The genericity is the
