@@ -1,6 +1,6 @@
 import BasicContainers
-import HTTPAPIs
-import HTTPTypes
+package import HTTPAPIs
+package import HTTPTypes
 package import Wire
 import WireMVC
 

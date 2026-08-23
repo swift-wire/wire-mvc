@@ -1,4 +1,5 @@
 import Foundation
+import HTTPTypes
 import Testing
 import WireMVCTesting
 
