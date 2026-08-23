@@ -291,6 +291,33 @@ struct ResponseHeaderTests {
         #expect(fields[values: .setCookie] == ["a=1", "b=2"])
     }
 
+    /// With no statics, the returned fields are the starting point rather than something replayed into an
+    /// empty set — the two are equivalent only if the replay preserved everything, so this pins that it
+    /// did: repeated fields, their order, and fields the middleware never mentions.
+    @Test
+    func returnedFieldsSurviveWithNoStatics() {
+        var returned = HTTPFields()
+        returned[.contentType] = "text/plain"
+        returned.append(HTTPField(name: .setCookie, value: "a=1"))
+        returned.append(HTTPField(name: .setCookie, value: "b=2"))
+
+        let fields = WireMVCResponseHeaders.resolved(returned: returned)
+        #expect(fields[.contentType] == "text/plain")
+        #expect(fields[values: .setCookie] == ["a=1", "b=2"])
+    }
+
+    /// The same, with middleware applying over the top — the precedence that makes the shortcut safe is
+    /// that nothing comes *before* returned when there are no statics.
+    @Test
+    func middlewareAppliesOverReturnedWithNoStatics() {
+        let fields = WireMVCResponseHeaders.resolved(
+            returned: [.contentType: "text/plain", .cacheControl: "no-store"],
+            middleware: [.set(.cacheControl, "public"), .setIfAbsent(.contentType, "application/json")]
+        )
+        #expect(fields[.cacheControl] == "public", "middleware overrides what the handler returned")
+        #expect(fields[.contentType] == "text/plain", "setIfAbsent defers to it")
+    }
+
     /// Nothing in the resolve path may use HTTPFields' single-value subscript, whose *getter* joins with
     /// ", " and does not special-case Set-Cookie — so a folded cookie would read back plausibly while being
     /// wrong on the wire. Asserted on the field count, which folding would collapse to 1.
