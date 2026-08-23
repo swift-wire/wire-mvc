@@ -74,8 +74,10 @@ struct TierTests {
             errorMapping: { _ in .status(.notFound) }
         )
 
-        // Nothing streamed: one buffered send with the mapped status, exactly as a JSON route would do.
-        #expect(recorder.recorded == [.head(.notFound, [:]), .finished(nil)])
+        // Nothing streamed: one buffered send with the mapped status, exactly as a JSON route would do —
+        // including the `Content-Length: 0`, because a bodiless response has a known length too and an
+        // unstated one frames as chunked just as a body's would.
+        #expect(recorder.recorded == [.head(.notFound, [.contentLength: "0"]), .finished(nil)])
     }
 
     @Test("a mid-body failure propagates and aborts the response")
@@ -128,9 +130,12 @@ struct TierTests {
         )
         try await outcome.send(on: RecordingSender(recorder: recorder))
 
+        // `Content-Length` beside the caller's own fields: the buffered tier holds the whole body before
+        // it touches the sender, so it states the length rather than letting the response frame as
+        // chunked. The streaming tiers above cannot — which is the difference this suite is about.
         #expect(
             recorder.recorded == [
-                .head(.ok, [.contentType: "application/json"]),
+                .head(.ok, [.contentType: "application/json", .contentLength: "11"]),
                 .chunk(#"{"ok":true}"#),
                 .finished(nil),
             ]
