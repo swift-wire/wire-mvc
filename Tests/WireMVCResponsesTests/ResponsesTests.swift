@@ -75,6 +75,58 @@ struct RecordingSender: HTTPResponseSender {
     }
 }
 
+/// Records **which** of a sender's two write paths was taken, where ``RecordingSender`` deliberately
+/// records both so its assertions do not depend on overload resolution. Here overload resolution is the
+/// thing under test.
+final class PathRecord: @unchecked Sendable {
+    var reachedFusedWitness = false
+    var wentThroughSend = false
+    var body: [UInt8] = []
+}
+
+struct PathDistinguishingSender: HTTPResponseSender {
+    typealias Writer = PathDistinguishingWriter
+
+    let record: PathRecord
+
+    mutating func sendInformational(_ response: HTTPResponse) async throws {}
+
+    consuming func send(_ response: HTTPResponse) async throws -> PathDistinguishingWriter {
+        record.wentThroughSend = true
+        return PathDistinguishingWriter(record: record)
+    }
+
+    consuming func sendAndFinish<Buffer: RangeReplaceableContainer<UInt8> & ~Copyable>(
+        _ response: HTTPResponse,
+        buffer: inout Buffer,
+        trailer: HTTPFields?
+    ) async throws where Buffer.Element: ~Copyable {
+        record.reachedFusedWitness = true
+        record.body += drained(&buffer)
+    }
+}
+
+struct PathDistinguishingWriter: CallerAsyncWriter {
+    typealias WriteElement = UInt8
+    typealias WriteFailure = Never
+    typealias FinalElement = HTTPFields?
+
+    let record: PathRecord
+
+    mutating func write<Buffer: RangeReplaceableContainer<UInt8> & ~Copyable>(
+        buffer: inout Buffer
+    ) async throws(Never) where Buffer.Element: ~Copyable {
+        record.body += drained(&buffer)
+    }
+
+    consuming func finish<Buffer: RangeReplaceableContainer<UInt8> & ~Copyable>(
+        buffer: inout Buffer,
+        finalElement: consuming FinalElement
+    ) async throws(Never) where Buffer.Element: ~Copyable {
+        record.body += drained(&buffer)
+    }
+}
+
 private func sent(_ outcome: WireMVCOutcome) async throws -> RecordedResponse {
     let record = RecordedResponse()
     try await outcome.send(on: RecordingSender(record: record))
@@ -217,6 +269,39 @@ struct ResponsesTests {
         let outcome = WireMVCOutcome.body(Array("plain".utf8), .ok)
         _ = try await sent(outcome)
         #expect(outcome.headerFields[.contentLength] == nil)
+    }
+
+    /// A buffered outcome must reach the sender's **own** `sendAndFinish`, not the proposal's extension.
+    ///
+    /// The requirement takes three parameters and carries no default — Swift forbids defaults on protocol
+    /// requirements — so a two-argument call cannot match it and binds to the same-signature extension
+    /// method instead, which expands to `send` + `finish` and never dispatches through the witness. An
+    /// outcome has no trailer, so the two spellings mean the same thing; only the dispatch differs.
+    ///
+    /// It differs enough to matter. `BridgeResponseSender` fuses head and body into a known-length
+    /// response in its witness and hands back a *streaming* writer from `send`, so under the two-argument
+    /// spelling every buffered response took the streaming rendezvous — 5 allocations per request through
+    /// the Hummingbird bridge, whose `contentLength:` fast path only a known-length body can reach.
+    @Test
+    func bufferedOutcomeReachesTheSendersOwnWitness() async throws {
+        let record = PathRecord()
+        try await WireMVCOutcome.body(Array("plain".utf8), .ok)
+            .send(on: PathDistinguishingSender(record: record))
+
+        #expect(record.reachedFusedWitness, "the two-argument spelling would expand to send + finish")
+        #expect(!record.wentThroughSend)
+        #expect(record.body == Array("plain".utf8))
+    }
+
+    /// The bodiless path goes through the one-argument convenience, which forwards with three explicit
+    /// arguments and so already reached the witness. Pinned so it stays that way.
+    @Test
+    func bodilessOutcomeReachesTheSendersOwnWitness() async throws {
+        let record = PathRecord()
+        try await WireMVCOutcome.status(.noContent).send(on: PathDistinguishingSender(record: record))
+
+        #expect(record.reachedFusedWitness)
+        #expect(!record.wentThroughSend)
     }
 
     /// The factories are the pre-struct spelling: `.status(_)` and `.body(_:_:)` still construct, so no
