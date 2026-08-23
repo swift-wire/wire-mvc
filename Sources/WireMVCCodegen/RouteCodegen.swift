@@ -318,7 +318,8 @@ struct RouteBlockGenerator {
         guard let (binds, callArgs) = parameterBindings(of: function, path: path, hasBody: hasBody)
         else { return nil }
         let hasBinds = !binds.isEmpty
-        let call = "try await \(subjectExpression).\(function.name.text)(\(callArgs.joined(separator: ", ")))"
+        let call =
+            "\(effectMarkers(of: function))\(subjectExpression).\(function.name.text)(\(callArgs.joined(separator: ", ")))"
         // Every typed route drains. The registry rides the courier context, so it exists whether or not
         // this route has a fold — and a global middleware must reach a route with no `@Middleware` of its
         // own, which is most of them. Making it conditional would miss those silently.
@@ -339,30 +340,14 @@ struct RouteBlockGenerator {
         // the register-closure top and drop it from the terminal (which still enters scope off the hoisted
         // binding). Otherwise the preamble stays in the terminal, byte-for-byte unchanged.
         let foldThreadsDoubles = middleware.contains { $0.contains(Self.doublesCreateArgument) }
-        let terminalBody =
-            switch emission {
-            case .streaming(let outcome):
-                streamingClosureBody(
-                    hasBinds: hasBinds,
-                    hasBody: hasBody,
-                    streamsBody: streamsBody,
-                    binds: binds,
-                    outcome: outcome,
-                    scopeEntryPreamble: foldThreadsDoubles ? "" : scopeEntryPreamble,
-                    scopeEntryPrologue: scopeEntryProloguePrefix,
-                    errorMappings: errorMappings
-                )
-            case .buffered(let response):
-                closureBody(
-                    hasBinds: hasBinds,
-                    hasBody: hasBody,
-                    binds: binds,
-                    response: response,
-                    scopeEntryPreamble: foldThreadsDoubles ? "" : scopeEntryPreamble,
-                    scopeEntryPrologue: scopeEntryProloguePrefix,
-                    errorMappings: errorMappings
-                )
-            }
+        let terminalBody = terminalBody(
+            emission: emission,
+            hasBody: hasBody,
+            streamsBody: streamsBody,
+            binds: binds,
+            errorMappings: errorMappings,
+            foldThreadsDoubles: foldThreadsDoubles
+        )
         return emitRegister(
             verb: verb,
             path: path,
@@ -377,6 +362,46 @@ struct RouteBlockGenerator {
             drainsResponseHeaders: drainsMiddleware,
             terminalBody: terminalBody
         )
+    }
+
+    /// The terminal the register closure ends in, in whichever of the two shapes the route's response
+    /// half produced — the streaming one ends in an expression its `building` closure returns, the
+    /// buffered one assigns `wireMVCOutcome`. Split out of `routeBlock` to keep it within the body-length
+    /// budget; the choice is `emission`'s and nothing else here reads it.
+    private func terminalBody(
+        emission: ResponseEmission,
+        hasBody: Bool,
+        streamsBody: Bool,
+        binds: [String],
+        errorMappings: [ErrorMapping],
+        foldThreadsDoubles: Bool
+    ) -> String {
+        // Hoisted above the fold when it threads doubles, so it is dropped from the terminal here.
+        let preamble = foldThreadsDoubles ? "" : scopeEntryPreamble
+        let hasBinds = !binds.isEmpty
+        switch emission {
+        case .streaming(let outcome):
+            return streamingClosureBody(
+                hasBinds: hasBinds,
+                hasBody: hasBody,
+                streamsBody: streamsBody,
+                binds: binds,
+                outcome: outcome,
+                scopeEntryPreamble: preamble,
+                scopeEntryPrologue: scopeEntryProloguePrefix,
+                errorMappings: errorMappings
+            )
+        case .buffered(let response):
+            return closureBody(
+                hasBinds: hasBinds,
+                hasBody: hasBody,
+                binds: binds,
+                response: response,
+                scopeEntryPreamble: preamble,
+                scopeEntryPrologue: scopeEntryProloguePrefix,
+                errorMappings: errorMappings
+            )
+        }
     }
 }
 
@@ -953,43 +978,6 @@ extension RouteBlockGenerator {
                 : "wireMVCRespond(to: wireMVCError, as: \(mapping.errorType).self, status: \(status), \(callable))"
         }
     }
-}
-
-// MARK: - Factory-lift naming (structural ↔ domain handshake)
-
-/// Derive the synthesised factory names from a `@Middleware(key)`'s canonical key text, using the same
-/// sanitiser swift-wire's factory synthesis uses (any character outside `[A-Za-z0-9_]` → `_`). Both
-/// sides must agree so the plugin's construction call resolves to the lifted property and the fold's
-/// `create` names it.
-public func sanitizedKeyFragment(_ key: String) -> String {
-    String(key.map { $0.isLetter || $0.isNumber || $0 == "_" ? $0 : "_" })
-}
-public func factoryPropertyName(forKey key: String) -> String { "_wireFactory_" + sanitizedKeyFragment(key) }
-public func factoryTypeName(forKey key: String) -> String { "_WireFactory_" + sanitizedKeyFragment(key) }
-
-/// The proxy field an `@Middleware(T.self)` binding is read through — the same name swift-wire's
-/// adapter-dependency pass gives the by-type injected field: `_wire` + the simple (generics- and
-/// namespace-stripped) type name, upper-cameled (`Mod.RequireAdmin<…>` → `_wireRequireAdmin`). Both
-/// sides derive it identically so the witness and the plugin-emitted struct meet on the field.
-public func dependencyPropertyName(forType type: String) -> String {
-    let withoutGenerics = type.prefix { $0 != "<" }
-    let simple = withoutGenerics.split(separator: ".").last.map(String.init) ?? String(withoutGenerics)
-    return "_wire" + simple.prefix(1).uppercased() + simple.dropFirst()
-}
-
-/// The proxy field an `@Middleware(key)` binding is read through when `key` is a graph binding key (not
-/// a `@Factory` template) — `_wire` + the sanitised key, matching swift-wire's keyed adapter-dependency
-/// field name.
-public func dependencyPropertyName(forKey key: String) -> String { "_wire" + sanitizedKeyFragment(key) }
-
-/// The proxy field a `@Coding(...)` argument is read through — the same two-way dispatch
-/// `middlewareConstructions` does, because it is the same `.injectsFromGraph` pass on the other side.
-/// `WireMVCCoding.self` selects the unkeyed binding by type; anything else is a `BindingKey` reference and
-/// selects the binding it keys.
-public func codingProxyField(for reference: String) -> String {
-    reference.hasSuffix(".self")
-        ? dependencyPropertyName(forType: String(reference.dropLast(".self".count)))
-        : dependencyPropertyName(forKey: reference)
 }
 
 /// What a route's response half produced — the two terminal shapes, kept apart because the streaming one

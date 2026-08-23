@@ -508,7 +508,7 @@ struct PreparePreStep {
     /// tracing) traps on its second call. The `@main` needs no such guard — it runs once by construction —
     /// so its emission is the bare call.
     func lines(callee: String, transport: BootstrapTransport) -> String {
-        let effects = (isThrowing ? "try " : "") + (isAsync ? "await " : "")
+        let effects = effectMarkers(isAsync: isAsync, isThrowing: isThrowing)
         let call: String
         switch transport {
         case .appServer:
