@@ -1,4 +1,4 @@
-package import Synchronization
+import Synchronization
 package import Wire
 package import WireMVC
 

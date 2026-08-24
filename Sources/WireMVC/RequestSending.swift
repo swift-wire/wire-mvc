@@ -1,4 +1,4 @@
-public import HTTPTypes
+import HTTPTypes
 
 #if canImport(FoundationEssentials)
 import FoundationEssentials
