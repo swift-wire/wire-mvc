@@ -225,7 +225,9 @@ let headersLocal = "wireMVCHeaders"
 /// binding actually consumes it (a body codec serialising dates, or `@Query since: Date` once such a binding
 /// is expressible at all); adding the argument now costs nothing and avoids a signature change then.
 private func requestPreamble(_ route: ClientRoute) -> String {
-    var lines = ["var \(requestLocal) = WireMVCOutgoingRequest()"]
+    // `var` only when something writes into it: each parameter's `send`/`sendBody` takes it `inout`, so a
+    // route with no parameters never mutates it, and `var` there is a warning in generated code.
+    var lines = ["\(route.parameters.isEmpty ? "let" : "var") \(requestLocal) = WireMVCOutgoingRequest()"]
     for parameter in route.parameters {
         // The generic is the *underlying* type: the route binds `Wrapper<T>` and lets the generated code
         // decide presence, exactly as the server's `bind`/`bindOptional` split does.

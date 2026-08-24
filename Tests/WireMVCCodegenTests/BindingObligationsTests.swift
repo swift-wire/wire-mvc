@@ -696,7 +696,9 @@ struct BodyStreamBindingTests {
     func consumingStream() {
         let (source, diagnostics) = generate(controller(ownership: "consuming"))
         #expect(diagnostics.isEmpty, "\(diagnostics)")
-        #expect(source.contains("var parts = MultipartParts(request: request, reader: reader)"))
+        // `let`, not `var`: consuming a binding is not mutating it, so `var` was only ever a
+        // `VariableNeverMutated` warning in generated code.
+        #expect(source.contains("let parts = MultipartParts(request: request, reader: reader)"))
         #expect(source.contains("receive(parts: parts)"), "by value for consuming")
         #expect(!source.contains("collectBody"), "a lent stream must not collect the body first")
         #expect(!source.contains("MultipartParts<"), "no type argument — the reader is inferred from the call")

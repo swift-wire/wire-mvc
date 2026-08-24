@@ -77,7 +77,7 @@ public struct WireMVCHTMLProducer<Content: HTML>: WireMVCBodyProducer {
             intoOwned: ProposalHTMLStreamWriter(writer: writer),
             chunkSize: chunkSize
         )
-        var writer = adapter.taken()
+        let writer = adapter.taken()
         var end = UniqueArray<UInt8>()
         try await writer.finish(buffer: &end, finalElement: trailer)
     }
