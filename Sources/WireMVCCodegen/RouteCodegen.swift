@@ -216,7 +216,7 @@ struct RouteBlockGenerator {
     ) -> (staticHeaders: [ResponseHeaderEntry], mode: ResolvedResponseMode?)? {
         // Tier order is application order: controller entries first, the route's after, so the route's
         // `.set` replaces and its `.append` adds. Nothing is filtered out here.
-        var staticHeaders =
+        let staticHeaders =
             controllerResponseHeaders + responseHeaderEntries(from: function.attributes, scopeLabel: "route")
         // A route states its response mode exactly once. Two annotations is a contradiction, and silently
         // honouring the first (which is what the response chain would do) is a worse way to find that out.
@@ -565,9 +565,7 @@ extension RouteBlockGenerator {
                 )
                 return nil
             }
-            // A lent stream is built as a `var` — `withParts` consumes it — and always passed by value,
-            // because `consuming` is the only ownership that fits (see `hasConsumingOwnership`).
-            let keyword = lendsBodyStream(binding.wrapper) ? "var" : "let"
+            let keyword = "let"
             binds.append(
                 "\(keyword) \(internalName) = \(bindExpression(for: param, binding: binding, name: bindingName, hasBody: hasBody, function: function))"
             )

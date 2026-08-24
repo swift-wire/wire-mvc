@@ -32,7 +32,7 @@ where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields?, Sender.Wr
         }
         return try await next(
             input.responding { sender in
-                var writer = sender
+                let writer = sender
                 try await writer.sendAndFinish(HTTPResponse(status: .forbidden))
             }
         )
