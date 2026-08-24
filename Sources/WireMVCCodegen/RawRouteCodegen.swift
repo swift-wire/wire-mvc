@@ -38,7 +38,8 @@ extension RouteBlockGenerator {
         // (`wireMVCController`) after the scope-entry prologue, not the held `_wireSubject`; a production
         // app-`@Singleton` raw route stays `self._wireSubject`, byte-for-byte unchanged. When the fold threads
         // doubles the correlation is hoisted above the fold, as in the typed path.
-        let call = "try await \(subjectExpression).\(function.name.text)(\(mapping.callArgs.joined(separator: ", ")))"
+        let call =
+            "\(effectMarkers(of: function))\(subjectExpression).\(function.name.text)(\(mapping.callArgs.joined(separator: ", ")))"
         let foldThreadsDoubles = middleware.contains { $0.contains(Self.doublesCreateArgument) }
         let terminalBody = "\(foldThreadsDoubles ? "" : scopeEntryPreamble)\(scopeEntryProloguePrefix)\(call)"
         // Scope entry needs `request` (its seed, and the variant preamble's correlation), even when the
@@ -169,7 +170,7 @@ extension RouteBlockGenerator {
             parametersName: "_",
             readerName: mapping.used.contains("reader") ? "reader" : "_",
             terminalBody:
-                "try await \(subjectExpression).\(function.name.text)(\(mapping.callArgs.joined(separator: ", ")))"
+                "\(effectMarkers(of: function))\(subjectExpression).\(function.name.text)(\(mapping.callArgs.joined(separator: ", ")))"
         )
     }
 

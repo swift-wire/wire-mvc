@@ -2078,15 +2078,17 @@ struct RouteContributorGenerationTests {
             testEntry: true
         )
         #expect(rendered.diagnostics.isEmpty)
+        // No `try await`: the fixture's `stream` is sync and non-throwing, and the call carries only the
+        // markers the callee declares (see `effectMarkers`). What this test is about is the *subject*.
         #expect(
             rendered.source.contains(
-                "try await wireMVCController.stream(responseSender: "
+                "wireMVCController.stream(responseSender: "
                     + "ResponseHeaderApplyingSender(wrapping: responseSender, registry: wireMVCResponseHeaderRegistry))"
             )
         )
         #expect(
             rendered.source.contains(
-                "try await self._wireSubject.stream(responseSender: "
+                "self._wireSubject.stream(responseSender: "
                     + "ResponseHeaderApplyingSender(wrapping: responseSender, registry: wireMVCResponseHeaderRegistry))"
             )
         )
