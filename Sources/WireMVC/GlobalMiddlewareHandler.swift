@@ -65,15 +65,15 @@ where
         let box = RequestResponseMiddlewareBox<
             Inner.RequestContext.Base, Inner.Reader, Inner.ResponseSender
         >
-            .pending(
-                request: request,
-                requestContext: base,
-                reader: reader,
-                responseSender: responseSender,
-                // The courier's registry, not a fresh one — this is what makes a global middleware's
-                // contribution reach a route's terminal, which builds its own box further down.
-                responseHeaders: registry
-            )
+        .pending(
+            request: request,
+            requestContext: base,
+            reader: reader,
+            responseSender: responseSender,
+            // The courier's registry, not a fresh one — this is what makes a global middleware's
+            // contribution reach a route's terminal, which builds its own box further down.
+            responseHeaders: registry
+        )
         try await chain.intercept(input: box) { finalBox in
             try await finalBox.withPendingContents { request, base, reader, responseSender, registry in
                 // Rebuild the courier from the base and the registry the box hands back, so the routes
