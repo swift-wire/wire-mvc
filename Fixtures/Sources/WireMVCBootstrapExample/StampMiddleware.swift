@@ -69,8 +69,7 @@ where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields?, Sender.Wr
         return try await input.contributing { headers in
             headers.add(.set(.init("x-stamp")!, "middleware"))
             // Evaluated at drain — after the handler ran and wrote to the store, before the response head
-            // exists. The closure is still not `@Sendable`, so it can capture per-request state: that
-            // capability is what a linear registry keeps and a `Mutex`-guarded `Sendable` one would cost.
+            // exists. The closure is still not `@Sendable`, so it can capture per-request state.
             headers.onSend { [log] in
                 guard let greeting = log.greeting(for: key) else { return [] }
                 return [.append(.setCookie, "greeted=\(greeting); Path=/")]
