@@ -57,7 +57,18 @@ jobs:
         # The opt-in WireMVCServerTransport adapter is behind the `ServerTransport` trait (which pulls
         # in OpenAPIRuntime); enable it to build the adapter + run its test. The steps above leave the
         # trait off, so the core never resolves OpenAPIRuntime.
-        run: swiftly run swift test --traits ServerTransport
+        run: |
+          set -o pipefail
+          swiftly run swift test --traits ServerTransport 2>&1 | tee /tmp/servertransport.log
+          # `AdapterTests.swift` is *entirely* `#if ServerTransport`, so if that gate ever stops matching
+          # — trait renamed, define not reaching the target — the file compiles to zero tests and this
+          # step still passes: "Test run with 0 tests in 0 suites passed" is a pass, not a failure. The
+          # adapter would then be wholly untested behind a green tick. Assert the suite actually ran.
+          # This is the sibling of the `Package.resolved` guard above: both catch a trait going quiet.
+          grep -q 'Suite "WireMVCServerTransport" passed' /tmp/servertransport.log || {
+            echo "the ServerTransport adapter suite did not run — is the '#if ServerTransport' gate in AdapterTests.swift intact?"
+            exit 1
+          }
       - name: Build fixtures
         # The runnable examples and the integration suites live in their own package (Fixtures/) because
         # they serve on NIOHTTPServer: anything naming swift-http-server unconditionally in wire-mvc's
