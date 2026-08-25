@@ -73,11 +73,11 @@ private struct ChunkedHandler: HTTPServerRequestHandler {
         var writer = try await responseSender.send(HTTPResponse(status: .ok))
         for chunk in ["one", "two"] {
             var buffer = UniqueArray<UInt8>(copying: Array(chunk.utf8))
-            try await writer.write(buffer: &buffer)
+            await writer.write(buffer: &buffer)
             progress.recordWrite()
         }
         var last = UniqueArray<UInt8>(copying: Array("three".utf8))
-        try await writer.finish(buffer: &last, finalElement: nil)
+        await writer.finish(buffer: &last, finalElement: nil)
         progress.recordWrite()
     }
 }
@@ -190,9 +190,9 @@ private struct ChunkedHandler: HTTPServerRequestHandler {
                 body: .restartable { writer in
                     var writer = writer
                     var first = UniqueArray<UInt8>(copying: Array("one".utf8))
-                    try await writer.write(buffer: &first)
+                    await writer.write(buffer: &first)
                     var last = UniqueArray<UInt8>(copying: Array("two".utf8))
-                    try await writer.finish(buffer: &last, finalElement: nil)
+                    await writer.finish(buffer: &last, finalElement: nil)
                 }
             ) { response, reader in
                 #expect(response.status == .ok)

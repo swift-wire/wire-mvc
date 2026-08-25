@@ -18,7 +18,7 @@ struct RouteContributorGenerationTests {
     private func controller(_ source: String) -> ControllerDeclaration {
         let file = Parser.parse(source: source)
         for statement in file.statements {
-            if let declaration = statement.item.asProtocol(DeclGroupSyntax.self) as? (any DeclSyntaxProtocol),
+            if let declaration: any DeclSyntaxProtocol = statement.item.asProtocol(DeclGroupSyntax.self),
                 let controller = ControllerDeclaration(declaration)
             {
                 return controller

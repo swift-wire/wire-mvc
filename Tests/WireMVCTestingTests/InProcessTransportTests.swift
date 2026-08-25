@@ -39,11 +39,11 @@ private struct EchoHandler: HTTPServerRequestHandler {
             // final chunk. In-process buffers them, so the driver sees the concatenation.
             var writer = try await responseSender.send(HTTPResponse(status: .accepted))
             var first = UniqueArray<UInt8>(copying: Array("one".utf8))
-            try await writer.write(buffer: &first)
+            await writer.write(buffer: &first)
             var second = UniqueArray<UInt8>(copying: Array("two".utf8))
-            try await writer.write(buffer: &second)
+            await writer.write(buffer: &second)
             var last = UniqueArray<UInt8>(copying: Array("three".utf8))
-            try await writer.finish(buffer: &last, finalElement: nil)
+            await writer.finish(buffer: &last, finalElement: nil)
             return
         }
 
