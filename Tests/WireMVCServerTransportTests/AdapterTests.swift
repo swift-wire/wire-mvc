@@ -271,7 +271,7 @@ struct StreamingRequestController: RouteContributor {
 }
 
 /// Contributes a response header field on the way in, exactly as a real controller-scope middleware does.
-/// It reaches the registry off the box, which on this path exists only because the `ServerTransport` bridge
+/// It contributes through the box, which on this path exists only because the `ServerTransport` bridge
 /// constructs the courier itself.
 struct StampMiddleware<
     Ctx: HTTPServerCapability.RequestContext & ~Copyable,
@@ -286,13 +286,17 @@ where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields?, Sender.Wr
         input: consuming Input,
         next: (consuming NextInput) async throws -> Return
     ) async throws -> Return {
-        input.responseHeaders.add(.set(.init("x-stamp")!, "adapter"))
-        return try await next(input)
+        try await input.contributing { headers in
+            headers.add(.set(.init("x-stamp")!, "adapter"))
+        } then: { input in
+            try await next(input)
+        }
     }
 }
 
-/// A hand-written contributor shaped like the generated witness: read the registry off the courier, build
-/// the box over the *unwrapped* context, fold, and drain at the terminal.
+/// A hand-written contributor shaped like the generated witness: destructure the courier, build the box
+/// over the *unwrapped* context with the registry it yielded, fold, and drain at the terminal — taking the
+/// registry from the box's own destructure, as the emitted code does.
 struct StampedController: RouteContributor {
     func registerWireRoutes<Builder: HTTPServerRouteBuilder>(
         on builder: inout Builder,
@@ -305,20 +309,20 @@ struct StampedController: RouteContributor {
         Builder.ResponseSender.Writer: ~Copyable
     {
         builder.register(method: .get, path: "/stamped") { request, requestContext, _, reader, responseSender in
-            let registry = requestContext.responseHeaders
+            let contents = requestContext.takeContents()
+            let base = contents.base
             let box = RequestResponseMiddlewareBox.pending(
                 request: request,
-                requestContext: requestContext.takeBase(),
+                requestContext: base,
                 reader: reader,
                 responseSender: responseSender,
-                responseHeaders: registry
+                responseHeaders: contents.responseHeaders.take()
             )
             let chain = wireCompose {
                 StampMiddleware<Builder.RequestContext.Base, Builder.Reader, Builder.ResponseSender>()
             }
             try await chain.intercept(input: box) { finalBox in
-                let drain = finalBox.responseHeaders
-                return try await finalBox.withPendingContents { _, _, _, sender in
+                return try await finalBox.withPendingContents { _, _, _, sender, drain in
                     try await WireMVCOutcome.status(
                         .ok,
                         headerFields: WireMVCResponseHeaders.resolved(middleware: try await drain.drain())
@@ -332,6 +336,99 @@ struct StampedController: RouteContributor {
 /// A graph whose single controller contributes a header field through a middleware.
 struct StampedGraph: WireMVCComposable {
     var routeContributors: [any RouteContributor] { [StampedController()] }
+    var services: [any Service] { [] }
+}
+
+/// A gate that contributes a field and then answers, moving the box to `responded`.
+///
+/// `respondingWith` drains on its way out, so the field it registered *before* responding is on the head
+/// it writes.
+struct GateMiddleware<
+    Ctx: HTTPServerCapability.RequestContext & ~Copyable,
+    Reader: AsyncReader & ~Copyable,
+    Sender: HTTPResponseSender & ~Copyable
+>: Middleware
+where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields?, Sender.Writer: ~Copyable {
+    typealias Input = RequestResponseMiddlewareBox<Ctx, Reader, Sender>
+    typealias NextInput = Input
+
+    func intercept<Return: ~Copyable>(
+        input: consuming Input,
+        next: (consuming NextInput) async throws -> Return
+    ) async throws -> Return {
+        try await input.contributing { headers in
+            headers.add(.set(.init("x-gate")!, "before"))
+        } then: { input in
+            let responded = try await input.respondingWith(.status(.unauthorized))
+            return try await next(responded)
+        }
+    }
+}
+
+/// An always-run observer sitting *inside* the gate. It contributes unconditionally, as an observer must —
+/// it has no way to know a gate outside it already answered. By the time it runs the box is `responded`
+/// and carries no registry, so `contributing` does not call its closure at all.
+struct ObserverMiddleware<
+    Ctx: HTTPServerCapability.RequestContext & ~Copyable,
+    Reader: AsyncReader & ~Copyable,
+    Sender: HTTPResponseSender & ~Copyable
+>: Middleware
+where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields?, Sender.Writer: ~Copyable {
+    typealias Input = RequestResponseMiddlewareBox<Ctx, Reader, Sender>
+    typealias NextInput = Input
+
+    func intercept<Return: ~Copyable>(
+        input: consuming Input,
+        next: (consuming NextInput) async throws -> Return
+    ) async throws -> Return {
+        try await input.contributing { headers in
+            headers.add(.set(.init("x-observer")!, "after"))
+        } then: { input in
+            try await next(input)
+        }
+    }
+}
+
+/// Folds the gate outside an observer, so the observer contributes to a box that is already `responded`.
+struct GatedController: RouteContributor {
+    func registerWireRoutes<Builder: HTTPServerRouteBuilder>(
+        on builder: inout Builder,
+        coding: WireMVCCoding
+    ) throws
+    where
+        Builder.RequestContext: ~Copyable & ResponseHeaderCarrying,
+        Builder.Reader: ~Copyable,
+        Builder.ResponseSender: ~Copyable,
+        Builder.ResponseSender.Writer: ~Copyable
+    {
+        builder.register(method: .get, path: "/gated") { request, requestContext, _, reader, responseSender in
+            let contents = requestContext.takeContents()
+            let base = contents.base
+            let box = RequestResponseMiddlewareBox.pending(
+                request: request,
+                requestContext: base,
+                reader: reader,
+                responseSender: responseSender,
+                responseHeaders: contents.responseHeaders.take()
+            )
+            let chain = wireCompose {
+                GateMiddleware<Builder.RequestContext.Base, Builder.Reader, Builder.ResponseSender>()
+                ObserverMiddleware<Builder.RequestContext.Base, Builder.Reader, Builder.ResponseSender>()
+            }
+            try await chain.intercept(input: box) { finalBox in
+                return try await finalBox.withPendingContents { _, _, _, sender, drain in
+                    try await WireMVCOutcome.status(
+                        .ok,
+                        headerFields: WireMVCResponseHeaders.resolved(middleware: try await drain.drain())
+                    ).send(on: sender)
+                }
+            }
+        }
+    }
+}
+
+struct GatedGraph: WireMVCComposable {
+    var routeContributors: [any RouteContributor] { [GatedController()] }
     var services: [any Service] { [] }
 }
 
@@ -499,6 +596,34 @@ struct AdapterTests {
         let (response, _) = try await transport.send(.get, "/stamped")
         #expect(response.status == .ok)
         #expect(response.headerFields[.init("x-stamp")!] == "adapter")
+    }
+
+    /// An observer inside a gate cannot contribute to the response the gate wrote — and after the
+    /// `responded` case stopped carrying a registry, it cannot even try.
+    ///
+    /// The chain keeps running after a gate answers — the proposal's `intercept` shape means every
+    /// middleware calls `next` — so the observer still runs. `contributing` is the one place that absorbs
+    /// the `responded` case rather than making the caller spell it out, so this pins the behaviour its doc
+    /// comment promises: the closure is not called, and `body` gets the responded box unchanged.
+    ///
+    /// Worth a test because the box once documented the *opposite* — that carrying the registry into
+    /// `responded` let an observer further in still contribute. That was never true, under the class as
+    /// much as the linear struct that replaced it; now it is not expressible.
+    @Test
+    func aContributionAfterAGateRespondsDoesNotReachTheResponse() async throws {
+        let transport = MockTransport()
+        try WireMVCServerTransport.apply(GatedGraph(), to: transport)
+
+        let (response, _) = try await transport.send(.get, "/gated")
+        #expect(response.status == .unauthorized, "the gate answered")
+        #expect(
+            response.headerFields[.init("x-gate")!] == "before",
+            "contributed before responding, so respondingWith drained it"
+        )
+        #expect(
+            response.headerFields[.init("x-observer")!] == nil,
+            "contributed after responding — inert, because nothing drains a responded box"
+        )
     }
 
     // MARK: - Cancellation into the handler

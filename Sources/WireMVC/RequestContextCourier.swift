@@ -6,7 +6,7 @@ public import HTTPTypes
 /// build its box, so it never has to name the concrete courier.
 ///
 /// `SendableMetatype` for the same reason ``HTTPServerRouteBuilder`` is: every generated route closure
-/// reads `requestContext.responseHeaders` inside an `@escaping @Sendable` handler, which carries this
+/// calls `requestContext.takeContents()` inside an `@escaping @Sendable` handler, which carries this
 /// conformance across. The two together are what make the generated file quiet — the builder covers the
 /// closure's own generic environment, this covers the context it reaches through.
 public protocol ResponseHeaderCarrying: HTTPServerCapability.RequestContext, SendableMetatype, ~Copyable {
@@ -14,9 +14,51 @@ public protocol ResponseHeaderCarrying: HTTPServerCapability.RequestContext, Sen
     /// routing meets the courier.
     associatedtype Base: HTTPServerCapability.RequestContext & ~Copyable
 
-    var responseHeaders: ResponseHeaderRegistry { get }
+    /// Consume the courier and hand back both of the things it carries.
+    ///
+    /// One requirement rather than a `responseHeaders` getter plus a `takeBase()`, because the registry is
+    /// linear: a getter cannot hand out a `~Copyable` value, and two consuming methods cannot both be
+    /// called on one courier. Folding them is also the safer shape — a surviving `takeBase()` would let a
+    /// caller drop the registry silently, and a linear value has to be accounted for by *someone*.
+    consuming func takeContents() -> WireMVCContextContents<Base>
 
-    consuming func takeBase() -> Base
+    /// Rebuild a courier around a registry and a base context.
+    ///
+    /// The inverse of ``takeContents()``, and required because the front layer has to put one back
+    /// together: its box is over `Base`, so the courier it hands to the router below is reconstructed in
+    /// the terminal from the registry the box yields. A copyable registry needed no such round trip — it
+    /// could sit in the courier and the box at once.
+    init(base: consuming Base, responseHeaders: consuming sending ResponseHeaderRegistry)
+}
+
+/// What a courier destructures into: the response-header registry, still disconnected, and the app's real
+/// context.
+///
+/// A `~Copyable` struct rather than a tuple, and that is forced twice over — a tuple may not have a
+/// noncopyable element at all, and `sending` may not be applied to a tuple element even where one could.
+/// Its callers consume the two fields separately, which a local of noncopyable struct type permits (there
+/// is no `deinit` to run).
+///
+/// The registry arrives wrapped rather than raw for the reason the whole plan turns on: unwrapping it is
+/// ``WireDisconnected/take()``, which the caller performs in *its own* frame, where the reader and sender
+/// are still its parameters. Yielding it through a closure instead would make those two captures, and a
+/// capture is task-isolated — which is precisely the region merge this exists to avoid.
+/// > Note: `@frozen` is load-bearing, not decoration. Its two fields are consumed separately, and
+/// > partially consuming a value of a non-frozen type is refused *across a module boundary* — which is
+/// > exactly where every consumer of this type sits, since the code that destructures a courier is the
+/// > generated `_WireRoutes.swift` in the app's own module.
+@frozen
+public struct WireMVCContextContents<Base: HTTPServerCapability.RequestContext & ~Copyable>: ~Copyable {
+    /// The registry, still disconnected. Call ``WireDisconnected/take()`` to get it out `sending`.
+    public var responseHeaders: WireDisconnected<ResponseHeaderRegistry>
+
+    /// The app's real context.
+    public var base: Base
+
+    public init(responseHeaders: consuming WireDisconnected<ResponseHeaderRegistry>, base: consuming Base) {
+        self.responseHeaders = responseHeaders
+        self.base = base
+    }
 }
 
 /// Carries WireMVC's per-request state from the top of the handler stack down to each route.
@@ -30,8 +72,8 @@ public protocol ResponseHeaderCarrying: HTTPServerCapability.RequestContext, Sen
 ///
 /// It is a **courier, not a carrier**. Route and controller middleware reach the registry off the
 /// *box* (``RequestResponseMiddlewareBox/responseHeaders``), which is where it has always been; this type
-/// only gets it across `handle`. The generated register closure therefore reads the registry, calls
-/// ``takeBase()``, and builds the route's box over the **unwrapped** context — so nothing below routing
+/// only gets it across `handle`. The generated register closure therefore calls ``takeContents()`` and
+/// builds the route's box over the **unwrapped** context — so nothing below routing
 /// ever meets this type, a context-transforming middleware wraps the app's real context rather than this,
 /// and the capability-forwarding conformances the plugin emits stay one layer shallower.
 ///
@@ -42,23 +84,23 @@ public protocol ResponseHeaderCarrying: HTTPServerCapability.RequestContext, Sen
 public struct WireMVCContext<Base: HTTPServerCapability.RequestContext & ~Copyable>:
     ResponseHeaderCarrying, ~Copyable
 {
-    /// Where middleware above the router contribute response header fields. Copyable, so it can be read
-    /// borrowing before the courier is consumed.
-    public let responseHeaders: ResponseHeaderRegistry
+    /// Where middleware above the router contribute response header fields.
+    ///
+    /// Disconnected, which is what gets it across `handle`'s plain-`consuming` context without landing in
+    /// the task's region — see ``ResponseHeaderRegistry`` for why that matters.
+    private var responseHeaders: WireDisconnected<ResponseHeaderRegistry>
 
     private var base: Base
 
-    public init(base: consuming Base, responseHeaders: ResponseHeaderRegistry) {
+    public init(base: consuming Base, responseHeaders: consuming sending ResponseHeaderRegistry) {
         self.base = base
-        self.responseHeaders = responseHeaders
+        self.responseHeaders = WireDisconnected(responseHeaders)
     }
 
-    /// Consume the courier and hand back the app's real context — the "drop the envelope" half of the
-    /// generated register closure. Modelled on ``WireDisconnected/take()``: a linear value handed out of a
-    /// consuming method, which is the only way to move a `~Copyable` stored property out.
-    public consuming func takeBase() -> Base {
-        let value = consume base
-        return value
+    /// Consume the courier and hand back the registry and the app's real context — the "drop the envelope"
+    /// half of the generated register closure.
+    public consuming func takeContents() -> WireMVCContextContents<Base> {
+        WireMVCContextContents(responseHeaders: consume responseHeaders, base: consume base)
     }
 }
 
@@ -165,9 +207,9 @@ where Base.Writer: ~Copyable {
     public typealias Writer = Base.Writer
 
     var base: Base
-    let registry: ResponseHeaderRegistry
+    var registry: ResponseHeaderRegistry
 
-    public init(wrapping base: consuming Base, registry: ResponseHeaderRegistry) {
+    public init(wrapping base: consuming Base, registry: consuming sending ResponseHeaderRegistry) {
         self.base = base
         self.registry = registry
     }

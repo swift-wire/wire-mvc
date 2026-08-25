@@ -29,9 +29,22 @@ public import HTTPTypes
 /// order it listed them. Only the calls are reversed, so a middleware never sees its own contributions
 /// come out backwards.
 ///
+/// ## Why it is linear, not a class
+///
+/// It is `~Copyable`, and that is load-bearing rather than a micro-optimisation. The registry travels
+/// inside the request context, which `HTTPServerRequestHandler.handle` takes as plain `consuming` — so
+/// anything read out of it lands in the task's region, and a sender merging it in could not then be handed
+/// on as `sending`. That is what stopped a `@RawRoute` declaring `consuming sending Sender` on the
+/// *untransformed* sender. Riding in ``WireDisconnected`` fixes it, but that type's safety argument is
+/// that the stored value is never aliased — true of a linear value by construction, false of a class
+/// reference. So linearity is what makes the disconnection sound rather than merely quiet.
+///
+/// Being a struct also keeps it off the heap: a request that registers at most ``inlineCapacity``
+/// contributions now allocates nothing at all for them.
+///
 /// Deliberately **not** `Sendable`, exactly as the box isn't: one request's registry is written by that
 /// request's middleware and drained by its terminal, all in one region.
-public final class ResponseHeaderRegistry {
+public struct ResponseHeaderRegistry: ~Copyable {
     /// One registration, kept unevaluated so a deferred contributor runs at drain rather than at
     /// registration. A plain `add` is stored as an already-known list to keep one ordered sequence of
     /// calls — the thing the reverse applies to.
@@ -55,7 +68,7 @@ public final class ResponseHeaderRegistry {
     private var inlineCount = 0
     private var overflow: [Registration] = []
 
-    private func append(_ registration: Registration) {
+    private mutating func append(_ registration: Registration) {
         if inlineCount < Self.inlineCapacity {
             inline[inlineCount] = registration
             inlineCount += 1
@@ -69,7 +82,7 @@ public final class ResponseHeaderRegistry {
     /// building an `Array` to reverse would give back the allocation this exists to avoid.
     private var registrationCount: Int { inlineCount + overflow.count }
 
-    private func registration(fromNewest index: Int) -> Registration? {
+    private borrowing func registration(fromNewest index: Int) -> Registration? {
         let forward = registrationCount - 1 - index
         if forward < inlineCount { return inline[forward] }
         return overflow[forward - inlineCount]
@@ -83,19 +96,29 @@ public final class ResponseHeaderRegistry {
     /// an `Array` at the call site whatever it is passed: `add(.set(name, value))` allocated one array for
     /// the argument and boxed it into `.values`, two allocations to carry a single field. Swift prefers
     /// this overload for a one-argument call, so every existing caller gets it without changing.
-    public func add(_ contribution: ResponseHeaderContribution) {
+    public mutating func add(_ contribution: ResponseHeaderContribution) {
         append(.value(contribution))
     }
 
     /// Contribute several fields at once.
-    public func add(_ contributions: ResponseHeaderContribution...) {
+    public mutating func add(_ contributions: ResponseHeaderContribution...) {
         append(.values(contributions))
+    }
+
+    /// Contribute one field and hand the registry back — the transform spelling, for a call site that
+    /// has the registry as a `consuming` value rather than something to mutate in place. It is what a
+    /// middleware rebuilding a box from ``RequestResponseMiddlewareBox/withContents(pending:responded:)``
+    /// reaches for: `responseHeaders: responseHeaders.with(.set(…))`.
+    public consuming func with(_ contribution: ResponseHeaderContribution) -> Self {
+        var registry = self
+        registry.add(contribution)
+        return registry
     }
 
     /// Contribute fields that cannot be known until the handler has run — a session cookie, an ETag
     /// computed from what was written. The closure runs once, at drain, inside the terminal's `do`, so a
     /// throw from it maps through `@ErrorResponse` like any other route error.
-    public func onSend(_ contribute: @escaping () async throws -> [ResponseHeaderContribution]) {
+    public mutating func onSend(_ contribute: @escaping () async throws -> [ResponseHeaderContribution]) {
         append(.deferred(contribute))
     }
 
@@ -104,7 +127,7 @@ public final class ResponseHeaderRegistry {
     ///
     /// Every caller of ``drain()`` immediately iterates what it returns and applies each element, so the
     /// returned array exists only to cross a function boundary. This applies as it walks.
-    public func drain(into fields: inout HTTPFields) async throws {
+    public borrowing func drain(into fields: inout HTTPFields) async throws {
         for index in 0..<registrationCount {
             guard let registration = registration(fromNewest: index) else { continue }
             switch registration {
@@ -120,7 +143,7 @@ public final class ResponseHeaderRegistry {
 
     /// Evaluate every registration, outermost last. Called by the route terminal (and by
     /// ``RequestResponseMiddlewareBox/respondingWith(_:)`` on the gate path) — not by user code.
-    public func drain() async throws -> [ResponseHeaderContribution] {
+    public borrowing func drain() async throws -> [ResponseHeaderContribution] {
         var contributions: [ResponseHeaderContribution] = []
         for index in 0..<registrationCount {
             guard let registration = registration(fromNewest: index) else { continue }

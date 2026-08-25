@@ -96,9 +96,10 @@ public struct WireMVCOutcome: Sendable {
         return WireMVCOutcome(status: status, headerFields: fields, body: [UInt8](data))
     }
 
-    /// Send this outcome on the response sender, consuming it. The sender is `consuming` (not `consuming
-    /// sending`): the terminal consumes it within its own region, and through a middleware fold it
-    /// arrives from the box's `withContents` as a plain `consuming` value (not `sending`).
+    /// Send this outcome on the response sender, consuming it. The sender is plain `consuming` because
+    /// this consumes it within the terminal's own region and never hands it onward — nothing here needs
+    /// the stronger guarantee. It is *not* that a folded sender cannot offer one: both box destructures
+    /// hand the sender out `consuming sending`.
     public func send<Sender: HTTPResponseSender & ~Copyable>(
         on sender: consuming Sender
     ) async throws where Sender.Writer: ~Copyable {

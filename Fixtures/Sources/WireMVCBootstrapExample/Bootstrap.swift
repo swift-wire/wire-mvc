@@ -81,10 +81,15 @@ package struct AppBootstrap {
     // itself. Being a Bootstrap method it's DI-capable (it could use `self.config`); the generated `@main`
     // registers it via `registerNotFound`, before `finalize()`, so it's a real route (the global tiers
     // fold into it). Without it, the plugin would synthesise a plain 404.
+    //
+    // Its sender is declared **`consuming sending`**, the other half of the acceptance case (see
+    // `PingController.pingSending` in the fallback fixture for the folded half). A `@NotFound` is the
+    // fold-less shape by construction: `registerNotFound` folds no middleware, so it can never be handed a
+    // transformed sender, which is why it was the one route this spelling could never work on.
     @NotFound
     @RawRoute
     package func handleNotFound<Sender: HTTPResponseSender & ~Copyable & SendableMetatype>(
-        responseSender: consuming Sender
+        responseSender: consuming sending Sender
     ) async throws where Sender.Writer: ~Copyable {
         var body = UniqueArray<UInt8>(copying: Array("no route here\n".utf8))
         try await responseSender.sendAndFinish(HTTPResponse(status: .notFound), buffer: &body)

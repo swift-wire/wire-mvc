@@ -1,16 +1,75 @@
 # A linear response-header registry — implementation brief
 
-> **Status:** designed, not started, and **deliberately the second choice.** It exists so that the
-> in-house option is written down rather than re-derived, not because it is the one to take. The same
-> outcome is available for one word upstream — `requestContext: consuming sending RequestContext` on
-> `HTTPServerRequestHandler.handle` — after which today's generated code compiles unchanged. **Start this
-> only if the proposal declines that annotation or stalls on it.** See *Abandon criteria* at the end.
+> **Status: built.** wire-mvc and wire-open-api are done and green; wire-mvc-examples' two call sites are
+> converted but cannot compile until the pin moves (see *Sequencing*). The upstream annotation was never
+> declined — it was never *asked*, and this was taken instead on the grounds that the API break is
+> affordable while there are no consumers. If `requestContext: consuming sending RequestContext` still
+> lands upstream later it is now a simplification, not a rescue.
+>
+> **What it cost, concretely:** every contributing middleware moved from `input.responseHeaders.add(…)`
+> to `input.contributing { headers in … } then: { … }`, and a transforming one's `withContents` lost the
+> registry from its `responded` branch. Ten middleware across four repositories.
+>
+> **What it bought, measured:** the second payoff this brief hoped for and could not promise —
+> **six allocations and 1536 bytes per request**, reproducible to the allocation, on a case where the
+> registry genuinely escapes. See *Measured*, and note that the brief predicted one allocation, not six.
 >
 > Reached from swift-wire's
 > [`RemainingSurfaceWork.md`](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/RemainingSurfaceWork.md)
 > (Phase 3, item 1) and wire-mvc-examples'
 > [`HummingbirdExamplesParity.md`](https://github.com/tachyonics/wire-mvc-examples/blob/main/Documentation/Notes/HummingbirdExamplesParity.md),
 > which carry the measurements this plan is a response to.
+
+## Where the plan was wrong
+
+Four things, and the first two matter because the plan's stated reasoning was *right about the conclusion
+and wrong about the cause* — which would have sent the next reader down the same path.
+
+1. **The destructure must not be closure-yielding.** The plan specified
+   `withContents(_ body: (sending Registry, consuming Base) -> R)`, reasoning that a tuple cannot carry
+   `sending`. True, but the real constraint is blunter: **a tuple may not have a noncopyable element at
+   all**, so no tuple spelling was ever available. More importantly the closure form is actively wrong
+   here. The front layer's `reader` and `responseSender` are its own `sending` parameters; inside a closure
+   they become *captures*, captures are task-isolated, and the box then refuses them — the exact region
+   merge this whole exercise exists to prevent, reintroduced one layer up.
+
+   What works is a `~Copyable` struct, ``WireMVCContextContents``, whose two fields the caller consumes
+   separately **in its own frame**. It hands the registry back still wrapped in ``WireDisconnected``, so no
+   `sending` annotation is needed to return it; unwrapping is the caller's `take()`, performed where the
+   reader and sender are still parameters.
+
+2. **`WireMVCContextContents` has to be `@frozen`.** Partial consumption of a non-frozen type is refused
+   *across a module boundary*, and every caller is across one — the code that destructures a courier is the
+   generated `_WireRoutes.swift` in the app's own module. An in-module spike will not surface this.
+
+3. **The registry lives in `pending` only — `responded` carries none.** The plan had it in both cases, as
+   the class was. That is not merely unnecessary but actively misleading: nothing drains a `responded`
+   box, so a field contributed after a gate responds could never reach any response. Leaving the registry
+   out of that case makes the mistake unwriteable instead of documented.
+
+   This forced the contribution API. A `mutating contribute` cannot reach a registry inside an enum
+   payload — mutating it there means consuming and reinitialising the storage, a partial reinitialisation
+   of `self`, which is rejected. A **consuming** method can, because it consumes `self` whole. So
+   contribution is `contributing(_:then:)`, built on the same `withContents` primitive a transforming
+   middleware uses.
+
+4. **The front layer's box is over `Base`, not over the courier.** The plan said "reconstruct a courier
+   from base + registry" in the terminal, which is right, but did not draw the consequence: with exactly
+   one registry the box cannot both own it *and* hold a courier that also carries it. So the box is built
+   over the unwrapped context, and global middleware now fold over `Handler.RequestContext.Base` — the same
+   context every other route's box already used. ``ResponseHeaderCarrying`` gained an
+   `init(base:responseHeaders:)` requirement to make the rebuild expressible.
+
+**The abandon criterion was not hit.** The step 3 round trip typechecks with no `unsafe` escape hatch
+beyond the ``WireDisconnected`` that was already there.
+
+### One compiler bug, worked around
+
+A wildcard-bound `consuming sending` noncopyable closure parameter — `withPendingContents { …, _ in }` —
+fails SIL verification before ownership lowering and **crashes the compiler** rather than diagnosing
+anything. It is reached by exactly one emission, the introspection mount, whose terminal wants none of what
+the box yields. Codegen names the parameter and consumes it explicitly instead; see `unusedRegistryLocal`.
+Verified on `6.4.x-snapshot-2026-08-01`, and worth re-testing before anyone tidies it back to `_`.
 
 ## What it buys
 
@@ -76,27 +135,32 @@ Every holder must own it or borrow it explicitly.
 
 ### 2. `WireMVCContext` carries it in `WireDisconnected`
 
-`WireDisconnected` stays internal, as it is inside the box today.
+`WireDisconnected` becomes **public** — generated code has to name it, since it is what
+``WireMVCContextContents`` hands the registry back in — but its `wrapped` storage stays internal, so
+`init(_:)` and `take()` remain the only way in and out and the type's safety argument survives. It also
+gains `withMutable`, so the box can contribute to the registry without consuming and reinitialising itself.
 
-The protocol requirement has to change. `ResponseHeaderCarrying.responseHeaders` (`RequestContextCourier.swift:12-20`)
-is a `{ get }`, which cannot hand out a linear value. It becomes a consuming destructure — and it must be
-the **closure-yielding** form, mirroring the box's `withPendingContents`, because `sending` cannot be
-applied to tuple elements (checked: `error: 'sending' cannot be applied to tuple elements`, so a
-`consuming func take() -> (sending ResponseHeaderRegistry, Base)` is not expressible):
+The protocol requirement changes. `ResponseHeaderCarrying.responseHeaders` is a `{ get }`, which cannot
+hand out a linear value. It becomes a consuming destructure returning a `~Copyable` struct — **not** the
+closure-yielding form this brief originally specified, for the two reasons in *Where the plan was wrong*:
 
 ```swift
-consuming func withContents<R: ~Copyable>(
-    _ body: (sending ResponseHeaderRegistry, consuming Base) async throws -> R
-) async throws -> R
+consuming func takeContents() -> WireMVCContextContents<Base>
+
+@frozen
+public struct WireMVCContextContents<Base: HTTPServerCapability.RequestContext & ~Copyable>: ~Copyable {
+    public var responseHeaders: WireDisconnected<ResponseHeaderRegistry>
+    public var base: Base
+}
 ```
 
 `takeBase()` folds into it. Folding rather than keeping both is the safer shape: a linear registry must be
-accounted for by *someone*, and a surviving `takeBase()` would let a caller drop it silently.
+accounted for by *someone*, and a surviving `takeBase()` would let a caller drop it silently. A second
+requirement, `init(base:responseHeaders:)`, is what lets the front layer put the courier back together.
 
-Both construction sites wrap: `RequestContextCourier.swift:100` and
-`WireMVCServerTransport.swift:339` — note the second builds its courier **inside an unstructured
-`Task`**, which is fine (the registry is constructed there, so it is disconnected at birth) but is worth
-re-checking after the change rather than assuming.
+Both construction sites wrap: `RequestContextCourier.swift` and `WireMVCServerTransport.swift:339` — the
+second builds its courier **inside an unstructured `Task`**, which is fine (the registry is constructed
+there, so it is disconnected at birth).
 
 ### 3. The front layer takes it out and puts it back
 
@@ -104,35 +168,62 @@ re-checking after the change rather than assuming.
 terminal calls `inner.handle(request:requestContext:reader:responseSender:)` — passing the **courier**
 onward, because it pins `Inner.RequestContext == RequestContext`.
 
-With a linear registry it must instead destructure the courier into (registry, base), build the box owning
-the registry, and then — in the terminal, from the box's own destructure — **reconstruct** a courier from
+With a linear registry it instead destructures the courier into (registry, base), builds the box owning the
+registry, and then — in the terminal, from the box's own destructure — **reconstructs** a courier from
 base + registry to hand to `inner.handle`. One re-wrap per request.
 
-This is the step most likely to be fiddly, because it is where a value has to make a round trip through two
-`~Copyable` containers without either being partially consumed on a throwing path.
+The pin changes with it: `Chain.Input` becomes
+`RequestResponseMiddlewareBox<Inner.RequestContext.Base, …>`, because the box cannot own the only registry
+*and* hold a courier that carries it. Global middleware therefore fold over the unwrapped context now, like
+every other tier.
 
-### 4. The box owns it and exposes mutating access
+This was expected to be the fiddly step and was not. What actually bit was one layer up: doing the
+destructure inside a closure, which is what the original brief prescribed and which silently turns the
+front layer's `reader` and `responseSender` into task-isolated captures.
 
-`RequestResponseMiddlewareBox.Storage` already carries `responseHeaders` in both cases; those become owned
-linear values, which the enum being `~Copyable` already permits.
+### 4. The box owns it, in `pending` only
 
-`public var responseHeaders: ResponseHeaderRegistry { get }` cannot survive. Replace it with mutating
-methods on the box:
+`Storage.pending` gains a `WireDisconnected<ResponseHeaderRegistry>`; `Storage.responded` loses its
+registry entirely and becomes `responded(request:)`. A responded box has written its head, and no drain is
+reachable from it — `respondingWith` drains on its way out, raw `responding` never drains, and a route
+terminal reaches its drain through `withPendingContents`, which does nothing in that state. Carrying a
+registry there would let a middleware contribute a field that could not reach any response.
+
+`public var responseHeaders: ResponseHeaderRegistry { get }` cannot survive. In its place, one primitive
+and one convenience:
 
 ```swift
-public mutating func contribute(_ contribution: ResponseHeaderContribution)
-public mutating func onSendResponseHeaders(_ contribute: @escaping () async throws -> [ResponseHeaderContribution])
+// the primitive — also what a transforming middleware already used
+consuming func withContents<R: ~Copyable>(
+    pending: (HTTPRequest, consuming RequestContext, consuming sending Reader,
+              consuming sending ResponseSender, consuming sending ResponseHeaderRegistry) async throws -> R,
+    responded: (HTTPRequest) async throws -> R      // no registry to thread
+) async throws -> R
+
+// the convenience — what almost every contributing middleware wants
+consuming func contributing<R: ~Copyable>(
+    _ contribute: (inout ResponseHeaderRegistry) throws -> Void,
+    then body: (consuming Self) async throws -> R
+) async throws -> R
 ```
 
-Both must work in **both** storage states — a gate responding must not destroy contributions for an
-always-run observer further in, which is a property the current box has and the rewrite must preserve.
-`intercept` receives `input` as `consuming`, so a middleware binds `var input = input` and calls these.
+`contributing` hands the registry over `inout`, so several fields — and conditional ones, which CORS has
+four of — are added in one pass rather than nesting one call deep each; `body` then receives the rebuilt
+box, so a middleware that short-circuits after contributing calls `respondingWith` on what it is given.
+`ResponseHeaderRegistry.with(_:)` is the transform spelling for the primitive path
+(`responseHeaders: responseHeaders.with(.set(…))`).
 
-`withPendingContents` and `withContents` gain a `sending ResponseHeaderRegistry` in their closure
-parameters, so a terminal receives the registry **from the destructure** rather than from a captured local.
-That threading *is* the fix — it is what makes the wrapper's two inputs both disconnected.
+**`contributing` is the one place the `responded` case is absorbed rather than spelled out**: there is no
+registry, so the closure is simply not called. That is deliberate — an always-run observer contributes
+unconditionally and cannot know a gate outside it already answered — and it is the single documented
+silence in the design, pinned by a test rather than left to the comment.
 
-`respondingWith` already consumes the box, so it owns the registry and needs no other change.
+`withPendingContents` gains the registry as its fifth yielded value, so a terminal receives it **from the
+destructure** rather than from a captured local. That threading *is* the fix: it is what makes the
+wrapper's two inputs both disconnected.
+
+`respondingWith` already consumes the box, so it owns the registry, drains it, and returns a `responded`
+box with none.
 
 ### 5. `ResponseHeaderApplyingSender` owns the registry
 
@@ -147,67 +238,129 @@ in the next, so do it early rather than last.
 
 ### 6. Codegen threads it instead of capturing it
 
-Every emitter that writes `let … = requestContext.responseHeaders` changes to the destructure, and the
-registry is then threaded to whoever consumes it — the box when there is one, the outcome or the wrapper
-when there is not:
+Every emitter that wrote `let … = requestContext.responseHeaders` now emits the destructure, and the
+registry is threaded to whoever consumes it — the box when there is one, the outcome or the wrapper when
+there is not. The two hand-rolled preambles (raw route, `@NotFound`) collapsed into one `registryLocal`
+parameter on `emitRegisterClosure`, which binds the registry from the courier on the fold-less path and
+from the **box's own destructure** on the folded one, under whichever name that terminal expects.
 
-- `RouteCodegen.swift:460` (typed, no middleware), `:480-481` (box construction), `:486` (typed terminal,
-  which already reads the registry **off the box** — that path is closest to the target shape already)
-- `RawRouteCodegen.swift:53` (raw, no middleware), `:167` (`@NotFound`)
-- `BootstrapGeneration.swift:301-302` (introspection mount), `:419` (synthesised 404), `:453` (405)
+Two knock-on corrections:
 
-The linchpin is the raw-route-with-middleware path: the wrapper must be built from the registry the box
-hands back, not from the closure's captured local. Everything else in this plan exists to make that line
-expressible.
+- **`rawArgument(forPrimitive:)` had to become path-aware.** It emitted `requestContext.takeBase()` for a
+  `.context` role unconditionally, including on the fold path where the terminal's `requestContext` is
+  *already* the base. Latent, because no fixture combined a raw route, a fold, and a context parameter.
+- **`middlewareFactoryConstructions`' `contextType`** moved from `Handler.RequestContext` to
+  `Handler.RequestContext.Base` for the global tier, following step 3. Both call sites now pass `.Base`,
+  so the parameter survives only to name the differing generic parameter.
+
+The linchpin is the raw-route-with-middleware path: the wrapper is built from the registry the box hands
+back, not from a captured local. Everything else in this plan exists to make that line expressible, and
+`WireMVCFallbackExample`'s `pingSending` is where it is now compiled.
 
 ### 7. `wire-open-api` follows, across a pin
 
-Not confined to wire-mvc. `WireOpenAPIGen/DirectDispatchEmission.swift` emits the same shapes — `:197` and
-`:205` read `requestContext.responseHeaders`, `:208` hands it to a box, `:138` hands it to
-`ResponseHeaderApplyingSender` — and `:244` constrains on `ResponseHeaderCarrying`, the protocol step 2
-changes.
+Not confined to wire-mvc. `WireOpenAPIGen/DirectDispatchEmission.swift` emits the same shapes, and its
+folded path needed the same correction as wire-mvc's: the wrapper takes the registry from
+`withPendingContents`'s fifth yielded value, not from a local read before the fold.
 
-So this is a source-breaking change across a repository boundary. Order: wire-mvc → wire-open-api → move
-the pin → wire-mvc-examples. The examples repo is the only place all of it is compiled together, which is
-also where the acceptance test belongs.
+**Sequencing.** wire-mvc → wire-open-api → move the pin → wire-mvc-examples. Both downstream repos pin
+wire-mvc from git `main`, so neither compiles against these changes until wire-mvc is pushed. Both were
+verified here with `swift package edit wire-mvc --path …`, which is a verification device and not a state
+to leave behind — the overrides were removed.
+
+> **Note for whoever moves the pin.** wire-mvc-examples does *not* build against wire-mvc `main` today, and
+> did not before this work: `SwiftHttpServerExample/Sources/SwiftHttpServerExample/CouchDB.swift` fails
+> with "property cannot be declared package because its type uses an internal type", from import-visibility
+> changes that landed after the revision the examples' `Package.resolved` pins. Confirmed pre-existing by
+> building both repos clean against wire-mvc `HEAD`. Fix it as part of moving the pin; it is not this
+> change's doing, and it will otherwise look like it is.
 
 ## The public break, stated plainly
 
-Middleware today write `input.responseHeaders.add(.set(…))`, and that works *only* because a class
-reference mutates through a borrow. After step 4 every such call site changes. In these repositories that
-is `CORSMiddleware.swift:82`, the examples' `LogRequests` / `AuditGate` / `RequireAPIKey` /
-`ResponseDefaults` / `ServeStaticFiles`, and the fixtures. Outside them it is every middleware anyone has
-written.
+Middleware used to write `input.responseHeaders.add(.set(…))`, and that worked *only* because a class
+reference mutates through a borrow. Every such call site becomes:
 
-This is the honest cost of the plan and the main reason it ranks second. The upstream annotation breaks
-nothing.
+```swift
+return try await input.contributing { headers in
+    headers.add(.set(.init("x-served-by")!, "wire-mvc"))
+} then: { input in
+    try await next(input)
+}
+```
+
+Two lines become six, and that is the honest cost. It buys the thing a shorter spelling could not: there
+is no way to contribute to a box that has already responded, because such a box holds no registry.
+
+The realised blast radius was smaller than this brief feared: `CORSMiddleware`, three fixture middleware,
+three in wire-mvc's own tests, wire-open-api's fixture, and wire-mvc-examples' `ResponseDefaults` and
+`MultiPartExport`. The examples' `LogRequests` / `AuditGate` / `RequireAPIKey` / `ServeStaticFiles`, named
+here as casualties, never touched the registry at all — the list was written from memory rather than from
+a grep. Outside these repositories it is still every middleware anyone has written.
+
+A transforming middleware pays a second, smaller change: `withContents`'s `pending` branch gained the
+registry as a trailing parameter, replacing the local read before the destructure, and its `responded`
+branch takes only the request — there is nothing left to thread.
 
 ## Verification
 
-The acceptance test does not exist today, which is how the constraint went unnoticed: add a fixture raw
-route declaring `consuming sending Sender`, **both** with and without a middleware fold. It must compile.
-Nothing in `Fixtures` currently spells `sending` on a sender, and `notFoundHandlerRegistersAsFallback`
-spells it only in a string it never compiles — correct that test at the same time, since it becomes true.
+The acceptance test did not exist, which is how the constraint went unnoticed. It does now, in both halves,
+and **compiling is the test**:
 
-The regression net already exists and should stay green untouched: the suites that pin contributions
-reaching raw routes, the authored fallback, the synthesised 404 and the 405 are exactly the paths this
-rewrite moves ownership through. `WireMVCFallbackExample` matters most — it is the fixture whose whole
-point is the synthesised 404 nobody declares.
+- `WireMVCFallbackExample`'s `PingController.pingSending` — a `@RawRoute` declaring
+  `consuming sending Sender` **behind a middleware fold**, on the controller that folds `ControllerStamp`.
+  This is the linchpin: the generated terminal reads
+  `ResponseHeaderApplyingSender(wrapping: responseSender, registry: wireMVCResponseHeaderRegistry)` where
+  the registry is the box destructure's fifth value, not a captured local.
+- `WireMVCBootstrapExample`'s `handleNotFound` — the same spelling **with no fold**. A `@NotFound` folds no
+  middleware by construction, so its sender is always the untransformed one; it was the route this could
+  never work on.
 
-Measure afterwards rather than assuming: a linear struct registry should remove **one heap allocation per
-request** against today's class, which is Phase 5 territory in swift-wire's
-[`RemainingSurfaceWork.md`](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/RemainingSurfaceWork.md). If
-it does, this plan has a second payoff that the upstream annotation does not, and that may change the
-ranking — but only if measured, and the `.deferred` closure box and the `overflow` array are still there to
-allocate when used.
+`notFoundHandlerRegistersAsFallback` still asserts only on rendered source — it parses that spelling and
+never compiles it. It is no longer advertising something impossible, and its doc comment now points at the
+fixture that does compile it.
 
-## Abandon criteria
+The regression net stayed green untouched: 309 tests across wire-mvc and its fixtures, plus wire-open-api's.
+The only test edits were golden-source expectations for the new emission.
 
-- **Upstream accepts `consuming sending RequestContext`.** Delete this note; today's code reaches the same
-  parity with no redesign and nothing breaking.
-- **The round trip in step 3 does not typecheck cleanly.** If the courier cannot be rebuilt without an
-  `unsafe` escape hatch, stop — the plan's whole claim is that it restores a *checked* property, and one
-  that needs laundering to work is the unsound version wearing a hat.
+### Measured: six allocations and 1536 bytes per request
+
+Counted with wire-mvc-performance's `malloc` interposer, using its slope method — each case run at 22,000
+and 62,000 requests, the difference divided by 40,000, so process startup cancels. Two matched pairs, two
+replicates, **identical to the allocation** across both:
+
+| pair | before | after | saved |
+|---|---|---|---|
+| `+courier` − `trie-only` | +6.00 allocs, +1536 B | +0.00, +0 B | **−6.00 allocs, −1536 B** |
+| `courier-headers` − `routed-match` | +36.00 allocs, +3924 B | +30.00, +2388 B | **−6.00 allocs, −1536 B** |
+
+The baselines are the control and they did not move: `trie-only` measures 48.00 allocations and
+`routed-match` 66.00 on *both* builds, byte-identical. Nothing outside the courier path changed.
+
+**The second pair is the one that matters, and it is why this is trustworthy.** wire-mvc-performance's
+README warned that its `+registry` case had stopped measuring the registry — it never escaped the handler,
+so the optimiser was free to promote it, and a struct registry would have measured "free" for the wrong
+reason. `courier-headers` genuinely uses it: it contributes a field, drains it, and wraps the sender. The
+saving there is **the same 6.00**, not a smaller one. So this is the allocation going away, not the
+optimiser deleting work nobody asked for.
+
+**It is six, and the brief predicted one.** The class instance is one of them; what the other five were is
+*not* established by this measurement, and the obvious guess is wrong — an extra async frame for
+``WireMVCContextHandler`` would still be paid after the change, since that type is untouched and the
+after-figure is zero. Something about a class reference riding in the courier cost five more allocations
+than the instance itself. Worth attributing before the number is quoted as a design argument; the honest
+claim today is the delta, which is measured, and not the mechanism, which is not.
+
+For context, `courier-headers` still costs +30 allocations over `routed-match` after this change. The
+registry was never the expensive part of contributing a header — the README puts `HTTPFields` insertion at
+3–4 allocations per field, and that is untouched here.
+
+## Abandon criteria — both retired
+
+- **Upstream accepts `consuming sending RequestContext`.** Not asked, so not declined. If it lands later it
+  no longer rescues anything; it would let the courier hold the registry directly and let this note's
+  machinery be deleted, which is a simplification worth taking but not urgent.
+- **The round trip in step 3 does not typecheck cleanly.** It does, with no `unsafe` beyond the
+  ``WireDisconnected`` that was already in the design.
 
 ## What it does not buy
 

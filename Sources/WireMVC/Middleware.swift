@@ -41,9 +41,15 @@ where
             requestContext: RequestContext,
             reader: WireDisconnected<Reader>,
             responseSender: WireDisconnected<ResponseSender>,
-            responseHeaders: ResponseHeaderRegistry
+            responseHeaders: WireDisconnected<ResponseHeaderRegistry>
         )
-        case responded(request: HTTPRequest, responseHeaders: ResponseHeaderRegistry)
+        /// **No registry.** Once a middleware has written the response the head is on the wire, and
+        /// nothing drains the registry again — ``respondingWith(_:)`` drains on its way out, raw
+        /// ``responding(_:)`` never drains, and a route terminal reaches its drain through
+        /// ``withPendingContents(_:)``, which does nothing in this state. Carrying one here would let a
+        /// middleware contribute a field that could not reach any response; leaving it out makes that
+        /// unwriteable rather than documented.
+        case responded(request: HTTPRequest)
     }
 
     var storage: Storage
@@ -52,15 +58,14 @@ where
         self.storage = storage
     }
 
-    /// Still to be handled: the handler inputs and the one-shot sender. Takes the reader/sender as raw
-    /// `consuming sending` values and wraps them; the generated `.pending(reader: reader, …)` call site is
-    /// unchanged from when this was an enum case.
+    /// Still to be handled: the handler inputs, the one-shot sender and the registry. Takes the
+    /// reader/sender and the registry as raw `consuming sending` values and wraps them.
     public static func pending(
         request: HTTPRequest,
         requestContext: consuming RequestContext,
         reader: consuming sending Reader,
         responseSender: consuming sending ResponseSender,
-        responseHeaders: ResponseHeaderRegistry
+        responseHeaders: consuming sending ResponseHeaderRegistry
     ) -> Self {
         Self(
             .pending(
@@ -68,14 +73,15 @@ where
                 requestContext: requestContext,
                 reader: WireDisconnected(reader),
                 responseSender: WireDisconnected(responseSender),
-                responseHeaders: responseHeaders
+                responseHeaders: WireDisconnected(responseHeaders)
             )
         )
     }
 
-    /// A middleware has written the response; the sender is consumed. The request is kept for observation.
-    public static func responded(request: HTTPRequest, responseHeaders: ResponseHeaderRegistry) -> Self {
-        Self(.responded(request: request, responseHeaders: responseHeaders))
+    /// A middleware has written the response; the sender is consumed and the registry is spent. The
+    /// request is kept for observation.
+    public static func responded(request: HTTPRequest) -> Self {
+        Self(.responded(request: request))
     }
 
     /// A borrowing peek at the request — readable in either state — so a middleware can inspect it
@@ -83,20 +89,7 @@ where
     public var peekedRequest: HTTPRequest {
         switch storage {
         case .pending(let request, _, _, _, _): return request
-        case .responded(let request, _): return request
-        }
-    }
-
-    /// Where a middleware contributes response header fields — see ``ResponseHeaderRegistry``.
-    ///
-    /// Borrowing and available in **both** states, like ``peekedRequest``: a middleware registers on the way
-    /// in, without consuming the box, and the registry survives a gate responding so an always-run observe
-    /// middleware downstream can still contribute. A class, so reaching it borrowing is enough to write to
-    /// it — and so a transforming middleware rebuilding the box threads the same one rather than a copy.
-    public var responseHeaders: ResponseHeaderRegistry {
-        switch storage {
-        case .pending(_, _, _, _, let responseHeaders): return responseHeaders
-        case .responded(_, let responseHeaders): return responseHeaders
+        case .responded(let request): return request
         }
     }
 
@@ -105,6 +98,41 @@ where
         switch storage {
         case .pending: return true
         case .responded: return false
+        }
+    }
+
+    /// Contribute response header fields and carry on — the shape almost every contributing middleware
+    /// wants, over the same primitive ``withContents(pending:responded:)`` a transforming one uses.
+    ///
+    /// `contribute` is handed the registry `inout`, so several fields (and conditional ones — a CORS
+    /// policy contributes up to four, each behind its own test) are added in one pass rather than nested
+    /// one call deep each. `body` then receives the rebuilt box, so a middleware that wants to
+    /// short-circuit after contributing can call ``respondingWith(_:)`` on what it is given.
+    ///
+    /// > Note: when the box is already `responded` there is no registry to contribute to — the response
+    /// > is written — so `contribute` is **not called** and `body` receives the `responded` box unchanged.
+    /// > This is the one place that case is absorbed rather than spelled out, which is why it is stated
+    /// > here: an always-run observer contributes unconditionally and cannot know a gate outside it
+    /// > already answered. Reach for ``withContents(pending:responded:)`` to handle the two apart.
+    public consuming func contributing<Return: ~Copyable>(
+        _ contribute: (inout ResponseHeaderRegistry) throws -> Void,
+        then body: nonisolated(nonsending) (consuming Self) async throws -> Return
+    ) async throws -> Return {
+        switch consume storage {
+        case .pending(let request, let requestContext, let reader, let responseSender, let responseHeaders):
+            var registry = responseHeaders.take()
+            try contribute(&registry)
+            return try await body(
+                .pending(
+                    request: request,
+                    requestContext: requestContext,
+                    reader: reader.take(),
+                    responseSender: responseSender.take(),
+                    responseHeaders: registry
+                )
+            )
+        case .responded(let request):
+            return try await body(.responded(request: request))
         }
     }
 
@@ -119,11 +147,11 @@ where
         _ write: nonisolated(nonsending) (consuming ResponseSender) async throws -> Void
     ) async throws -> Self {
         switch consume storage {
-        case .pending(let request, _, _, let responseSender, let responseHeaders):
+        case .pending(let request, _, _, let responseSender, _):
             try await write(responseSender.take())
-            return .responded(request: request, responseHeaders: responseHeaders)
-        case .responded(let request, let responseHeaders):
-            return .responded(request: request, responseHeaders: responseHeaders)
+            return .responded(request: request)
+        case .responded(let request):
+            return .responded(request: request)
         }
     }
 
@@ -133,61 +161,80 @@ where
     /// A gate short-circuits the terminal, so the terminal's drain never runs — without this, every
     /// middleware-contributed field would vanish on exactly the paths that most want them (a `401` wanting
     /// its `WWW-Authenticate`, a redirect wanting a session cookie set on the way out). Contributions
-    /// registered by middleware *outside* this one are included; ones further in never ran.
+    /// registered by middleware *outside* this one are included; ones further in never ran, and after this
+    /// there is no registry left to contribute to.
     public consuming func respondingWith(_ outcome: consuming WireMVCOutcome) async throws -> Self {
         switch consume storage {
         case .pending(let request, _, _, let responseSender, let responseHeaders):
+            let registry = responseHeaders.take()
             var resolved = outcome
             resolved.headerFields = WireMVCResponseHeaders.resolved(
                 returned: resolved.headerFields,
-                middleware: try await responseHeaders.drain()
+                middleware: try await registry.drain()
             )
             try await resolved.send(on: responseSender.take())
-            return .responded(request: request, responseHeaders: responseHeaders)
-        case .responded(let request, let responseHeaders):
-            return .responded(request: request, responseHeaders: responseHeaders)
+            return .responded(request: request)
+        case .responded(let request):
+            return .responded(request: request)
         }
     }
 
     /// The generated terminal's destructure: run `handler` with the pending contents, or do nothing if a
-    /// middleware already responded. The reader/sender are handed out `sending` (see ``WireDisconnected``),
-    /// so the terminal can forward them to another `HTTPServerRequestHandler`.
+    /// middleware already responded. The reader/sender and the registry are handed out `sending` (see
+    /// ``WireDisconnected``), so the terminal can forward them to another `HTTPServerRequestHandler` — and
+    /// so the registry the terminal wraps its sender with is the one the box hands back rather than a
+    /// captured local, which is what keeps the composite disconnected.
     public consuming func withPendingContents(
         _ handler:
             nonisolated(nonsending) (
                 HTTPRequest,
                 consuming RequestContext,
                 consuming sending Reader,
-                consuming sending ResponseSender
+                consuming sending ResponseSender,
+                consuming sending ResponseHeaderRegistry
             ) async throws -> Void
     ) async throws {
         switch consume storage {
-        case .pending(let request, let requestContext, let reader, let responseSender, _):
-            try await handler(request, requestContext, reader.take(), responseSender.take())
+        case .pending(let request, let requestContext, let reader, let responseSender, let responseHeaders):
+            try await handler(
+                request,
+                requestContext,
+                reader.take(),
+                responseSender.take(),
+                responseHeaders.take()
+            )
         case .responded:
             break
         }
     }
 
-    /// A transforming middleware's destructure — the structured replacement for pattern-matching the box
-    /// directly (the cases are internal). Consumes the box into its raw contents, handing the reader/sender
-    /// out `sending`, and returns whatever each branch's `next`-based body produces: `pending` rebuilds and
-    /// forwards a (possibly retyped) box, `responded` forwards the already-written state.
+    /// The primitive both a transforming middleware and ``contributing(_:then:)`` are built on — the
+    /// structured replacement for pattern-matching the box directly (the cases are internal). Consumes the
+    /// box into its raw contents, handing the reader/sender and the registry out `sending`, and returns
+    /// whatever each branch's `next`-based body produces: `pending` rebuilds and forwards a (possibly
+    /// retyped) box, `responded` forwards the already-written state, which carries no registry to thread.
     public consuming func withContents<Return: ~Copyable>(
         pending:
             nonisolated(nonsending) (
                 HTTPRequest,
                 consuming RequestContext,
                 consuming sending Reader,
-                consuming sending ResponseSender
+                consuming sending ResponseSender,
+                consuming sending ResponseHeaderRegistry
             ) async throws -> Return,
         responded:
             nonisolated(nonsending) (HTTPRequest) async throws -> Return
     ) async throws -> Return {
         switch consume storage {
-        case .pending(let request, let requestContext, let reader, let responseSender, _):
-            return try await pending(request, requestContext, reader.take(), responseSender.take())
-        case .responded(let request, _):
+        case .pending(let request, let requestContext, let reader, let responseSender, let responseHeaders):
+            return try await pending(
+                request,
+                requestContext,
+                reader.take(),
+                responseSender.take(),
+                responseHeaders.take()
+            )
+        case .responded(let request):
             return try await responded(request)
         }
     }

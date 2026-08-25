@@ -57,9 +57,10 @@ struct UsersController: Sendable {
 
     // A raw (streaming) route: `@RawRoute` hands the handler the response sender verbatim — no decode,
     // no encode — and it writes the response itself. Generic over the sender (the builder's associated
-    // type); takes only the sender it needs. The sender is `consuming` (not `consuming sending`) so the
-    // handler can also be reached through a middleware fold, where it arrives from the box's
-    // `withContents` as a plain `consuming` value.
+    // type); takes only the sender it needs. The sender is plain `consuming`, which is the permissive
+    // spelling: `consuming sending` also works now, through a fold or not (see
+    // `WireMVCFallbackExample`'s `pingSending`), but a handler that has no need to send the sender onward
+    // need not ask for the stronger guarantee.
     @Get("/events/stream")
     @RawRoute
     func events<Sender: HTTPResponseSender & ~Copyable & SendableMetatype>(

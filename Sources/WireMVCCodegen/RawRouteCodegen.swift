@@ -32,7 +32,7 @@ extension RouteBlockGenerator {
         path: String,
         middleware: [String]
     ) -> String? {
-        guard let mapping = rawCallArgs(function) else { return nil }
+        guard let mapping = rawCallArgs(function, foldsMiddleware: !middleware.isEmpty) else { return nil }
         // A scoped controller — or any variant witness (including a seedless app-`@Singleton` `@TestScopable`
         // one) — reconstructs its subject per request, so the raw call dispatches on `subjectExpression`
         // (`wireMVCController`) after the scope-entry prologue, not the held `_wireSubject`; a production
@@ -46,20 +46,19 @@ extension RouteBlockGenerator {
         // handler itself doesn't take it.
         let needsRequest = mapping.used.contains("request") || scopedSeedType != nil || keyedScopeEntry != nil
         // A raw handler writes its own head, so there is no outcome to inject contributions into — its
-        // sender is wrapped instead, and the registry is read off the courier before anything consumes it.
-        // The context binding is *always* needed for that read, even when the handler doesn't take one.
-        // On the fold path the fold already binds it from the courier; only the fold-less path needs it here.
-        let rawPreamble =
-            middleware.isEmpty ? "let \(responseHeaderRegistryLocal) = requestContext.responseHeaders\n" : ""
+        // sender is wrapped instead. The registry the wrapper takes comes from the courier on the fold-less
+        // path and from the *box's own destructure* on the folded one; `emitRegisterClosure` binds it under
+        // `registryLocal` either way, so this side only has to name it.
         return emitRegister(
             verb: verb,
             path: path,
             middleware: middleware,
-            hoistedPreamble: (foldThreadsDoubles ? scopeEntryPreamble : "") + rawPreamble,
+            hoistedPreamble: foldThreadsDoubles ? scopeEntryPreamble : "",
             requestName: needsRequest ? "request" : "_",
             contextName: "requestContext",
             parametersName: mapping.used.contains("pathParameters") ? "pathParameters" : "_",
             readerName: mapping.used.contains("reader") ? "reader" : "_",
+            registryLocal: responseHeaderRegistryLocal,
             terminalBody: terminalBody
         )
     }
@@ -69,7 +68,8 @@ extension RouteBlockGenerator {
     /// used. Shared by `rawRouteBlock` (routes) and `notFoundRegistration` (the `@NotFound` fallback).
     /// `nil` with a diagnostic on an unbindable parameter or a missing response sender.
     private mutating func rawCallArgs(
-        _ function: FunctionDeclSyntax
+        _ function: FunctionDeclSyntax,
+        foldsMiddleware: Bool = false
     ) -> (callArgs: [String], used: Set<String>)? {
         let params = Array(function.signature.parameterClause.parameters)
         var callArgs: [String] = []
@@ -106,7 +106,7 @@ extension RouteBlockGenerator {
                 let base = strippingOwnership(param.type.trimmedDescription)
                 let wrapsSender = primitive == "responseSender" && genericRoles[base] == .sender
                 callArgs.append(
-                    "\(rawArgumentLabel(param))\(rawArgument(forPrimitive: primitive, wrapsSender: wrapsSender))"
+                    "\(rawArgumentLabel(param))\(rawArgument(forPrimitive: primitive, wrapsSender: wrapsSender, foldsMiddleware: foldsMiddleware))"
                 )
                 used.insert(primitive)
             }
@@ -133,7 +133,9 @@ extension RouteBlockGenerator {
                     )
                     return nil
                 }
-                callArgs.append("\(rawArgumentLabel(param))\(rawArgument(forPrimitive: primitive, wrapsSender: true))")
+                callArgs.append(
+                    "\(rawArgumentLabel(param))\(rawArgument(forPrimitive: primitive, wrapsSender: true, foldsMiddleware: foldsMiddleware))"
+                )
                 used.insert(primitive)
             }
         }
@@ -161,14 +163,14 @@ extension RouteBlockGenerator {
         return emitRegisterClosure(
             registerCall: "builder.registerNotFound",
             middleware: [],
-            // The fallback is a raw route like any other, so it binds the registry and wraps its sender —
-            // which is what lets a global middleware's header reach a 404. It must be raw (see
-            // `notFoundNotRaw`), so without this it is the one response that could never carry one.
-            hoistedPreamble: "let \(responseHeaderRegistryLocal) = requestContext.responseHeaders\n",
             requestName: mapping.used.contains("request") ? "request" : "_",
             contextName: "requestContext",
             parametersName: "_",
             readerName: mapping.used.contains("reader") ? "reader" : "_",
+            // The fallback is a raw route like any other, so it binds the registry and wraps its sender —
+            // which is what lets a global middleware's header reach a 404. It must be raw (see
+            // `notFoundNotRaw`), so without this it is the one response that could never carry one.
+            registryLocal: responseHeaderRegistryLocal,
             terminalBody:
                 "\(effectMarkers(of: function))\(subjectExpression).\(function.name.text)(\(mapping.callArgs.joined(separator: ", ")))"
         )
@@ -223,9 +225,16 @@ extension RouteBlockGenerator {
     ///
     /// Kept separate from ``rawPrimitive(forRoleName:)`` because that one's result is also the *role*
     /// bookkeeping (`used`), which the missing-sender diagnostic keys on.
-    private func rawArgument(forPrimitive primitive: String, wrapsSender: Bool) -> String {
+    private func rawArgument(
+        forPrimitive primitive: String,
+        wrapsSender: Bool,
+        foldsMiddleware: Bool
+    ) -> String {
         switch primitive {
-        case "requestContext": return "requestContext.takeBase()"
+        // Through a fold the terminal's context binding is *already* the app's real context — the box was
+        // built over it — so there is nothing left to unwrap. Only the fold-less path still holds the
+        // courier, and there it comes out of the same destructure the registry does.
+        case "requestContext": return foldsMiddleware ? "requestContext" : "\(contentsLocal).base"
         case "responseSender" where wrapsSender:
             return "ResponseHeaderApplyingSender(wrapping: responseSender, registry: \(responseHeaderRegistryLocal))"
         default: return primitive
