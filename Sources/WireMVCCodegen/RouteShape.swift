@@ -1,4 +1,4 @@
-public import SwiftSyntax
+import SwiftSyntax
 
 // The route-shape rules both generated surfaces read: the witness (`RouteCodegen`) and the per-controller
 // typed client (`ControllerClientGeneration`). They are free functions rather than methods on either

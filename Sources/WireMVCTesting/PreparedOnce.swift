@@ -1,4 +1,4 @@
-public import Synchronization
+import Synchronization
 
 // The `prepare()` pre-step runs once per *process*, which is free in a program (the generated `@main`
 // calls it once and serves) and is not free in a test bundle: a suite trait builds the app afresh at every

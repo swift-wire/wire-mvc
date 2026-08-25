@@ -1,5 +1,5 @@
 public import Foundation
-public import HTTPTypes
+import HTTPTypes
 
 // How a route encodes and decodes values — the settings both a `@JSONBody` and a `@JSONResponse` need,
 // and which an OpenAPI operation needs too.

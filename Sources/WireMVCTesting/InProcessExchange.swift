@@ -1,5 +1,5 @@
 import AsyncAlgorithms
-public import Foundation
+import Foundation
 public import HTTPTypes
 import Synchronization
 

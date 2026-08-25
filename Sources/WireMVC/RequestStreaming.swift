@@ -1,5 +1,5 @@
 public import AsyncStreaming
-public import BasicContainers
+import BasicContainers
 public import HTTPTypes
 
 // The reader-body request tier — the mirror of `StreamingResponses.swift`, and much smaller than it.
@@ -96,7 +96,11 @@ extension WireMVCRequest {
                     }
                     return finalElement != nil
                 }
-            } catch let error as EitherError<Reader.ReadFailure, any Error> {
+            } catch {
+                // The bound `error` is the `EitherError<Reader.ReadFailure, any Error>` `read` declares —
+                // it is the only throwing call in the `do`, so its typed throw is the block's, and naming
+                // the type in the pattern was a cast that could not fail.
+                //
                 // **Unwrapped, deliberately.** `read` reports both a transport failure and anything the
                 // consume closure threw as one `EitherError`, and a wrapped error is invisible to
                 // `@ErrorResponse(MyError.self, …)`: a route can only map a type it can name. Letting the

@@ -6,7 +6,7 @@ import ServiceLifecycle
 package import Wire
 package import WireMVC
 package import WireMVCMiddleware
-package import WireMVCRouter
+import WireMVCRouter
 
 // A second `@WireMVCBootstrap` app whose whole point is what it *does not* declare: no `@NotFound`.
 //

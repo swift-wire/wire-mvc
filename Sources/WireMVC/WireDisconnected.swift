@@ -18,13 +18,18 @@ struct WireDisconnected<Value: ~Copyable>: ~Copyable, Sendable {
     nonisolated(unsafe) var wrapped: Value
 
     /// Wrap an already-disconnected (`sending`) value.
+    ///
+    /// Both accesses are marked `unsafe` because `wrapped` is `nonisolated(unsafe)`, and under
+    /// `.strictMemorySafety()` reaching an unsafe declaration has to say so at the use site. The safety
+    /// argument is the one the type exists for and is stated above: the value arrives `sending`, so no
+    /// other isolation domain holds it, and it leaves the same way.
     init(_ value: consuming sending Value) {
-        self.wrapped = value
+        unsafe self.wrapped = value
     }
 
     /// Consume the wrapper, handing the value back out as `sending` (still disconnected).
     consuming func take() -> sending Value {
-        let value = consume wrapped
+        let value = unsafe consume wrapped
         return value
     }
 }
