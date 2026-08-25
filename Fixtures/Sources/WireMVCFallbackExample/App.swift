@@ -38,8 +38,11 @@ where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields?, Sender.Wr
         input: consuming Input,
         next: (consuming NextInput) async throws -> Return
     ) async throws -> Return {
-        input.responseHeaders.add(.set(.init("x-stamp")!, "global"))
-        return try await next(input)
+        return try await input.contributing { headers in
+            headers.add(.set(.init("x-stamp")!, "global"))
+        } then: { input in
+            try await next(input)
+        }
     }
 }
 
@@ -58,6 +61,23 @@ package struct PingController: Sendable {
     @JSONResponse
     package func ping() -> (headers: HTTPFields, body: Pong) {
         ([.cacheControl: "max-age=5"], Pong(ok: true))
+    }
+
+    /// The acceptance case for the linear response-header registry, in its harder half: a `@RawRoute`
+    /// declaring its sender **`consuming sending`** while sitting *behind a middleware fold*, so the
+    /// sender it receives is the untransformed one wrapped in `ResponseHeaderApplyingSender`.
+    ///
+    /// This is the spelling that could not compile before. The wrapper merged a task-isolated registry into
+    /// an otherwise-disconnected sender, which closed the region; the registry is now linear and reaches
+    /// the terminal from the box's own destructure, so the composite stays disconnected. Nothing asserts on
+    /// it at runtime beyond the suite below — **compiling is the test**, which is exactly what was missing
+    /// when the constraint went unnoticed.
+    @Get("/sending")
+    @RawRoute
+    package func pingSending<Sender: HTTPResponseSender & ~Copyable & SendableMetatype>(
+        responseSender: consuming sending Sender
+    ) async throws where Sender.Writer: ~Copyable {
+        try await WireMVCOutcome.status(.ok).send(on: responseSender)
     }
 }
 
@@ -137,16 +157,19 @@ where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields?, Sender.Wr
         input: consuming Input,
         next: (consuming NextInput) async throws -> Return
     ) async throws -> Return {
-        input.responseHeaders.add(.setIfAbsent(.init("x-stamp")!, "gate"))
-        guard input.peekedRequest.path?.hasPrefix("/gated") == true else {
-            return try await next(input)
+        return try await input.contributing { headers in
+            headers.add(.setIfAbsent(.init("x-stamp")!, "gate"))
+        } then: { input in
+            guard input.peekedRequest.path?.hasPrefix("/gated") == true else {
+                return try await next(input)
+            }
+            // Responds *with an outcome*, so whatever middleware contributed is drained into it. The
+            // challenge is the route's own; the `x-stamp` above it comes from the global tier.
+            let responded = try await input.respondingWith(
+                .status(.unauthorized, headerFields: [.wwwAuthenticate: #"Bearer realm="fixture""#])
+            )
+            return try await next(responded)
         }
-        // Responds *with an outcome*, so whatever middleware contributed is drained into it. The challenge
-        // is the route's own; the `x-stamp` above it comes from the global tier.
-        let responded = try await input.respondingWith(
-            .status(.unauthorized, headerFields: [.wwwAuthenticate: #"Bearer realm="fixture""#])
-        )
-        return try await next(responded)
     }
 }
 
@@ -173,7 +196,10 @@ where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields?, Sender.Wr
         input: consuming Input,
         next: (consuming NextInput) async throws -> Return
     ) async throws -> Return {
-        input.responseHeaders.add(.set(.init("x-controller")!, "controller"))
-        return try await next(input)
+        return try await input.contributing { headers in
+            headers.add(.set(.init("x-controller")!, "controller"))
+        } then: { input in
+            try await next(input)
+        }
     }
 }

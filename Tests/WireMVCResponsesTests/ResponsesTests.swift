@@ -509,7 +509,7 @@ struct ResponseHeaderRegistryTests {
     /// without this the overflow branch is dead code that happens to compile.
     @Test(arguments: [1, 4, 5, 9])
     func everyRegistrationSurvivesRegardlessOfCount(_ count: Int) async throws {
-        let registry = ResponseHeaderRegistry()
+        var registry = ResponseHeaderRegistry()
         for index in 0..<count { registry.add(.set(name(index), "\(index)")) }
 
         var fields = HTTPFields()
@@ -524,7 +524,7 @@ struct ResponseHeaderRegistryTests {
     /// boundary, which is exactly where an off-by-one in the backwards walk would hide.
     @Test(arguments: [2, 4, 5, 7])
     func theFirstRegistrationWinsAcrossTheOverflowBoundary(_ count: Int) async throws {
-        let registry = ResponseHeaderRegistry()
+        var registry = ResponseHeaderRegistry()
         let contested = HTTPField.Name("x-contested")!
         for index in 0..<count { registry.add(.set(contested, "\(index)")) }
 
@@ -538,18 +538,18 @@ struct ResponseHeaderRegistryTests {
     /// past the inline capacity, and including a deferred contribution among the immediate ones.
     @Test
     func bothDrainSpellingsAgree() async throws {
-        func populate(_ registry: ResponseHeaderRegistry) {
+        func populate(_ registry: inout ResponseHeaderRegistry) {
             for index in 0..<6 { registry.add(.set(name(index), "\(index)")) }
             registry.onSend { [.set(HTTPField.Name("x-deferred")!, "late")] }
         }
 
-        let viaInto = ResponseHeaderRegistry()
-        populate(viaInto)
+        var viaInto = ResponseHeaderRegistry()
+        populate(&viaInto)
         var fields = HTTPFields()
         try await viaInto.drain(into: &fields)
 
-        let viaArray = ResponseHeaderRegistry()
-        populate(viaArray)
+        var viaArray = ResponseHeaderRegistry()
+        populate(&viaArray)
         var expected = HTTPFields()
         for contribution in try await viaArray.drain() {
             WireMVCResponseHeaders.apply(contribution, to: &expected)
@@ -623,7 +623,7 @@ struct RawRouteFramingTests {
     @Test
     func handlerFieldsSurviveAContribution() async throws {
         let record = RecordedResponse()
-        let registry = ResponseHeaderRegistry()
+        var registry = ResponseHeaderRegistry()
         registry.add(.set(.init("x-trace")!, "abc"))
         let sender = ResponseHeaderApplyingSender(
             wrapping: RecordingSender(record: record),
@@ -644,7 +644,7 @@ struct RawRouteFramingTests {
     @Test
     func repeatedHandlerFieldsSurviveAContribution() async throws {
         let record = RecordedResponse()
-        let registry = ResponseHeaderRegistry()
+        var registry = ResponseHeaderRegistry()
         registry.add(.set(.init("x-trace")!, "abc"))
         var fields = HTTPFields()
         fields.append(HTTPField(name: .setCookie, value: "a=1"))
@@ -663,7 +663,7 @@ struct RawRouteFramingTests {
     @Test
     func setIfAbsentDefersToAHandlerWrittenField() async throws {
         let record = RecordedResponse()
-        let registry = ResponseHeaderRegistry()
+        var registry = ResponseHeaderRegistry()
         registry.add(.setIfAbsent(.contentType, "application/json"))
         registry.add(.setIfAbsent(.cacheControl, "no-store"))
         let sender = ResponseHeaderApplyingSender(
@@ -684,7 +684,7 @@ struct RawRouteFramingTests {
     @Test
     func setOverridesAHandlerWrittenField() async throws {
         let record = RecordedResponse()
-        let registry = ResponseHeaderRegistry()
+        var registry = ResponseHeaderRegistry()
         registry.add(.set(.cacheControl, "public"))
         let sender = ResponseHeaderApplyingSender(
             wrapping: RecordingSender(record: record),
@@ -718,7 +718,7 @@ struct RawRouteFramingTests {
     @Test
     func contributedHeadersStillReachARawHead() async throws {
         let record = RecordedResponse()
-        let registry = ResponseHeaderRegistry()
+        var registry = ResponseHeaderRegistry()
         registry.add(.set(.init("x-trace")!, "abc"))
         let sender = ResponseHeaderApplyingSender(
             wrapping: RecordingSender(record: record),

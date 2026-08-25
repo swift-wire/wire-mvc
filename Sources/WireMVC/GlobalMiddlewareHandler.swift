@@ -29,10 +29,16 @@ where
     Inner.Reader: ~Copyable,
     Inner.ResponseSender: ~Copyable,
     Inner.ResponseSender.Writer: ~Copyable,
-    Chain.Input == RequestResponseMiddlewareBox<Inner.RequestContext, Inner.Reader, Inner.ResponseSender>,
+    // The front layer's box is over the courier's **`Base`**, not over the courier itself. With a linear
+    // registry there is exactly one of it, so the box cannot both own it and hold a courier that also
+    // carries it. The courier is therefore taken apart on the way in and rebuilt in the terminal — one
+    // re-wrap per request — which is also what the route boxes below already do via `takeContents()`.
+    Chain.Input == RequestResponseMiddlewareBox<
+        Inner.RequestContext.Base, Inner.Reader, Inner.ResponseSender
+    >,
     Chain.NextInput == Chain.Input,
-    // The front layer's box must carry the *same* registry the routes below will drain, so it reads it off
-    // the context rather than making one. Stated as a capability so this stays generic over the context.
+    // The front layer's box must carry the *same* registry the routes below will drain, so it takes it out
+    // of the context rather than making one. Stated as a capability so this stays generic over the context.
     Inner.RequestContext: ResponseHeaderCarrying
 {
     let inner: Inner
@@ -49,22 +55,32 @@ where
         reader: consuming sending Inner.Reader,
         responseSender: consuming sending Inner.ResponseSender
     ) async throws {
-        let registry = requestContext.responseHeaders
-        let box = RequestResponseMiddlewareBox<Inner.RequestContext, Inner.Reader, Inner.ResponseSender>
-            .pending(
-                request: request,
-                requestContext: requestContext,
-                reader: reader,
-                responseSender: responseSender,
-                // The courier's registry, not a fresh one — this is what makes a global middleware's
-                // contribution reach a route's terminal, which builds its own box further down.
-                responseHeaders: registry
-            )
+        // Destructured here, in this frame, rather than inside a closure: `reader` and `responseSender` are
+        // this function's `sending` parameters, and a closure would make them captures — task-isolated, and
+        // so refused where the box wants them `sending`.
+        let contents = requestContext.takeContents()
+        let registry = contents.responseHeaders.take()
+        let base = contents.base
+
+        let box = RequestResponseMiddlewareBox<
+            Inner.RequestContext.Base, Inner.Reader, Inner.ResponseSender
+        >
+        .pending(
+            request: request,
+            requestContext: base,
+            reader: reader,
+            responseSender: responseSender,
+            // The courier's registry, not a fresh one — this is what makes a global middleware's
+            // contribution reach a route's terminal, which builds its own box further down.
+            responseHeaders: registry
+        )
         try await chain.intercept(input: box) { finalBox in
-            try await finalBox.withPendingContents { request, requestContext, reader, responseSender in
+            try await finalBox.withPendingContents { request, base, reader, responseSender, registry in
+                // Rebuild the courier from the base and the registry the box hands back, so the routes
+                // below receive the one the global middleware contributed to.
                 try await inner.handle(
                     request: request,
-                    requestContext: requestContext,
+                    requestContext: Inner.RequestContext(base: base, responseHeaders: registry),
                     reader: reader,
                     responseSender: responseSender
                 )

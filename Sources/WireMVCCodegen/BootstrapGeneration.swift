@@ -298,13 +298,16 @@ private func renderRegisterIntrospection(access: String, constructions: [String]
         Builder.ResponseSender.Writer: ~Copyable
     {
         builder.register(method: .get, path: path) { request, requestContext, _, reader, responseSender in
-            let wireMVCResponseHeaderRegistry = requestContext.responseHeaders
-            let wireMVCBaseBox = RequestResponseMiddlewareBox.pending(request: request, requestContext: requestContext.takeBase(), reader: reader, responseSender: responseSender, responseHeaders: wireMVCResponseHeaderRegistry)
+            let \(contentsLocal) = requestContext.takeContents()
+            let \(baseContextLocal) = \(contentsLocal).base
+            let \(foldRegistryLocal) = \(contentsLocal).responseHeaders.take()
+            let wireMVCBaseBox = RequestResponseMiddlewareBox.pending(request: request, requestContext: \(baseContextLocal), reader: reader, responseSender: responseSender, responseHeaders: \(foldRegistryLocal))
             let wireMVCChain = wireCompose {
             \(constructions.joined(separator: "\n"))
             }
             try await wireMVCChain.intercept(input: wireMVCBaseBox) { wireMVCFinalBox in
-                try await wireMVCFinalBox.withPendingContents { _, _, _, responseSender in
+                try await wireMVCFinalBox.withPendingContents { _, _, _, responseSender, \(responseHeaderDrainLocal) in
+                    _ = consume \(responseHeaderDrainLocal)
                     try await response.send(on: responseSender)
                 }
             }
@@ -343,7 +346,7 @@ func globalMiddlewareConstructions(
         from: bootstrap.attributes,
         factoryKeys: factoryKeys,
         boxRole: "Handler",
-        contextType: "Handler.RequestContext"
+        contextType: "Handler.RequestContext.Base"
     )
 }
 
@@ -372,10 +375,11 @@ func introspectionGuardConstructions(
 /// (``WireMVCDiagnostic/globalMiddlewareUnsupportedArgument``). `boxRole` names the generic parameter the
 /// consuming method exposes (`Handler` for `wrapGlobalMiddleware`, `Builder` for `registerIntrospection`).
 ///
-/// `contextType` is separate from `boxRole` because the two sites fold over **different** contexts. The
-/// global layer's box is over the courier itself (`Handler.RequestContext`) — it runs above routing, which
-/// is where the courier is still on. The introspection mount is an ordinary registered route, so its box is
-/// over the unwrapped `Builder.RequestContext.Base`, like every other route's.
+/// `contextType` is separate from `boxRole` only because the two sites name their generic parameter
+/// differently; both now fold over the **unwrapped** context (`…RequestContext.Base`). The global layer
+/// used to be the exception — its box was over the courier, since it runs above routing where the courier
+/// is still on — but a linear registry cannot be in the courier and the box at once, so the front layer
+/// takes the courier apart on the way in and rebuilds it in its terminal. See ``GlobalMiddlewareHandler``.
 func middlewareFactoryConstructions(
     from attributes: AttributeListSyntax,
     factoryKeys: Set<String>,
@@ -416,7 +420,7 @@ func renderNotFoundRegistration(
     // path nobody declared and therefore nobody thinks to check.
     let synth404 = """
         builder.registerNotFound { _, requestContext, _, _, responseSender in
-        let \(responseHeaderDrainLocal) = requestContext.responseHeaders
+        let \(responseHeaderDrainLocal) = requestContext.takeContents().responseHeaders.take()
         try await WireMVCOutcome.status(
         .notFound,
         headerFields: WireMVCResponseHeaders.resolved(middleware: try await \(responseHeaderDrainLocal).drain())
@@ -450,7 +454,7 @@ func renderNotFoundRegistration(
 func renderMethodNotAllowedRegistration() -> String {
     """
     builder.registerMethodNotAllowed { _, requestContext, wireMVCAllowed, _, responseSender in
-    let \(responseHeaderDrainLocal) = requestContext.responseHeaders
+    let \(responseHeaderDrainLocal) = requestContext.takeContents().responseHeaders.take()
     var wireMVCAllowFields = HTTPFields()
     wireMVCAllowFields[.allow] = wireMVCAllowed.map(\\.rawValue).joined(separator: ", ")
     try await WireMVCOutcome.status(

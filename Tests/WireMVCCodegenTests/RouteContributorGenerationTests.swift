@@ -224,7 +224,8 @@ struct RouteContributorGenerationTests {
                         Builder.ResponseSender.Writer: ~Copyable
                     {
                         builder.register(method: .get, path: "/todos/{id}") { request, requestContext, pathParameters, _, responseSender in
-                            let wireMVCResponseHeaderDrain = requestContext.responseHeaders
+                            let wireMVCContextContents = requestContext.takeContents()
+                            let wireMVCResponseHeaderDrain = wireMVCContextContents.responseHeaders.take()
                             let wireMVCOutcome: WireMVCOutcome
                             do {
                                 let id = try await Path<String>.bind(name: "id", request: request, pathParameters: pathParameters, body: nil, coding: wireMVCAppCoding)
@@ -276,14 +277,14 @@ struct RouteContributorGenerationTests {
                         var builder = bootstrap.createRouteBuilder(for: server)
                         let wireMVCServices = try WireMVC.apply(graph, to: &builder, coding: WireMVCCoding.default)
                         builder.registerNotFound { _, requestContext, _, _, responseSender in
-                            let wireMVCResponseHeaderDrain = requestContext.responseHeaders
+                            let wireMVCResponseHeaderDrain = requestContext.takeContents().responseHeaders.take()
                             try await WireMVCOutcome.status(
                                 .notFound,
                                 headerFields: WireMVCResponseHeaders.resolved(middleware: try await wireMVCResponseHeaderDrain.drain())
                             ).send(on: responseSender)
                         }
                         builder.registerMethodNotAllowed { _, requestContext, wireMVCAllowed, _, responseSender in
-                            let wireMVCResponseHeaderDrain = requestContext.responseHeaders
+                            let wireMVCResponseHeaderDrain = requestContext.takeContents().responseHeaders.take()
                             var wireMVCAllowFields = HTTPFields()
                             wireMVCAllowFields[.allow] = wireMVCAllowed.map(\\.rawValue).joined(separator: ", ")
                             try await WireMVCOutcome.status(
@@ -373,14 +374,14 @@ struct RouteContributorGenerationTests {
                                 var builder = bootstrap.createRouteBuilder(for: server)
                                 let wireMVCServices = try WireMVC.apply(graph, to: &builder, coding: WireMVCCoding.default)
                                 builder.registerNotFound { _, requestContext, _, _, responseSender in
-                                    let wireMVCResponseHeaderDrain = requestContext.responseHeaders
+                                    let wireMVCResponseHeaderDrain = requestContext.takeContents().responseHeaders.take()
                                     try await WireMVCOutcome.status(
                                         .notFound,
                                         headerFields: WireMVCResponseHeaders.resolved(middleware: try await wireMVCResponseHeaderDrain.drain())
                                     ).send(on: responseSender)
                                 }
                                 builder.registerMethodNotAllowed { _, requestContext, wireMVCAllowed, _, responseSender in
-                                    let wireMVCResponseHeaderDrain = requestContext.responseHeaders
+                                    let wireMVCResponseHeaderDrain = requestContext.takeContents().responseHeaders.take()
                                     var wireMVCAllowFields = HTTPFields()
                                     wireMVCAllowFields[.allow] = wireMVCAllowed.map(\\.rawValue).joined(separator: ", ")
                                     try await WireMVCOutcome.status(
@@ -539,12 +540,12 @@ struct RouteContributorGenerationTests {
         #expect(rendered.source.contains("GlobalMiddlewareHandler(inner: inner, chain: wireCompose {"))
         #expect(
             rendered.source.contains(
-                "self._wireFactory_LoggingKeys_accessLog.create(Handler.RequestContext.self, Handler.Reader.self, Handler.ResponseSender.self)"
+                "self._wireFactory_LoggingKeys_accessLog.create(Handler.RequestContext.Base.self, Handler.Reader.self, Handler.ResponseSender.self)"
             )
         )
         #expect(
             rendered.source.contains(
-                "self._wireFactory_LoggingKeys_requestID.create(Handler.RequestContext.self, Handler.Reader.self, Handler.ResponseSender.self)"
+                "self._wireFactory_LoggingKeys_requestID.create(Handler.RequestContext.Base.self, Handler.Reader.self, Handler.ResponseSender.self)"
             )
         )
     }
@@ -694,6 +695,13 @@ struct RouteContributorGenerationTests {
 
     /// M5.5 Phase 4: a `@NotFound @RawRoute` method on the Bootstrap becomes the fallback — the generated
     /// `@main` registers it via `registerNotFound`, dispatching through the `bootstrap` local (DI-capable).
+    ///
+    /// The fixture spells its sender `consuming sending Sender`, which this test only ever *parses* — it
+    /// asserts on rendered source, so nothing here compiles it. That spelling was, for a while, the only
+    /// one advertised in either repo that could not actually work: a `@NotFound` folds no middleware, so
+    /// its sender is always the untransformed one, and wrapping it merged a task-isolated registry into an
+    /// otherwise-disconnected value. It compiles now, and it is compiled — by
+    /// `WireMVCBootstrapExample`'s real `handleNotFound`, which is where that claim is actually tested.
     @Test func notFoundHandlerRegistersAsFallback() {
         let source = """
             @Singleton
@@ -805,14 +813,15 @@ struct RouteContributorGenerationTests {
                         Builder.ResponseSender.Writer: ~Copyable
                     {
                         builder.register(method: .get, path: "/x/y") { request, requestContext, _, reader, responseSender in
-                            let wireMVCResponseHeaderRegistry = requestContext.responseHeaders
-                            let wireMVCBaseBox = RequestResponseMiddlewareBox.pending(request: request, requestContext: requestContext.takeBase(), reader: reader, responseSender: responseSender, responseHeaders: wireMVCResponseHeaderRegistry)
+                            let wireMVCContextContents = requestContext.takeContents()
+                            let wireMVCBaseContext = wireMVCContextContents.base
+                            let wireMVCFoldRegistry = wireMVCContextContents.responseHeaders.take()
+                            let wireMVCBaseBox = RequestResponseMiddlewareBox.pending(request: request, requestContext: wireMVCBaseContext, reader: reader, responseSender: responseSender, responseHeaders: wireMVCFoldRegistry)
                             let wireMVCChain = wireCompose {
                                 self._wireFactory_Keys_session.create(Builder.RequestContext.Base.self, Builder.Reader.self, Builder.ResponseSender.self)
                             }
                             try await wireMVCChain.intercept(input: wireMVCBaseBox) { wireMVCFinalBox in
-                                let wireMVCResponseHeaderDrain = wireMVCFinalBox.responseHeaders
-                                return try await wireMVCFinalBox.withPendingContents { _, _, _, responseSender in
+                                return try await wireMVCFinalBox.withPendingContents { _, _, _, responseSender, wireMVCResponseHeaderDrain in
                                 let wireMVCOutcome: WireMVCOutcome
                                 do {
                                     try await self._wireSubject.f()
@@ -872,7 +881,8 @@ struct RouteContributorGenerationTests {
                         Builder.ResponseSender.Writer: ~Copyable
                     {
                         builder.register(method: .post, path: "/search/{scope}") { request, requestContext, pathParameters, reader, responseSender in
-                            let wireMVCResponseHeaderDrain = requestContext.responseHeaders
+                            let wireMVCContextContents = requestContext.takeContents()
+                            let wireMVCResponseHeaderDrain = wireMVCContextContents.responseHeaders.take()
                             let wireMVCOutcome: WireMVCOutcome
                             do {
                                 let requestBody = try await WireMVCRequest.collectBody(reader)

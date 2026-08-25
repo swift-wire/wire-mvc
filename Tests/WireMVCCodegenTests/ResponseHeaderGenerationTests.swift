@@ -60,7 +60,11 @@ struct ResponseHeaderGenerationTests {
                 "headerFields: WireMVCResponseHeaders.resolved(middleware: try await wireMVCResponseHeaderDrain.drain())"
             )
         )
-        #expect(emitted.contains("let wireMVCResponseHeaderDrain = requestContext.responseHeaders"))
+        #expect(
+            emitted.contains(
+                "let wireMVCResponseHeaderDrain = wireMVCContextContents.responseHeaders.take()"
+            )
+        )
         #expect(!emitted.contains("wireMVCReturn"), "no response tuple, so no return local")
     }
 

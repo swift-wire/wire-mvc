@@ -38,7 +38,10 @@ where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields?, Sender.Wr
         // A *global* contribution: registered on the way in, applied to whatever response comes out —
         // including routes with no `@Middleware` of their own and the raw `@NotFound` fallback, neither of
         // which the front layer could reach before the courier carried the registry inward.
-        input.responseHeaders.add(.set(.init("x-served-by")!, "wire-mvc"))
-        return try await next(input)
+        return try await input.contributing { headers in
+            headers.add(.set(.init("x-served-by")!, "wire-mvc"))
+        } then: { input in
+            try await next(input)
+        }
     }
 }

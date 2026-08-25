@@ -481,6 +481,34 @@ let returnLocal = "wireMVCReturn"
 /// The per-request ``ResponseHeaderRegistry``, created at the fold base and threaded through the box.
 let responseHeaderRegistryLocal = "wireMVCResponseHeaderRegistry"
 
+/// The courier's destructure, bound once at the top of a fold-less register closure (and above the fold on
+/// the folded one). Both the registry and the app's real context come out of this one value — a linear
+/// registry cannot be read off a borrow, so there is no separate getter to reach for.
+let contentsLocal = "wireMVCContextContents"
+
+/// The app's real context, lifted out of the courier's contents so the box's `pending(...)` does not have
+/// to consume two fields of the same value in one expression.
+let baseContextLocal = "wireMVCBaseContext"
+
+/// The name a terminal binds the registry to when it has no use for it, and the explicit discard that
+/// follows.
+///
+/// `_` would be the obvious spelling and it **miscompiles**: a wildcard-bound `consuming sending`
+/// noncopyable closure parameter fails SIL verification before ownership lowering
+/// (`OwnershipModelEliminator`), crashing the compiler rather than diagnosing anything. Naming it and
+/// consuming it explicitly reads the same and compiles. Verified on `6.4.x-snapshot-2026-08-01`; re-test
+/// before simplifying this away.
+let unusedRegistryLocal = "wireMVCUnusedResponseHeaders"
+
+func unusedRegistryDiscard(_ registryLocal: String?) -> String {
+    registryLocal == nil ? "_ = consume \(unusedRegistryLocal)\n" : ""
+}
+
+/// The registry on its way into the fold's base box. Distinct from ``responseHeaderRegistryLocal`` because
+/// the terminal binds *that* name to the registry the box hands back, and this one is already consumed by
+/// then — same value, but naming them apart keeps the two lifetimes legible in the generated file.
+let foldRegistryLocal = "wireMVCFoldRegistry"
+
 /// The registry read off the *final* box, before `withPendingContents` consumes it — the terminal drains
 /// this when it builds the outcome. Bound only for a typed terminal with a fold; a raw handler has no
 /// outcome to drain into, and a route with no middleware has no registry at all.

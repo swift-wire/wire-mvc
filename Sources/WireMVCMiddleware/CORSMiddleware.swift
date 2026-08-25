@@ -76,43 +76,47 @@ where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields?, Sender.Wr
             return try await next(input)
         }
 
-        // The fields both an actual request and a preflight carry. Contributed to the registry rather than
-        // written, so they reach whatever eventually responds — a route's terminal, a gate further in, or
-        // the preflight answer below.
-        let headers = input.responseHeaders
-        if let allowed = configuration.allowOrigin.value(for: origin) {
-            headers.add(.set(.accessControlAllowOrigin, allowed))
-        }
-        if configuration.allowCredentials {
-            headers.add(.set(.accessControlAllowCredentials, "true"))
-        }
-        if configuration.allowOrigin.variesByRequestOrigin {
-            headers.add(.append(.vary, "Origin"))
-        }
-
-        guard isPreflight(request) else {
-            // An actual request: `Expose-Headers` tells the browser which response fields script may read,
-            // and is meaningless on a preflight.
-            if !configuration.exposedHeaders.isEmpty {
+        // The fields both an actual request and a preflight carry, plus — on an actual request —
+        // `Expose-Headers`, which tells the browser which response fields script may read and is
+        // meaningless on a preflight. Contributed to the registry rather than written, so they reach
+        // whatever eventually responds: a route's terminal, a gate further in, or the preflight answer
+        // below. All of them go in one pass, which is why `contributing` hands the registry over `inout`
+        // rather than taking one contribution at a time.
+        let preflighting = isPreflight(request)
+        return try await input.contributing { headers in
+            if let allowed = configuration.allowOrigin.value(for: origin) {
+                headers.add(.set(.accessControlAllowOrigin, allowed))
+            }
+            if configuration.allowCredentials {
+                headers.add(.set(.accessControlAllowCredentials, "true"))
+            }
+            if configuration.allowOrigin.variesByRequestOrigin {
+                headers.add(.append(.vary, "Origin"))
+            }
+            if !preflighting, !configuration.exposedHeaders.isEmpty {
                 headers.add(.set(.accessControlExposeHeaders, joined(configuration.exposedHeaders)))
             }
-            return try await next(input)
-        }
+        } then: { input in
+            guard preflighting else { return try await next(input) }
 
-        // A preflight is answered here rather than routed: it is an `OPTIONS` to a path whose real route is
-        // some other method, so there is nothing to dispatch to. `respondingWith` drains the contributions
-        // above into the outcome — raw `responding` would not, and the origin field would be lost.
-        var preflight = HTTPFields()
-        preflight[.accessControlAllowMethods] = configuration.allowMethods
-            .map(\.rawValue).joined(separator: ", ")
-        if !configuration.allowHeaders.isEmpty {
-            preflight[.accessControlAllowHeaders] = joined(configuration.allowHeaders)
+            // A preflight is answered here rather than routed: it is an `OPTIONS` to a path whose real
+            // route is some other method, so there is nothing to dispatch to. `respondingWith` drains the
+            // contributions above into the outcome — raw `responding` would not, and the origin field
+            // would be lost.
+            var preflight = HTTPFields()
+            preflight[.accessControlAllowMethods] = configuration.allowMethods
+                .map(\.rawValue).joined(separator: ", ")
+            if !configuration.allowHeaders.isEmpty {
+                preflight[.accessControlAllowHeaders] = joined(configuration.allowHeaders)
+            }
+            if let maxAge = configuration.maxAge {
+                preflight[.accessControlMaxAge] = String(maxAge.components.seconds)
+            }
+            let responded = try await input.respondingWith(
+                .status(.noContent, headerFields: preflight)
+            )
+            return try await next(responded)
         }
-        if let maxAge = configuration.maxAge {
-            preflight[.accessControlMaxAge] = String(maxAge.components.seconds)
-        }
-        let responded = try await input.respondingWith(.status(.noContent, headerFields: preflight))
-        return try await next(responded)
     }
 
     /// An `OPTIONS` carrying `Access-Control-Request-Method` — the method a preflight asks about. `OPTIONS`

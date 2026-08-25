@@ -354,12 +354,12 @@ struct RouteBlockGenerator {
             middleware: middleware,
             hoistedPreamble: foldThreadsDoubles ? scopeEntryPreamble : "",
             requestName: names.request,
-            // Only the fold-less path reads the registry off the register closure's context; through a fold
+            // Only the fold-less path takes the registry off the register closure's context; through a fold
             // it comes off the final box, and the terminal has no use for the unwrapped context.
             contextName: middleware.isEmpty ? "requestContext" : "_",
             parametersName: names.pathParameters,
             readerName: names.reader,
-            drainsResponseHeaders: drainsMiddleware,
+            registryLocal: drainsMiddleware ? responseHeaderDrainLocal : nil,
             terminalBody: terminalBody
         )
     }
@@ -423,7 +423,7 @@ extension RouteBlockGenerator {
         contextName: String,
         parametersName: String,
         readerName: String,
-        drainsResponseHeaders: Bool = false,
+        registryLocal: String? = nil,
         terminalBody: String
     ) -> String {
         emitRegisterClosure(
@@ -434,7 +434,7 @@ extension RouteBlockGenerator {
             contextName: contextName,
             parametersName: parametersName,
             readerName: readerName,
-            drainsResponseHeaders: drainsResponseHeaders,
+            registryLocal: registryLocal,
             terminalBody: terminalBody
         )
     }
@@ -451,18 +451,21 @@ extension RouteBlockGenerator {
         contextName: String,
         parametersName: String,
         readerName: String,
-        drainsResponseHeaders: Bool = false,
+        registryLocal: String? = nil,
         terminalBody: String
     ) -> String {
         guard !middleware.isEmpty else {
-            let drain =
-                drainsResponseHeaders
-                ? "let \(responseHeaderDrainLocal) = requestContext.responseHeaders\n" : ""
-            // `hoistedPreamble` carries the raw route's registry binding (and a variant witness's doubles
-            // correlation), so it has to lead here too — not only on the fold path.
+            // The courier is taken apart here, in the register closure's own frame. Both halves come out of
+            // one `takeContents()` because the registry is linear: it cannot be read off a borrow, and two
+            // consuming methods cannot both be called on one courier.
+            let registry =
+                registryLocal.map { "let \($0) = \(contentsLocal).responseHeaders.take()\n" } ?? ""
+            let contents = "let \(contentsLocal) = requestContext.takeContents()\n"
+            // `hoistedPreamble` carries a variant witness's doubles correlation, so it has to lead here too
+            // — not only on the fold path.
             return """
                 \(registerCall) { \(requestName), \(contextName), \(parametersName), \(readerName), responseSender in
-                \(hoistedPreamble)\(drain)\(terminalBody)
+                \(hoistedPreamble)\(contents)\(registry)\(terminalBody)
                 }
                 """
         }
@@ -471,20 +474,27 @@ extension RouteBlockGenerator {
         // `middlewareConstructions`. `hoistedPreamble` (a variant witness whose fold threads doubles) binds
         // `wireMVCDoubles` above the fold so the `create(doubles:)` reads it; it's empty otherwise.
         let fold = middleware.joined(separator: "\n")
-        // The registry is created here, once per request, and threaded through the fold by the box — so a
-        // transforming middleware that rebuilds the box carries the same one (the parameter is required,
-        // which is what makes losing it a compile error rather than a vanished header). The terminal reads
-        // it off the *final* box before `withPendingContents` consumes it.
+        // The registry comes out of the courier here and goes straight into the box, which owns it for the
+        // rest of the request and threads it through the fold — so a transforming middleware that rebuilds
+        // the box carries the same one (the parameter is required, which is what makes losing it a compile
+        // error rather than a vanished header).
+        //
+        // The terminal then takes it back **off the box's own destructure**, as the fifth yielded value,
+        // rather than off a local captured above the fold. That is the whole point of the exercise: a
+        // capture is task-isolated, and a sender wrapped with a task-isolated registry cannot be handed on
+        // `sending` — which is what stopped a `@RawRoute` declaring `consuming sending Sender`.
         return """
             \(registerCall) { request, requestContext, \(parametersName), reader, responseSender in
-                \(hoistedPreamble)let \(responseHeaderRegistryLocal) = requestContext.responseHeaders
-                let wireMVCBaseBox = RequestResponseMiddlewareBox.pending(request: request, requestContext: requestContext.takeBase(), reader: reader, responseSender: responseSender, responseHeaders: \(responseHeaderRegistryLocal))
+                \(hoistedPreamble)let \(contentsLocal) = requestContext.takeContents()
+                let \(baseContextLocal) = \(contentsLocal).base
+                let \(foldRegistryLocal) = \(contentsLocal).responseHeaders.take()
+                let wireMVCBaseBox = RequestResponseMiddlewareBox.pending(request: request, requestContext: \(baseContextLocal), reader: reader, responseSender: responseSender, responseHeaders: \(foldRegistryLocal))
                 let wireMVCChain = wireCompose {
             \(fold)
                 }
                 try await wireMVCChain.intercept(input: wireMVCBaseBox) { wireMVCFinalBox in
-                    \(drainsResponseHeaders ? "let \(responseHeaderDrainLocal) = wireMVCFinalBox.responseHeaders\n        " : "")return try await wireMVCFinalBox.withPendingContents { \(requestName), \(contextName), \(readerName), responseSender in
-                    \(terminalBody)
+                    return try await wireMVCFinalBox.withPendingContents { \(requestName), \(contextName), \(readerName), responseSender, \(registryLocal ?? unusedRegistryLocal) in
+                    \(unusedRegistryDiscard(registryLocal))\(terminalBody)
                     }
                 }
             }
