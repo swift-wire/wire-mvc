@@ -12,7 +12,7 @@ struct HTMLResponseGenerationTests {
     private func controller(_ source: String) -> ControllerDeclaration {
         let file = Parser.parse(source: source)
         for statement in file.statements {
-            if let declaration = statement.item.asProtocol(DeclGroupSyntax.self) as? (any DeclSyntaxProtocol),
+            if let declaration: any DeclSyntaxProtocol = statement.item.asProtocol(DeclGroupSyntax.self),
                 let controller = ControllerDeclaration(declaration)
             {
                 return controller
@@ -175,8 +175,9 @@ struct HTMLResponseGenerationTests {
         #expect(emitted.contains("collectingBodyFrom: reader"))
         #expect(emitted.contains("building: { requestBody in"))
         // The read must not be inside the closure — that is the shape that does not compile.
-        let building = try? #require(emitted.range(of: "building: {"))
-        if let building, let collect = emitted.range(of: "WireMVCRequest.collectBody(") {
+        if let building = emitted.range(of: "building: {"),
+            let collect = emitted.range(of: "WireMVCRequest.collectBody(")
+        {
             #expect(collect.lowerBound < building.lowerBound, "the collection is not emitted inside building")
         } else {
             // No inline `collectBody` at all is the expected shape: the terminal overload does it.
@@ -396,7 +397,7 @@ struct HTMLResponseClientTests {
     private func client(_ source: String) -> String {
         let file = Parser.parse(source: source)
         for statement in file.statements {
-            if let declaration = statement.item.asProtocol(DeclGroupSyntax.self) as? (any DeclSyntaxProtocol),
+            if let declaration: any DeclSyntaxProtocol = statement.item.asProtocol(DeclGroupSyntax.self),
                 let controller = ControllerDeclaration(declaration)
             {
                 return renderControllerClient(

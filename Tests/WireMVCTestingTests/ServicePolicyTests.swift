@@ -89,5 +89,3 @@ private struct OKHandler: HTTPServerRequestHandler {
         #expect(WireMVCTestMode.inProcess.defaultServices == .skip)
     }
 }
-
-extension WireMVCTestServices: @retroactive Equatable {}

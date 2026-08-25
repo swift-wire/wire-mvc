@@ -445,7 +445,7 @@ struct UserBindingIntegrationTests {
     ) -> String? {
         let file = Parser.parse(source: controllerSource)
         for statement in file.statements {
-            if let d = statement.item.asProtocol(DeclGroupSyntax.self) as? (any DeclSyntaxProtocol),
+            if let d: any DeclSyntaxProtocol = statement.item.asProtocol(DeclGroupSyntax.self),
                 let c = ControllerDeclaration(d)
             {
                 return renderControllerClient(
