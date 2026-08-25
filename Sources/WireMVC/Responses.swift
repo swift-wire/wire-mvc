@@ -36,7 +36,17 @@ public struct WireMVCOutcome: Sendable {
     /// conformer that overrides the requirement to fuse head and body into one transport frame.
     public var body: [UInt8]?
 
-    public init(status: HTTPResponse.Status, headerFields: HTTPFields = [:], body: [UInt8]? = nil) {
+    public init(
+        status: HTTPResponse.Status,
+        // `HTTPFields()`, not `[:]` — the same spelling, and the same measured cost, as `resolved`'s
+        // `returned` below. The dictionary literal goes through `init(dictionaryLiteral:)` and allocates
+        // at every call site that omits this argument, which is every typed route whose handler does not
+        // return header fields. One allocation per response, on every runtime, since the outcome is what
+        // sends whichever router matched. Every `headerFields` default in this package is spelled this
+        // way; an empty `HTTPFields()` is the same value, so nothing about the API changes.
+        headerFields: HTTPFields = HTTPFields(),
+        body: [UInt8]? = nil
+    ) {
         self.status = status
         self.headerFields = headerFields
         self.body = body
@@ -49,7 +59,7 @@ public struct WireMVCOutcome: Sendable {
     /// `401` without `WWW-Authenticate` is not a well-formed challenge (RFC 9110 §11.6.1).
     public static func status(
         _ status: HTTPResponse.Status,
-        headerFields: HTTPFields = [:]
+        headerFields: HTTPFields = HTTPFields()
     ) -> WireMVCOutcome {
         WireMVCOutcome(status: status, headerFields: headerFields)
     }
@@ -59,7 +69,7 @@ public struct WireMVCOutcome: Sendable {
     public static func body(
         _ bytes: [UInt8],
         _ status: HTTPResponse.Status,
-        headerFields: HTTPFields = [:]
+        headerFields: HTTPFields = HTTPFields()
     ) -> WireMVCOutcome {
         WireMVCOutcome(status: status, headerFields: headerFields, body: bytes)
     }
@@ -77,7 +87,7 @@ public struct WireMVCOutcome: Sendable {
     public static func json<T: Encodable>(
         _ value: T,
         status: HTTPResponse.Status = .ok,
-        headerFields: HTTPFields = [:],
+        headerFields: HTTPFields = HTTPFields(),
         coding: WireMVCCoding = .default
     ) throws -> WireMVCOutcome {
         let data = try coding.encoder().encode(value)
@@ -94,6 +104,12 @@ public struct WireMVCOutcome: Sendable {
     ) async throws where Sender.Writer: ~Copyable {
         // The outcome is computed before the sender is touched, so the body — and therefore its length —
         // is already in hand.
+        //
+        // Stated onto the response after building it, which measurement says is free. Stating it into a
+        // local `HTTPFields` first and constructing from that was tried, on the evidence that a
+        // hand-written handler doing so costs one allocation less: it measured *identical*, because that
+        // handler builds its fields fresh where this must copy `headerFields` off the outcome, and the
+        // copy costs exactly what the later mutation would have. The allocation moves; it does not go.
         var response = HTTPResponse(status: status, headerFields: headerFields)
         response.stateLengthIfAbsent(body?.count ?? 0)
         if let body {
@@ -285,7 +301,7 @@ public enum WireMVCResponse {
     public static func encoded(
         _ encoded: (bytes: [UInt8], contentType: String),
         status: HTTPResponse.Status,
-        headerFields: HTTPFields = [:]
+        headerFields: HTTPFields = HTTPFields()
     ) -> WireMVCOutcome {
         var fields = headerFields
         if fields[.contentType] == nil { fields[.contentType] = encoded.contentType }
@@ -299,7 +315,7 @@ public enum WireMVCResponse {
     public static func json<T: Encodable>(
         _ value: T,
         status: HTTPResponse.Status,
-        headerFields: HTTPFields = [:],
+        headerFields: HTTPFields = HTTPFields(),
         coding: WireMVCCoding = .default
     ) throws -> WireMVCOutcome {
         try WireMVCOutcome.json(value, status: status, headerFields: headerFields, coding: coding)
