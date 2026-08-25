@@ -70,7 +70,7 @@ public struct WireMVCStreamingOutcome<Producer: WireMVCBodyProducer> {
 
     public init(
         status: HTTPResponse.Status,
-        headerFields: HTTPFields = [:],
+        headerFields: HTTPFields = HTTPFields(),
         producer: Producer,
         trailer: HTTPFields? = nil
     ) {
