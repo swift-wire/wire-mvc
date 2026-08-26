@@ -68,6 +68,10 @@ where
         .pending(
             request: request,
             requestContext: base,
+            // No route: this layer folds *around* `inner.handle`, and the router matches inside it. `nil`
+            // is the honest answer and a distinguishable one — an empty `RouteContext` would claim a
+            // parameterless match that has not happened.
+            route: nil,
             reader: reader,
             responseSender: responseSender,
             // The courier's registry, not a fresh one — this is what makes a global middleware's
@@ -75,7 +79,7 @@ where
             responseHeaders: registry
         )
         try await chain.intercept(input: box) { finalBox in
-            try await finalBox.withPendingContents { request, base, reader, responseSender, registry in
+            try await finalBox.withPendingContents { request, base, _, reader, responseSender, registry in
                 // Rebuild the courier from the base and the registry the box hands back, so the routes
                 // below receive the one the global middleware contributed to.
                 try await inner.handle(

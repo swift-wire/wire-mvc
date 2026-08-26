@@ -1,6 +1,7 @@
 # Scope-aware middleware and bindings — a design note
 
-> **Status:** design note, 2026-08-26. **Nothing here is built.** It records why a route-scope
+> **Status:** design note, 2026-08-26; **step 1 built, 2026-08-27** (see *Proposed sequence*).
+> Everything else here is still a design. It records why a route-scope
 > `@Middleware` cannot reach a request-scoped binding, what four other frameworks do about it, and — on
 > that evidence — **a decision that a middleware's dependencies stay app-scoped permanently**, rather than
 > build a scoped tier. What replaces the scoped tier is two smaller things: route identity carried on the
@@ -412,11 +413,33 @@ Each step names what forces it. A step with no forcing case is not scheduled —
 `StreamingResponseTier.md` makes against itself applies here too: a capability with no route asking for it
 is the weak case restated.
 
-**1 — wire-mvc: `RouteContext` on the box.** A sixth field on `.pending`, a `peekedRoute: RouteContext?`
-accessor, and the register closure passing what it already receives. **No prerequisite** — not the
-scope-entry widening, not the `@Factory` change, not a tier. **Forced by:** a middleware cannot tell which
-route it is folded onto, which is why `auth-abac` could only express per-route policy as a distinct key and
-middleware type per route. Also the step that retires the scoped tier's charter, so it comes first.
+**1 — wire-mvc: `RouteContext` on the box. Done, 2026-08-27.** A sixth field on `.pending`, a
+`peekedRoute: RouteContext?` accessor, and the register closure passing what it already receives. **No
+prerequisite** — not the scope-entry widening, not the `@Factory` change, not a tier. **Forced by:** a
+middleware cannot tell which route it is folded onto, which is why `auth-abac` could only express per-route
+policy as a distinct key and middleware type per route. Also the step that retires the scoped tier's
+charter, so it comes first.
+
+Three things the design above got right and one it did not say:
+
+- **The route rides in `.responded` too**, as the note argued it should, so an always-run observer can log
+  which route a gate refused.
+- **`nil` really is a distinct answer from empty**, and is now load-bearing rather than documented: the
+  global tier's box carries `route: nil` because it folds around `handle` and the match has not happened,
+  and `WireMVCFallbackExample` asserts `(none)` against `(empty)` on the wire so the distinction cannot
+  quietly collapse.
+- **`route:` is a required argument, not a defaulted one**, for the reason the response-header registry is:
+  a transforming middleware rebuilds the box through `withContents`, and a defaulted parameter would let it
+  unname the route silently. The one transforming middleware in the fixtures took the break, which is the
+  evidence that the compile error fires.
+- **What the note did not say:** the *destructures* change too, not only `.pending`. `withContents` and
+  `withPendingContents` both yield the route, so the terminal sees it off the **final** box rather than off
+  the register closure — the same property the request already had, and the one that makes an upstream
+  rewrite visible to whatever consumes it. That costs every terminal an extra `_`, which is the whole price.
+
+The terminal's `@Path` binds still read the register closure's `pathParameters` directly, not the box's.
+Nothing yet wants the boxed copy there, and routing the binds through the box would be a behavioural change
+(a middleware could rewrite a path parameter) that no route is asking for.
 
 **2 — swift-wire: name `@Factory` as a lifetime, and diagnose it as one.** Documentation, plus two
 diagnostics: `@Factory` alongside `@Singleton`/`@Scoped` refused as two lifetime macros on one type, and a

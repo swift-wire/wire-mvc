@@ -23,6 +23,11 @@ package enum StampKeys {
 }
 
 /// Contributes a header on the way in. It must reach the synthesised 404 as well as `/ping`.
+///
+/// It also reports what the **global** tier can see of the route, which is nothing: this middleware folds
+/// around the router's `handle`, so the match has not happened when its box is built. `x-route-scope` is
+/// `(none)` on every response this app serves — matched, gated and 404 alike — and that is the assertion,
+/// not an accident of the fixture's routes.
 @Factory(StampKeys.factory)
 @MiddlewareFactory
 package struct Stamp<
@@ -38,8 +43,10 @@ where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields?, Sender.Wr
         input: consuming Input,
         next: (consuming NextInput) async throws -> Return
     ) async throws -> Return {
+        let scope = input.peekedRoute?.template ?? "(none)"
         return try await input.contributing { headers in
             headers.add(.set(.init("x-stamp")!, "global"))
+            headers.add(.set(.init("x-route-scope")!, scope))
         } then: { input in
             try await next(input)
         }
@@ -72,6 +79,15 @@ package struct PingController: Sendable {
     /// the terminal from the box's own destructure, so the composite stays disconnected. Nothing asserts on
     /// it at runtime beyond the suite below — **compiling is the test**, which is exactly what was missing
     /// when the constraint went unnoticed.
+    /// A parameterised route on the same controller as `@Get` above, so the *one* `ControllerStamp` fold
+    /// reports two different templates and two different parameter sets. Without route identity on the box
+    /// that needed two middleware types.
+    @Get("/echo/{name}")
+    @JSONResponse
+    package func echo(@Path name: String) -> Pong {
+        Pong(ok: !name.isEmpty)
+    }
+
     @Get("/sending")
     @RawRoute
     package func pingSending<Sender: HTTPResponseSender & ~Copyable & SendableMetatype>(
@@ -181,6 +197,11 @@ package enum ControllerStampKeys {
 
 /// Contributes at **controller** scope while `Stamp` contributes at **global** scope. Both write to the
 /// same registry, so both fields must reach the response.
+///
+/// It is also where route identity is read: this tier folds *inside* the router, so its box carries the
+/// matched ``RouteContext``. One middleware type, folded once on the controller, reports a different
+/// template per route — which is the thing that previously needed a distinct `FactoryKey` and middleware
+/// type per route to express at all.
 @Factory(ControllerStampKeys.factory)
 @MiddlewareFactory
 package struct ControllerStamp<
@@ -196,10 +217,26 @@ where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields?, Sender.Wr
         input: consuming Input,
         next: (consuming NextInput) async throws -> Return
     ) async throws -> Return {
+        // Read on the way in, off the box, before anything is consumed.
+        let route = input.peekedRoute
         return try await input.contributing { headers in
             headers.add(.set(.init("x-controller")!, "controller"))
+            headers.add(.set(.init("x-route-template")!, route?.template ?? "(none)"))
+            headers.add(.set(.init("x-route-params")!, Self.described(route)))
         } then: { input in
             try await next(input)
         }
+    }
+
+    /// `(none)` for *no route at all*, `(empty)` for a route that matched and declares no parameters —
+    /// spelled apart on the wire because the box spells them apart, and a test that could not tell the two
+    /// cases from one header would be asserting nothing about the distinction.
+    private static func described(_ route: RouteContext?) -> String {
+        guard let route else { return "(none)" }
+        guard !route.pathParameters.isEmpty else { return "(empty)" }
+        return route.pathParameters
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key)=\($0.value)" }
+            .joined(separator: ",")
     }
 }

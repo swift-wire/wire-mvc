@@ -4,10 +4,10 @@ public import HTTPTypes
 public import Middleware
 
 /// The box a middleware chain carries as its `Middleware.Input`/`NextInput`. It is a two-state value:
-/// `pending` holds the handler inputs (a fixed request, the per-request `RequestContext`, the request
-/// `Reader`) plus the one-shot `ResponseSender`; `responded` means a middleware already wrote the
-/// response — the sender is consumed and gone, and only the request is kept so always-run observe
-/// middleware can still read it.
+/// `pending` holds the handler inputs (a fixed request, the per-request `RequestContext`, the matched
+/// ``RouteContext``, the request `Reader`) plus the one-shot `ResponseSender`; `responded` means a
+/// middleware already wrote the response — the sender is consumed and gone, and only the request and the
+/// route are kept so always-run observe middleware can still read them.
 ///
 /// This shape is a *consequence* of the proposal's `Middleware.intercept<Return>(input:next:) -> Return`:
 /// the only value of type `Return` is what `next` produces, so every middleware must call `next` (no
@@ -39,6 +39,7 @@ where
         case pending(
             request: HTTPRequest,
             requestContext: RequestContext,
+            route: RouteContext?,
             reader: WireDisconnected<Reader>,
             responseSender: WireDisconnected<ResponseSender>,
             responseHeaders: WireDisconnected<ResponseHeaderRegistry>
@@ -49,7 +50,7 @@ where
         /// ``withPendingContents(_:)``, which does nothing in this state. Carrying one here would let a
         /// middleware contribute a field that could not reach any response; leaving it out makes that
         /// unwriteable rather than documented.
-        case responded(request: HTTPRequest)
+        case responded(request: HTTPRequest, route: RouteContext?)
     }
 
     var storage: Storage
@@ -60,9 +61,16 @@ where
 
     /// Still to be handled: the handler inputs, the one-shot sender and the registry. Takes the
     /// reader/sender and the registry as raw `consuming sending` values and wraps them.
+    ///
+    /// `route` is `nil` above the router — the global tier folds around `handle`, before any match has
+    /// happened — and the matched ``RouteContext`` below it. It is a required argument rather than a
+    /// defaulted one for the reason the registry is: a transforming middleware rebuilds the box through
+    /// ``withContents(pending:responded:)``, and dropping the route there would silently unname the
+    /// route for everything further in.
     public static func pending(
         request: HTTPRequest,
         requestContext: consuming RequestContext,
+        route: RouteContext?,
         reader: consuming sending Reader,
         responseSender: consuming sending ResponseSender,
         responseHeaders: consuming sending ResponseHeaderRegistry
@@ -71,6 +79,7 @@ where
             .pending(
                 request: request,
                 requestContext: requestContext,
+                route: route,
                 reader: WireDisconnected(reader),
                 responseSender: WireDisconnected(responseSender),
                 responseHeaders: WireDisconnected(responseHeaders)
@@ -79,17 +88,32 @@ where
     }
 
     /// A middleware has written the response; the sender is consumed and the registry is spent. The
-    /// request is kept for observation.
-    public static func responded(request: HTTPRequest) -> Self {
-        Self(.responded(request: request))
+    /// request and the route are kept for observation — an always-run observer wants to log *which
+    /// route* was gated as much as it wants the request that asked for it.
+    public static func responded(request: HTTPRequest, route: RouteContext?) -> Self {
+        Self(.responded(request: request, route: route))
     }
 
     /// A borrowing peek at the request — readable in either state — so a middleware can inspect it
     /// without consuming the box (it still has to pass the box to `next`).
     public var peekedRequest: HTTPRequest {
         switch storage {
-        case .pending(let request, _, _, _, _): return request
-        case .responded(let request): return request
+        case .pending(let request, _, _, _, _, _): return request
+        case .responded(let request, _): return request
+        }
+    }
+
+    /// A borrowing peek at the matched route — readable in either state, alongside ``peekedRequest``.
+    ///
+    /// `nil` and empty are deliberately different answers. `nil` means *there is no route*: the box is
+    /// above the router, where the global tier folds and no match has happened yet. A non-`nil`
+    /// ``RouteContext`` with empty `pathParameters` means *this route matched and declares none*.
+    /// Collapsing the two into an empty dictionary would make "outside the router" indistinguishable
+    /// from "a route with no parameters", which is exactly the question a per-route rule asks.
+    public var peekedRoute: RouteContext? {
+        switch storage {
+        case .pending(_, _, let route, _, _, _): return route
+        case .responded(_, let route): return route
         }
     }
 
@@ -119,20 +143,21 @@ where
         then body: nonisolated(nonsending) (consuming Self) async throws -> Return
     ) async throws -> Return {
         switch consume storage {
-        case .pending(let request, let requestContext, let reader, let responseSender, let responseHeaders):
+        case .pending(let request, let requestContext, let route, let reader, let responseSender, let responseHeaders):
             var registry = responseHeaders.take()
             try contribute(&registry)
             return try await body(
                 .pending(
                     request: request,
                     requestContext: requestContext,
+                    route: route,
                     reader: reader.take(),
                     responseSender: responseSender.take(),
                     responseHeaders: registry
                 )
             )
-        case .responded(let request):
-            return try await body(.responded(request: request))
+        case .responded(let request, let route):
+            return try await body(.responded(request: request, route: route))
         }
     }
 
@@ -147,11 +172,11 @@ where
         _ write: nonisolated(nonsending) (consuming ResponseSender) async throws -> Void
     ) async throws -> Self {
         switch consume storage {
-        case .pending(let request, _, _, let responseSender, _):
+        case .pending(let request, _, let route, _, let responseSender, _):
             try await write(responseSender.take())
-            return .responded(request: request)
-        case .responded(let request):
-            return .responded(request: request)
+            return .responded(request: request, route: route)
+        case .responded(let request, let route):
+            return .responded(request: request, route: route)
         }
     }
 
@@ -165,7 +190,7 @@ where
     /// there is no registry left to contribute to.
     public consuming func respondingWith(_ outcome: consuming WireMVCOutcome) async throws -> Self {
         switch consume storage {
-        case .pending(let request, _, _, let responseSender, let responseHeaders):
+        case .pending(let request, _, let route, _, let responseSender, let responseHeaders):
             let registry = responseHeaders.take()
             var resolved = outcome
             resolved.headerFields = WireMVCResponseHeaders.resolved(
@@ -173,9 +198,9 @@ where
                 middleware: try await registry.drain()
             )
             try await resolved.send(on: responseSender.take())
-            return .responded(request: request)
-        case .responded(let request):
-            return .responded(request: request)
+            return .responded(request: request, route: route)
+        case .responded(let request, let route):
+            return .responded(request: request, route: route)
         }
     }
 
@@ -189,16 +214,18 @@ where
             nonisolated(nonsending) (
                 HTTPRequest,
                 consuming RequestContext,
+                RouteContext?,
                 consuming sending Reader,
                 consuming sending ResponseSender,
                 consuming sending ResponseHeaderRegistry
             ) async throws -> Void
     ) async throws {
         switch consume storage {
-        case .pending(let request, let requestContext, let reader, let responseSender, let responseHeaders):
+        case .pending(let request, let requestContext, let route, let reader, let responseSender, let responseHeaders):
             try await handler(
                 request,
                 requestContext,
+                route,
                 reader.take(),
                 responseSender.take(),
                 responseHeaders.take()
@@ -218,24 +245,26 @@ where
             nonisolated(nonsending) (
                 HTTPRequest,
                 consuming RequestContext,
+                RouteContext?,
                 consuming sending Reader,
                 consuming sending ResponseSender,
                 consuming sending ResponseHeaderRegistry
             ) async throws -> Return,
         responded:
-            nonisolated(nonsending) (HTTPRequest) async throws -> Return
+            nonisolated(nonsending) (HTTPRequest, RouteContext?) async throws -> Return
     ) async throws -> Return {
         switch consume storage {
-        case .pending(let request, let requestContext, let reader, let responseSender, let responseHeaders):
+        case .pending(let request, let requestContext, let route, let reader, let responseSender, let responseHeaders):
             return try await pending(
                 request,
                 requestContext,
+                route,
                 reader.take(),
                 responseSender.take(),
                 responseHeaders.take()
             )
-        case .responded(let request):
-            return try await responded(request)
+        case .responded(let request, let route):
+            return try await responded(request, route)
         }
     }
 }

@@ -314,6 +314,7 @@ struct StampedController: RouteContributor {
             let box = RequestResponseMiddlewareBox.pending(
                 request: request,
                 requestContext: base,
+                route: RouteContext(template: "/stamped", pathParameters: [:]),
                 reader: reader,
                 responseSender: responseSender,
                 responseHeaders: contents.responseHeaders.take()
@@ -322,7 +323,7 @@ struct StampedController: RouteContributor {
                 StampMiddleware<Builder.RequestContext.Base, Builder.Reader, Builder.ResponseSender>()
             }
             try await chain.intercept(input: box) { finalBox in
-                return try await finalBox.withPendingContents { _, _, _, sender, drain in
+                return try await finalBox.withPendingContents { _, _, _, _, sender, drain in
                     try await WireMVCOutcome.status(
                         .ok,
                         headerFields: WireMVCResponseHeaders.resolved(middleware: try await drain.drain())
@@ -407,6 +408,7 @@ struct GatedController: RouteContributor {
             let box = RequestResponseMiddlewareBox.pending(
                 request: request,
                 requestContext: base,
+                route: RouteContext(template: "/gated", pathParameters: [:]),
                 reader: reader,
                 responseSender: responseSender,
                 responseHeaders: contents.responseHeaders.take()
@@ -416,7 +418,7 @@ struct GatedController: RouteContributor {
                 ObserverMiddleware<Builder.RequestContext.Base, Builder.Reader, Builder.ResponseSender>()
             }
             try await chain.intercept(input: box) { finalBox in
-                return try await finalBox.withPendingContents { _, _, _, sender, drain in
+                return try await finalBox.withPendingContents { _, _, _, _, sender, drain in
                     try await WireMVCOutcome.status(
                         .ok,
                         headerFields: WireMVCResponseHeaders.resolved(middleware: try await drain.drain())

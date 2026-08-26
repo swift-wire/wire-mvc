@@ -812,16 +812,17 @@ struct RouteContributorGenerationTests {
                         Builder.ResponseSender: ~Copyable,
                         Builder.ResponseSender.Writer: ~Copyable
                     {
-                        builder.register(method: .get, path: "/x/y") { request, requestContext, _, reader, responseSender in
+                        builder.register(method: .get, path: "/x/y") { request, requestContext, pathParameters, reader, responseSender in
                             let wireMVCContextContents = requestContext.takeContents()
                             let wireMVCBaseContext = wireMVCContextContents.base
                             let wireMVCFoldRegistry = wireMVCContextContents.responseHeaders.take()
-                            let wireMVCBaseBox = RequestResponseMiddlewareBox.pending(request: request, requestContext: wireMVCBaseContext, reader: reader, responseSender: responseSender, responseHeaders: wireMVCFoldRegistry)
+                            let wireMVCRoute = RouteContext(template: "/x/y", pathParameters: pathParameters)
+                            let wireMVCBaseBox = RequestResponseMiddlewareBox.pending(request: request, requestContext: wireMVCBaseContext, route: wireMVCRoute, reader: reader, responseSender: responseSender, responseHeaders: wireMVCFoldRegistry)
                             let wireMVCChain = wireCompose {
                                 self._wireFactory_Keys_session.create(Builder.RequestContext.Base.self, Builder.Reader.self, Builder.ResponseSender.self)
                             }
                             try await wireMVCChain.intercept(input: wireMVCBaseBox) { wireMVCFinalBox in
-                                return try await wireMVCFinalBox.withPendingContents { _, _, _, responseSender, wireMVCResponseHeaderDrain in
+                                return try await wireMVCFinalBox.withPendingContents { _, _, _, _, responseSender, wireMVCResponseHeaderDrain in
                                 let wireMVCOutcome: WireMVCOutcome
                                 do {
                                     try await self._wireSubject.f()

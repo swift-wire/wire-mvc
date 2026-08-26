@@ -66,27 +66,31 @@ where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields?, Sender.Wr
         input: consuming Input,
         next: (consuming NextInput) async throws -> Return
     ) async throws -> Return {
-        // The registry comes out of the `pending` destructure and is threaded into the rebuilt box. It is
-        // a required parameter precisely so this can't be forgotten: a rebuild that dropped it would
-        // discard every header field contributed upstream, silently and only at runtime. Taking it from
-        // the destructure rather than off the box beforehand is also what keeps it disconnected — a
-        // captured local would be task-isolated, and the rebuilt box could not then be handed on.
+        // The registry and the route come out of the `pending` destructure and are threaded into the
+        // rebuilt box. Both are required parameters precisely so this can't be forgotten: a rebuild that
+        // dropped the registry would discard every header field contributed upstream, and one that dropped
+        // the route would unname the route for everything further in — silently, and only at runtime.
+        // Taking the registry from the destructure rather than off the box beforehand is also what keeps it
+        // disconnected — a captured local would be task-isolated, and the rebuilt box could not then be
+        // handed on.
         return try await input.withContents(
-            pending: { request, requestContext, reader, responseSender, responseHeaders in
+            pending: { request, requestContext, route, reader, responseSender, responseHeaders in
                 try await next(
                     .pending(
                         request: request,
                         requestContext: requestContext,
+                        route: route,
                         reader: reader,
                         responseSender: MultiPartSender(wrapping: responseSender),
                         responseHeaders: responseHeaders
                     )
                 )
             },
-            responded: { request in
-                // Nothing to thread: a `responded` box carries no registry, because the response is
-                // already written and nothing would ever drain one.
-                try await next(.responded(request: request))
+            responded: { request, route in
+                // The registry is the one thing not threaded: a `responded` box carries none, because the
+                // response is already written and nothing would ever drain one. The route is, for the same
+                // reason the request is — an observer further in still wants to know what was gated.
+                try await next(.responded(request: request, route: route))
             }
         )
     }
