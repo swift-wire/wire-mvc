@@ -180,3 +180,55 @@ struct TwoScopeContributionTests {
         }
     }
 }
+
+// Route identity on the box, end to end. `ControllerStamp` folds *once*, on the controller, and reports the
+// matched template and parameters of whichever route it wrapped; `Stamp` folds globally and reports that it
+// can see no route at all. Before this the fold was never told which route it was folded onto, so a
+// per-route rule needed a distinct `FactoryKey` and middleware type per route.
+@Suite(.wiremvc(.swiftHttpServer))
+struct RouteIdentityTests {
+    /// The template is the registration text, not the request path — `/ping/echo/{name}` for a request to
+    /// `/ping/echo/world`. That is the half a rule keys on: the values alone cannot tell two routes apart.
+    @Test func aFoldedMiddlewareSeesTheMatchedTemplateAndParameters() async throws {
+        try await withClient { client in
+            let fields = try #require(try await client.get("/ping/echo/world").head?.headerFields)
+            #expect(fields[.init("x-route-template")!] == "/ping/echo/{name}")
+            #expect(fields[.init("x-route-params")!] == "name=world")
+        }
+    }
+
+    /// The *same* middleware, folded once on the controller, reporting a different route — which is the
+    /// thing that could not be written before.
+    @Test func oneFoldReportsADifferentRoutePerRoute() async throws {
+        try await withClient { client in
+            let ping = try #require(try await client.get("/ping").head?.headerFields)
+            #expect(ping[.init("x-route-template")!] == "/ping")
+
+            let echo = try #require(try await client.get("/ping/echo/other").head?.headerFields)
+            #expect(echo[.init("x-route-template")!] == "/ping/echo/{name}")
+        }
+    }
+
+    /// A matched route that declares no parameters reports `(empty)`, never `(none)`. The box keeps "no
+    /// route" and "a route with no parameters" apart, and this is the response that proves the distinction
+    /// survives to a middleware rather than living only in a doc comment.
+    @Test func aRouteWithNoParametersIsNotTheSameAsNoRoute() async throws {
+        try await withClient { client in
+            let fields = try #require(try await client.get("/ping").head?.headerFields)
+            #expect(fields[.init("x-route-params")!] == "(empty)", "matched, and takes nothing")
+            #expect(fields[.init("x-route-scope")!] == "(none)", "the global tier, above the router")
+        }
+    }
+
+    /// The global tier folds around the router's `handle`, so no match has happened when its box is built —
+    /// on a matched route, on a gated one, and on the synthesised 404 alike. A global middleware reading a
+    /// template would be reading one that cannot exist yet.
+    @Test func theGlobalTierNeverSeesARoute() async throws {
+        try await withClient { client in
+            for path in ["/ping", "/ping/echo/world", "/gated", "/no/such/route"] {
+                let fields = try #require(try await client.get(path).head?.headerFields)
+                #expect(fields[.init("x-route-scope")!] == "(none)", "\(path)")
+            }
+        }
+    }
+}

@@ -297,16 +297,17 @@ private func renderRegisterIntrospection(access: String, constructions: [String]
         Builder.ResponseSender: ~Copyable,
         Builder.ResponseSender.Writer: ~Copyable
     {
-        builder.register(method: .get, path: path) { request, requestContext, _, reader, responseSender in
+        builder.register(method: .get, path: path) { request, requestContext, pathParameters, reader, responseSender in
             let \(contentsLocal) = requestContext.takeContents()
             let \(baseContextLocal) = \(contentsLocal).base
             let \(foldRegistryLocal) = \(contentsLocal).responseHeaders.take()
-            let wireMVCBaseBox = RequestResponseMiddlewareBox.pending(request: request, requestContext: \(baseContextLocal), reader: reader, responseSender: responseSender, responseHeaders: \(foldRegistryLocal))
+            let \(foldRouteLocal) = RouteContext(template: path, pathParameters: pathParameters)
+            let wireMVCBaseBox = RequestResponseMiddlewareBox.pending(request: request, requestContext: \(baseContextLocal), route: \(foldRouteLocal), reader: reader, responseSender: responseSender, responseHeaders: \(foldRegistryLocal))
             let wireMVCChain = wireCompose {
             \(constructions.joined(separator: "\n"))
             }
             try await wireMVCChain.intercept(input: wireMVCBaseBox) { wireMVCFinalBox in
-                try await wireMVCFinalBox.withPendingContents { _, _, _, responseSender, \(responseHeaderDrainLocal) in
+                try await wireMVCFinalBox.withPendingContents { _, _, _, _, responseSender, \(responseHeaderDrainLocal) in
                     _ = consume \(responseHeaderDrainLocal)
                     try await response.send(on: responseSender)
                 }

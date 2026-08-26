@@ -162,6 +162,10 @@ extension RouteBlockGenerator {
         guard let mapping = rawCallArgs(function) else { return nil }
         return emitRegisterClosure(
             registerCall: "builder.registerNotFound",
+            // The fallback is what answers when *nothing* matched, so there is no template to name and no
+            // parameters to have matched. It folds no middleware today, so nothing reads this; passing
+            // `nil` rather than a made-up template is what keeps that true if it ever does.
+            routeTemplate: nil,
             middleware: [],
             requestName: mapping.used.contains("request") ? "request" : "_",
             contextName: "requestContext",

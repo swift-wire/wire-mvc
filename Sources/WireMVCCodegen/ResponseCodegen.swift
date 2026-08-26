@@ -509,6 +509,12 @@ func unusedRegistryDiscard(_ registryLocal: String?) -> String {
 /// then — same value, but naming them apart keeps the two lifetimes legible in the generated file.
 let foldRegistryLocal = "wireMVCFoldRegistry"
 
+/// The matched ``RouteContext`` on its way into the fold's base box. Bound to a local rather than written
+/// inline so the generated `pending(…)` call stays one readable line, and so the route template appears
+/// once per route in the generated file — which is where a reader looks to check the fold is folded onto
+/// the route they think it is.
+let foldRouteLocal = "wireMVCRoute"
+
 /// The registry read off the *final* box, before `withPendingContents` consumes it — the terminal drains
 /// this when it builds the outcome. Bound only for a typed terminal with a fold; a raw handler has no
 /// outcome to drain into, and a route with no middleware has no registry at all.
