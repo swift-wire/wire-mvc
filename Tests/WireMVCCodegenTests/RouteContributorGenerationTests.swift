@@ -771,14 +771,20 @@ struct RouteContributorGenerationTests {
         #expect(rendered.diagnostics.isEmpty)
         #expect(
             rendered.source.contains(
-                "let (wireMVCController, wireMVCScopeTeardown) = try await self._wireEnterScope(request)"
+                "let wireMVCScopeEntry = try await self._wireEnterScope(request)"
             )
         )
         // The scope's teardown runs on every exit via an async defer (M5.4.5); BasicFormat may reflow the block.
         #expect(rendered.source.contains("defer {"))
         #expect(rendered.source.contains("_ = await wireMVCScopeTeardown()"))
+        #expect(rendered.source.contains("let wireMVCController = wireMVCScopeEntry._wireSubject"))
+        #expect(rendered.source.contains("let wireMVCScopeTeardown = wireMVCScopeEntry._wireScopeTeardown"))
         #expect(rendered.source.contains("try await wireMVCController.get(id: id)"))
-        #expect(!rendered.source.contains("_wireSubject"))
+        // `self._wireSubject` — the subject a *holding* proxy stores — is never touched by a scoped
+        // controller; it is constructed per request instead. Spelled with the `self.` receiver because
+        // `_wireSubject` alone is now also the entry value's field name, and matching the bare name would
+        // assert nothing.
+        #expect(!rendered.source.contains("self._wireSubject"))
     }
 
     @Test func middlewareFactoryKeyFold() {
@@ -1091,7 +1097,7 @@ struct RouteContributorGenerationTests {
         let generated = rendered.source
         let doOpen = generated.range(of: "do {")
         let scopeEntry = generated.range(
-            of: "let (wireMVCController, wireMVCScopeTeardown) = try await self._wireEnterScope(request)"
+            of: "let wireMVCScopeEntry = try await self._wireEnterScope(request)"
         )
         #expect(doOpen != nil && scopeEntry != nil)
         #expect(doOpen!.lowerBound < scopeEntry!.lowerBound)  // scope entry is inside the do
@@ -1740,7 +1746,7 @@ struct RouteContributorGenerationTests {
         )
         #expect(
             rendered.source.contains(
-                "let (wireMVCController, wireMVCScopeTeardown) = try await self._wireEnterScope(request)"
+                "let wireMVCScopeEntry = try await self._wireEnterScope(request)"
             )
         )
         #expect(!rendered.source.contains("wireMVCVariantProxy"))
