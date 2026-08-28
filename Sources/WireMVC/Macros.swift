@@ -33,6 +33,20 @@ public let wireMVCMiddlewareAlias = WireAdapterAnnotationV1(
     capability: .injectsFromGraph
 )
 
+/// `@RequestBinding(Worker.self, …)` declares that the annotated wrapper depends on `Worker` — the same
+/// `.injectsFromGraph` capability `@Middleware` uses, and for once *not* to lift anything: a property
+/// wrapper is no binding, so nothing is injected onto it.
+///
+/// What it does is let swift-wire follow the link. A route parameter names the wrapper, the wrapper's
+/// declaration names the worker, and if the worker is a binding in the controller's own scope the scope
+/// entry hands it back beside the controller. Declaring the capability is the whole of that handshake:
+/// wire-mvc reads this argument to emit the bind, and swift-wire reads it to know what to yield, neither
+/// telling the other.
+public let wireMVCRequestBindingAlias = WireAdapterAnnotationV1(
+    annotation: "RequestBinding",
+    capability: .injectsFromGraph
+)
+
 /// `@Coding(key)` names a keyed `WireMVCCoding` binding whose settings this scope's routes encode and
 /// decode with — dates, and JSON options.
 ///
@@ -179,6 +193,51 @@ public macro Delete() = #externalMacro(module: "WireMVCMacros", type: "RouteMark
 @attached(peer)
 public macro RequestBinding(_ obligations: WireMVCBindingObligation..., stream: String? = nil) =
     #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
+
+/// A binding whose work is done by a **separate type**, resolved from the request scope.
+///
+/// The overload above is the ordinary shape: a property wrapper generic over the handler's parameter type,
+/// whose `static bind` decodes the value out of the request. That is right while everything needed is
+/// already in the request — a path segment, a header, a body.
+///
+/// It is not enough for a binding that *resolves*: producing the value may need a store to read from or a
+/// policy to consult, which a static method cannot reach. The obvious fix — make the binding a
+/// `@Scoped(seed:)` graph binding with `@Inject` members — collides with what a parameter attribute has to
+/// be. Only a property wrapper attaches to a parameter, its instance holds the value the call site
+/// supplies, and a graph binding's instance holds the dependencies the graph supplied; no one type can
+/// have both initialisers be total, since whichever runs is missing what the other stores.
+///
+/// So there are two types, each whole. The wrapper stays exactly what it was and names its worker:
+///
+///     @RequestBinding(NoteAuthorizer.self, .path)
+///     @propertyWrapper
+///     public struct AuthorizedNote {
+///         public var wrappedValue: Note
+///         public init(wrappedValue: Note) { self.wrappedValue = wrappedValue }
+///         public init(wrappedValue: Note, _ name: String) { self.wrappedValue = wrappedValue }
+///     }
+///
+///     @Scoped(seed: HTTPRequest.self)
+///     public struct NoteAuthorizer: ScopedRequestBound {
+///         public typealias Value = Note
+///         @Inject var backend: any NoteBackend
+///         public func bind(…) async throws -> Note { … }
+///     }
+///
+/// **The author writes nothing to connect them to the graph.** This annotation declares swift-wire's
+/// `.injectsFromGraph` capability, so a route parameter naming the wrapper is what makes the scope entry
+/// hand back the worker — one hop out, through this argument. There is no second place to keep in step and
+/// no combination to get wrong: the worker arrives because a route asked for it, or the generator says why
+/// it could not.
+///
+/// The worker must be bound in the **controller's own** scope. A controller that is not scoped enters
+/// none, and a sibling seed's scope entry constructs only its own; both are refused at the parameter.
+@attached(peer)
+public macro RequestBinding<Transform>(
+    _ transform: Transform.Type,
+    _ obligations: WireMVCBindingObligation...,
+    stream: String? = nil
+) = #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
 
 // ── Response markers (peer, no-op — read by `@Controller`) ──
 

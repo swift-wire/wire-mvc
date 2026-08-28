@@ -62,6 +62,100 @@ public protocol RequestBound {
     ) async throws -> Value
 }
 
+/// A request binding that is **also a graph binding**, resolved from the request scope rather than
+/// constructed by the generated witness.
+///
+/// ``RequestBound`` is a property wrapper generic over the handler's parameter type, and its `bind` is
+/// `static` for that reason: `Path<String>` has nothing to hold, so there is nothing to construct and
+/// nothing to inject into. That is right for a binding that *decodes* — a path segment, a header, a JSON
+/// body — where everything needed is already in the request.
+///
+/// It is not enough for a binding that *resolves*. Producing the value may need a store to read from, a
+/// policy engine to consult, the caller the request scope built — none of which a static method can reach.
+/// So this binding is an ordinary `@Scoped(seed:)` type with `@Inject` members like any other, and `bind`
+/// is an instance method on the instance the scope constructed:
+///
+///     @Scoped(seed: HTTPRequest.self)
+///     @RequestBinding(.path)
+///     public struct AuthorizedDocument: ScopedRequestBound {
+///         public typealias Value = Document
+///         @Inject var documents: DocumentStore
+///         @Inject var policies: PolicyEngine
+///         @Inject var caller: Caller
+///
+///         public func bind(
+///             name: String, request: HTTPRequest,
+///             pathParameters: [String: Substring], body: [UInt8]?
+///         ) async throws -> Document { … }
+///     }
+///
+/// **The seam is already on the right side of the scope**, which is what makes this cheap: binding happens
+/// *after* `_wireEnterScope` in every generated route, so there is no reordering, no lazy handle and no
+/// assisted parameter. The instance arrives on the scope entry alongside the controller, because a route
+/// parameter naming a scope binding is what tells swift-wire to hand it back.
+///
+/// **What it buys is not brevity.** A route that takes a `Document` cannot skip the authorisation check,
+/// because the check is how a `Document` comes into existence — where a handler that loads and then
+/// authorises restates that ordering per route, and a new route that omits the second line compiles,
+/// serves, and is unauthorised with nothing but review to catch it. An unauthorised route stops being
+/// writable, which is the same idiom one level in: authentication is already a precondition of the scope
+/// existing.
+///
+/// > Important: the binding's scope must be the **controller's** scope. A `@Singleton @Controller` enters
+/// > no scope, so there is nothing to resolve the binding from, and the generator says so rather than
+/// > emitting a reference to a value that was never constructed.
+public protocol ScopedRequestBound {
+    /// The value handed to the handler parameter.
+    associatedtype Value
+
+    /// Produce the bound value from the request, on the instance the scope constructed. The parameters are
+    /// ``RequestBound/bind(name:request:pathParameters:body:)``'s, and mean the same things; what differs
+    /// is `self`, which is why this exists.
+    func bind(
+        name: String,
+        request: HTTPRequest,
+        pathParameters: [String: Substring],
+        body: [UInt8]?
+    ) async throws -> Value
+}
+
+extension ScopedRequestBound {
+    /// The coding-aware entry point the generated witness calls, defaulted for the same reason
+    /// ``RequestBound``'s is: a binding that does not care about coding inherits this and ignores it.
+    public func bind(
+        name: String,
+        request: HTTPRequest,
+        pathParameters: [String: Substring],
+        body: [UInt8]?,
+        coding: WireMVCCoding
+    ) async throws -> Value {
+        try await bind(name: name, request: request, pathParameters: pathParameters, body: body)
+    }
+
+    /// Like `bind`, but `nil` for an absent value rather than a throw — the instance counterpart of
+    /// ``RequestBound/bindOptional(name:request:pathParameters:body:coding:)``, backing an optional or
+    /// defaulted handler parameter.
+    public func bindOptional(
+        name: String,
+        request: HTTPRequest,
+        pathParameters: [String: Substring],
+        body: [UInt8]?,
+        coding: WireMVCCoding = .default
+    ) async throws -> Value? {
+        do {
+            return try await bind(
+                name: name,
+                request: request,
+                pathParameters: pathParameters,
+                body: body,
+                coding: coding
+            )
+        } catch let error as WireMVCBindingError where error.isAbsence {
+            return nil
+        }
+    }
+}
+
 extension RequestBound {
     /// The coding-aware entry point the generated witness calls.
     ///

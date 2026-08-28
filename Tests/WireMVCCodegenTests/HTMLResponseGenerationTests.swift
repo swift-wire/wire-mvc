@@ -405,7 +405,7 @@ struct HTMLResponseClientTests {
                     pathPrefix: "/pages",
                     discoveredBindings: WireMVCBuiltIns.bindings,
                     discoveredModes: WireMVCBuiltIns.modes
-                ) ?? ""
+                ).source ?? ""
             }
         }
         fatalError("fixture has no controller")

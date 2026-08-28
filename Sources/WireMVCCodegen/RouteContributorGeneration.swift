@@ -485,17 +485,19 @@ private func renderControllerExtensions(
 
             // The typed client is a test-only surface: it exists to be driven by a suite, and a program
             // consumer must not link `TestClient`.
-            if testEntry,
-                let client = renderControllerClient(
-                    controller: found.declaration,
-                    pathPrefix: found.pathPrefix,
-                    discoveredBindings: discoveredBindings,
-                    discoveredModes: discoveredModes
-                )
-            {
+            // The client is emitted only for a test target, but its diagnostics are collected either way:
+            // an omitted route is a fact about the *controller*, and reporting it only when a suite happens
+            // to be building would make it appear and disappear with the target.
+            let renderedClient = renderControllerClient(
+                controller: found.declaration,
+                pathPrefix: found.pathPrefix,
+                discoveredBindings: discoveredBindings,
+                discoveredModes: discoveredModes
+            )
+            if testEntry, let client = renderedClient.source {
                 clients.append((found.declaration.name, client))
             }
-            for diagnostic in rendered.diagnostics {
+            for diagnostic in rendered.diagnostics + renderedClient.diagnostics {
                 located.append(
                     LocatedRouteDiagnostic(
                         message: diagnostic.message,

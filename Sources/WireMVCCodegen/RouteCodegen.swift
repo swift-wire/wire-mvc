@@ -453,6 +453,41 @@ extension RouteBlockGenerator {
                 )
                 return nil
             }
+            // A binding that delegates to a worker needs a scope to resolve the worker from, and the
+            // *same* one. Both are the parameter's mistake rather than either type's, so they are reported
+            // here — naming the worker as well, since the parameter does not mention it.
+            if let declared = discoveredBindings[binding.wrapper], let worker = declared.transform,
+                let workerSeed = declared.transformSeed
+            {
+                guard let controllerSeed = scopedSeedType else {
+                    diagnostics.append(
+                        RouteCodegenDiagnostic(
+                            .scopedBindingOnUnscopedController(
+                                binding: binding.wrapper,
+                                worker: worker,
+                                parameter: internalName,
+                                seed: workerSeed
+                            ),
+                            at: param
+                        )
+                    )
+                    return nil
+                }
+                guard workerSeed == controllerSeed else {
+                    diagnostics.append(
+                        RouteCodegenDiagnostic(
+                            .scopedBindingSeedMismatch(
+                                binding: binding.wrapper,
+                                worker: worker,
+                                workerSeed: workerSeed,
+                                controllerSeed: controllerSeed
+                            ),
+                            at: param
+                        )
+                    )
+                    return nil
+                }
+            }
             let keyword = "let"
             binds.append(
                 "\(keyword) \(internalName) = \(bindExpression(for: param, binding: binding, name: bindingName, hasBody: hasBody, function: function))"
@@ -488,14 +523,24 @@ extension RouteBlockGenerator {
         let args =
             "name: \"\(name)\", request: request, pathParameters: pathParameters, body: \(bodyArgument), "
             + "coding: \(codingExpression)"
+        // A **graph-aware** binding delegates to a worker the scope entry handed back beside the
+        // controller, so the value is bound off that instance rather than constructed. The field is named
+        // after the *worker* — `@AuthorizedNote` is the wrapper the parameter had to be, and
+        // `NoteAuthorizer` is what swift-wire yielded, one hop out through the wrapper's own declaration.
+        // Both sides derive the field name from the worker's type by one rule (`scopeYieldFieldName`).
+        let receiver = (discoveredBindings[binding.wrapper]?.transform).map {
+            "\(scopeEntryResultLocalName).\(scopeYieldFieldName(forType: $0))"
+        }
         if type.hasSuffix("?") {
             let underlying = String(type.dropLast())
-            return "try await \(binding.wrapper)<\(underlying)>.bindOptional(\(args))"
+            let target = receiver ?? "\(binding.wrapper)<\(underlying)>"
+            return "try await \(target).bindOptional(\(args))"
         }
         if let defaultValue = param.defaultValue?.value.trimmedDescription {
-            return "try await \(binding.wrapper)<\(type)>.bindOptional(\(args)) ?? \(defaultValue)"
+            let target = receiver ?? "\(binding.wrapper)<\(type)>"
+            return "try await \(target).bindOptional(\(args)) ?? \(defaultValue)"
         }
-        return "try await \(binding.wrapper)<\(type)>.bind(\(args))"
+        return "try await \(receiver ?? "\(binding.wrapper)<\(type)>").bind(\(args))"
     }
 
     /// The registration closure body. Compute the outcome — collecting the body first when a
