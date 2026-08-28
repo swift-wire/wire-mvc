@@ -141,6 +141,17 @@ public let contributorProxySubjectAccessor = "_wireSubject"
 /// domain witness names the same field the structural half declares.
 public let contributorProxyScopeEntryAccessor = "_wireEnterScope"
 
+/// The fields of the `_WireScopeEntry_<Controller>` value `_wireEnterScope` returns — WireGen's
+/// `scopeEntrySubjectFieldName` / `scopeTeardownLocalName` contract, restated here for the same reason
+/// the accessor above is: the domain witness must name what the structural half declares.
+///
+/// A **struct rather than a tuple**, because the entry is a shape that grows: swift-wire's
+/// `.yieldsFromScope` lets a scope hand back request-scoped bindings alongside the controller. Read by
+/// position, an added binding would move the teardown and this codegen would keep compiling while reading
+/// the wrong element; read by name, an addition is additive.
+public let wireScopeEntrySubjectField = "_wireSubject"
+public let wireScopeEntryTeardownField = "_wireScopeTeardown"
+
 /// Everything the generator learns by **reading declarations** rather than by being told: request bindings
 /// and their obligations, response modes and their (terminal, codec, client body) triple, and the warnings
 /// that scan produces.

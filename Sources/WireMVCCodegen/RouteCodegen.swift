@@ -94,11 +94,20 @@ struct RouteBlockGenerator {
     let scopeEntryLocalName = "wireMVCController"
 
     /// The per-request scope-teardown closure's local name — the `@Teardown` walk for the request scope's
-    /// own bindings, returned by `_wireEnterScope` alongside the controller (M5.4.5).
+    /// own bindings, handed back by `_wireEnterScope` alongside the controller (M5.4.5).
     private let scopeTeardownLocalName = "wireMVCScopeTeardown"
 
+    /// The local the scope entry's result is bound to, before its fields are read off.
+    ///
+    /// `_wireEnterScope` returns a single `_WireScopeEntry_<Controller>` value rather than a tuple, so what
+    /// used to be one destructuring line is a bind plus two reads. That shape is what makes a scope able to
+    /// hand back *more* than its subject without every reader shifting: a tuple is read by position, so a
+    /// binding added to the entry would move the teardown and this codegen would go on compiling while
+    /// reading the wrong element.
+    private let scopeEntryResultLocalName = "wireMVCScopeEntry"
+
     /// The lines that enter the request scope, prepended to a scoped route's terminal body. `_wireEnterScope`
-    /// returns `(controller, teardown)`; the controller is dispatched on, and an **async `defer`** runs the
+    /// returns an entry value carrying the controller and the teardown; the controller is dispatched on, and an **async `defer`** runs the
     /// scope teardown on *every* exit of the enclosing scope (handler return, a mapped/rethrown throw) — and,
     /// being declared after entry, is skipped when entry itself throws (nothing was constructed). Teardown
     /// errors are collected by the closure and discarded here (the response is the request's outcome). The
@@ -118,8 +127,13 @@ struct RouteBlockGenerator {
         } else {
             entryCall = "self.\(contributorProxyScopeEntryAccessor)(wireMVCDoubles)"
         }
+        // Bound and then read by field name, not destructured: the entry is one value whose shape can grow.
+        // The `defer` is still declared *after* entry, so it is skipped when entry itself throws — nothing
+        // was constructed to tear down.
         return """
-            let (\(scopeEntryLocalName), \(scopeTeardownLocalName)) = try await \(entryCall)
+            let \(scopeEntryResultLocalName) = try await \(entryCall)
+            let \(scopeEntryLocalName) = \(scopeEntryResultLocalName).\(wireScopeEntrySubjectField)
+            let \(scopeTeardownLocalName) = \(scopeEntryResultLocalName).\(wireScopeEntryTeardownField)
             defer { _ = await \(scopeTeardownLocalName)() }
 
             """
