@@ -7,6 +7,9 @@ public import SwiftSyntax
 /// as `file:line:col: error:`).
 public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
     case unannotatedParameter(String)
+    case scopedBindingOnUnscopedController(binding: String, worker: String, parameter: String, seed: String)
+    case scopedBindingSeedMismatch(binding: String, worker: String, workerSeed: String, controllerSeed: String)
+    case routeOmittedFromClient(route: String, binding: String, parameter: String)
     case pathPlaceholderMissing(name: String, path: String)
     case wildcardPathSegment(path: String, segment: String)
     case catchAllNotLastSegment(path: String, segment: String)
@@ -44,6 +47,12 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
         switch self {
         case .unannotatedParameter(let name):
             "handler parameter '\(name)' needs a binding annotation — one of @Path, @Query, @JSONBody, @Header"
+        case .scopedBindingOnUnscopedController(let binding, let worker, let parameter, let seed):
+            "'@\(binding) \(parameter)' resolves through '\(worker)', which is bound in @Scoped(seed: \(seed).self) — but this controller is not scoped, so its routes hold the controller directly and enter no scope, and there is nothing to construct '\(worker)' in. Mark the controller @Scoped(seed: \(seed).self)"
+        case .routeOmittedFromClient(let route, let binding, let parameter):
+            "'\(route)' is omitted from the generated client: '@\(binding) \(parameter)' resolves from the request scope, so a client has no value to send for it — the handler's parameter type is what the *scope* produced, not what the caller supplies. The route stays drivable through the untyped client"
+        case .scopedBindingSeedMismatch(let binding, let worker, let workerSeed, let controllerSeed):
+            "'@\(binding)' resolves through '\(worker)', which is bound in @Scoped(seed: \(workerSeed).self), but this controller is in @Scoped(seed: \(controllerSeed).self) — sibling seeded scopes are isolated by design, so the controller's scope entry constructs only its own. Bind '\(worker)' in @Scoped(seed: \(controllerSeed).self)"
         case .pathPlaceholderMissing(let name, let path):
             "@Path '\(name)' has no matching '{\(name)}' placeholder in the route path \"\(path)\""
         case .wildcardPathSegment(let path, let segment):
@@ -117,6 +126,10 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
     public var severity: DiagnosticSeverity {
         switch self {
         case .bindingMissingSendConformance: .warning
+        // Omitting a route is a *choice* the generator makes, not a mistake the author made — the route
+        // serves correctly and stays drivable untyped. Reported so the omission is visible (#87 is what a
+        // silent one costs), at a severity that does not fail a build over a client nobody may want.
+        case .routeOmittedFromClient: .warning
         default: .error
         }
     }
@@ -125,6 +138,9 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
         let id: String
         switch self {
         case .unannotatedParameter: id = "unannotatedParameter"
+        case .scopedBindingOnUnscopedController: id = "scopedBindingOnUnscopedController"
+        case .scopedBindingSeedMismatch: id = "scopedBindingSeedMismatch"
+        case .routeOmittedFromClient: id = "routeOmittedFromClient"
         case .pathPlaceholderMissing: id = "pathPlaceholderMissing"
         case .wildcardPathSegment: id = "wildcardPathSegment"
         case .catchAllNotLastSegment: id = "catchAllNotLastSegment"

@@ -82,14 +82,16 @@ func renderControllerClient(
     pathPrefix: String,
     discoveredBindings: [String: DeclaredRequestBinding],
     discoveredModes: [String: DeclaredResponseMode]
-) -> String? {
+) -> (source: String?, diagnostics: [RouteCodegenDiagnostic]) {
+    var diagnostics: [RouteCodegenDiagnostic] = []
     let routes = clientRoutes(
         of: controller,
         pathPrefix: pathPrefix,
         discoveredBindings: discoveredBindings,
-        discoveredModes: discoveredModes
+        discoveredModes: discoveredModes,
+        diagnostics: &diagnostics
     )
-    guard !routes.isEmpty else { return nil }
+    guard !routes.isEmpty else { return (nil, diagnostics) }
 
     let typeName = controllerClientTypeName(controller.name)
     let methods = routes.map(renderClientMethod).joined(separator: "\n\n")
@@ -102,7 +104,7 @@ func renderControllerClient(
         \(methods)
         }
         """
-    return Parser.parse(source: raw).formatted().description
+    return (Parser.parse(source: raw).formatted().description, diagnostics)
 }
 
 /// One route's method: the bindings become parameters, the response type becomes the return, and the body
@@ -304,9 +306,12 @@ func clientRoutes(
     of controller: ControllerDeclaration,
     pathPrefix: String,
     discoveredBindings: [String: DeclaredRequestBinding],
-    discoveredModes: [String: DeclaredResponseMode]
+    discoveredModes: [String: DeclaredResponseMode],
+    diagnostics: inout [RouteCodegenDiagnostic]
 ) -> [ClientRoute] {
-    controller.functions.compactMap { function in
+    var collected: [RouteCodegenDiagnostic] = []
+    defer { diagnostics.append(contentsOf: collected) }
+    return controller.functions.compactMap { function in
         guard let verb = clientVerb(from: function.attributes) else { return nil }
         let pathTemplate = routeJoinPath(pathPrefix, verb.path ?? "")
 
@@ -337,6 +342,11 @@ func clientRoutes(
             else { return false }
             return discoveredBindings[binding.wrapper]?.contains(.bodyStream) ?? false
         }) {
+            return nil
+        }
+
+        if let omission = scopeResolvedOmission(of: function, discoveredBindings: discoveredBindings) {
+            collected.append(omission)
             return nil
         }
 
@@ -505,4 +515,30 @@ private func hasAttribute(_ name: String, on attributes: AttributeListSyntax) ->
         }
         return false
     }
+}
+
+/// The diagnostic for a route the client cannot express, or `nil` when it can.
+///
+/// A **graph-aware** binding has no send side. Its handler parameter type is what the *scope* produced — a
+/// `Document` the worker loaded and authorised — and a caller holds nothing of the kind; what it would
+/// send is an id, which only the binding's declaration could name. So the route is omitted, and
+/// *reported*: a route that disappears from a client while reporting nothing is #87.
+private func scopeResolvedOmission(
+    of function: FunctionDeclSyntax,
+    discoveredBindings: [String: DeclaredRequestBinding]
+) -> RouteCodegenDiagnostic? {
+    for parameter in function.signature.parameterClause.parameters {
+        guard let binding = clientBinding(from: parameter.attributes, discoveredBindings: discoveredBindings),
+            discoveredBindings[binding.wrapper]?.isScopeResolved == true
+        else { continue }
+        return RouteCodegenDiagnostic(
+            .routeOmittedFromClient(
+                route: function.name.text,
+                binding: binding.wrapper,
+                parameter: (parameter.secondName ?? parameter.firstName).text
+            ),
+            at: parameter
+        )
+    }
+    return nil
 }

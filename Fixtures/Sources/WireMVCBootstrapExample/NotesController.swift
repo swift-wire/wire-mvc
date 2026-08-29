@@ -76,6 +76,17 @@ package struct NotesController: Sendable {
     package func note(@Path id: String) async -> Note {
         Note(value: stamp.stamp(await backend.note(id)))
     }
+
+    /// The graph-aware binding, served. The handler is one line and has no ordering to get wrong: the
+    /// `Note` it returns is the one ``NoteAuthorizer`` produced, refusal included. Compare `note` above,
+    /// which fetches and — if it had a check — could forget it.
+    @Get("/authorized/{id}")
+    @JSONResponse
+    @ErrorResponse(NoteForbidden.self, .forbidden)
+    @ErrorResponse(NoteNotFound.self, .notFound)
+    package func authorizedNote(@AuthorizedNote("read") note: Note) -> Note {
+        note
+    }
 }
 
 @Scoped(seed: HTTPRequest.self)

@@ -453,7 +453,7 @@ struct UserBindingIntegrationTests {
                     pathPrefix: "/session",
                     discoveredBindings: bindings,
                     discoveredModes: WireMVCBuiltIns.modes
-                )
+                ).source
             }
         }
         return nil

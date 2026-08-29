@@ -41,7 +41,7 @@ struct ControllerClientGenerationTests {
                 pathPrefix: "/notes",
                 discoveredBindings: WireMVCBuiltIns.bindings,
                 discoveredModes: WireMVCBuiltIns.modes
-            ) == """
+            ).source == """
                 /// Typed access to `NotesController`'s routes, derived from its verb annotations. Each method
                 /// returns the route's decoded response and throws `WireMVCRouteError` for a non-2xx.
                 struct NotesControllerClient {
@@ -82,7 +82,7 @@ struct ControllerClientGenerationTests {
                 pathPrefix: "/todos",
                 discoveredBindings: WireMVCBuiltIns.bindings,
                 discoveredModes: WireMVCBuiltIns.modes
-            )
+            ).source
         )
         // An optional binding is guarded rather than mapped: presence is the generated code's business,
         // mirroring the server's `bind`/`bindOptional` split.
@@ -110,7 +110,7 @@ struct ControllerClientGenerationTests {
                 pathPrefix: "/todos",
                 discoveredBindings: WireMVCBuiltIns.bindings,
                 discoveredModes: WireMVCBuiltIns.modes
-            )
+            ).source
         )
         // The body binding supplies its own bytes *and* content type, so the client no longer believes
         // JSON is the only codec.
@@ -149,7 +149,7 @@ struct ControllerClientGenerationTests {
                 pathPrefix: "/todos",
                 discoveredBindings: WireMVCBuiltIns.bindings,
                 discoveredModes: WireMVCBuiltIns.modes
-            )
+            ).source
         )
         #expect(rendered.contains("func remove(id: Int, headers: [String: String] = [:]) async throws {"))
         #expect(rendered.contains("_ = try await client.routeResponse("))
@@ -181,7 +181,7 @@ struct ControllerClientGenerationTests {
                 pathPrefix: "/exports",
                 discoveredBindings: WireMVCBuiltIns.bindings,
                 discoveredModes: WireMVCBuiltIns.modes
-            )
+            ).source
         )
         #expect(rendered.contains("func fetch(id: String, headers: [String: String] = [:]) async throws -> Export"))
         #expect(rendered.contains("func stream<WireMVCRawReturn: ~Copyable>("))
@@ -217,7 +217,7 @@ struct ControllerClientGenerationTests {
                 pathPrefix: "/exports",
                 discoveredBindings: WireMVCBuiltIns.bindings,
                 discoveredModes: WireMVCBuiltIns.modes
-            )
+            ).source
         )
         #expect(rendered.contains("func part<WireMVCRawReturn: ~Copyable>(id: String, part: String,"))
         #expect(rendered.contains(#"pathParameters: ["id": String(id), "part": String(part)]"#))
@@ -250,7 +250,7 @@ struct ControllerClientGenerationTests {
                 pathPrefix: "/exports",
                 discoveredBindings: WireMVCBuiltIns.bindings,
                 discoveredModes: WireMVCBuiltIns.modes
-            ) == nil
+            ).source == nil
         )
     }
 

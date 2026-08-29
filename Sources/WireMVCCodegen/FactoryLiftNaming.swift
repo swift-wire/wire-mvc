@@ -40,3 +40,35 @@ public func codingProxyField(for reference: String) -> String {
         ? dependencyPropertyName(forType: String(reference.dropLast(".self".count)))
         : dependencyPropertyName(forKey: reference)
 }
+
+/// The scope-entry field a graph-aware request binding is read through — the same name swift-wire gives
+/// the yield it hands back beside the subject.
+///
+/// swift-wire names every binding `lowerCamel(sanitize(type))`, where the sanitiser turns `<` into `Of`,
+/// `,` into `And`, upper-cases the letter after either, and drops everything else. Restated here for the
+/// reason this whole file exists: neither side sees the other's output, so the name is computed twice from
+/// one input and the two agree by running one rule. `AuthorizedDocument` → `authorizedDocument`; a generic
+/// binding `Authorized<Document>` → `authorizedOfDocument`.
+public func scopeYieldFieldName(forType type: String) -> String {
+    var sanitised = ""
+    var capitaliseNext = false
+    for character in type {
+        switch character {
+        case "<":
+            sanitised += "Of"
+            capitaliseNext = true
+        case ",":
+            sanitised += "And"
+            capitaliseNext = true
+        case _ where character.isLetter || character.isNumber || character == "_":
+            sanitised += capitaliseNext ? character.uppercased() : String(character)
+            capitaliseNext = false
+        default:
+            // Whitespace, `>`, `?`, `!`, `[`, `]`, `&`, `:`, `.`, `(`, `)` — dropped, as swift-wire drops
+            // them.
+            break
+        }
+    }
+    guard let first = sanitised.first else { return sanitised }
+    return first.lowercased() + sanitised.dropFirst()
+}

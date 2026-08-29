@@ -49,11 +49,43 @@ public struct DeclaredRequestBinding: Sendable, Equatable {
     /// The stream type a `.bodyStream` terminal constructs, e.g. `"MultipartParts"`. `nil` for every other
     /// kind of binding, which builds its value through `bind` / `bindReader` instead.
     public let streamType: String?
+    /// The type that does this binding's work, when the binding delegates — `@RequestBinding(X.self, …)`.
+    /// `nil` for an ordinary binding, whose own static `bind` does it.
+    ///
+    /// **Two types, because one cannot do both jobs.** A parameter attribute has to be a property wrapper:
+    /// the language allows nothing else there, and the wrapper's instance holds the value the call site
+    /// supplies. A binding that *resolves* rather than decodes needs graph dependencies, which means its
+    /// instance holds those instead — and no single type can have both initialisers be total, since
+    /// whichever runs is missing what the other stores. So the wrapper stays what it always was, and names
+    /// the worker.
+    ///
+    /// swift-wire reads the same argument, because `@RequestBinding` declares `.injectsFromGraph`: a
+    /// parameter naming the wrapper makes the scope entry yield the worker, one hop out. Neither side is
+    /// told about the other — both read the attribute the author wrote.
+    public let transform: String?
+    /// The seed of the scope `transform` is bound in, read off its own `@Scoped(seed:)` declaration —
+    /// `"HTTPRequest"` for the request scope. `nil` when there is no transform, or when its declaration is
+    /// not in the parsed sources.
+    ///
+    /// Resolved by the scan rather than threaded separately: it already walks every file, so it can find
+    /// the worker's declaration beside the wrapper's, and a caller that had to pass a second table could
+    /// pass one that disagreed.
+    public let transformSeed: String?
 
-    public init(obligations: BindingObligations, streamType: String? = nil) {
+    public init(
+        obligations: BindingObligations,
+        streamType: String? = nil,
+        transform: String? = nil,
+        transformSeed: String? = nil
+    ) {
         self.obligations = obligations
         self.streamType = streamType
+        self.transform = transform
+        self.transformSeed = transformSeed
     }
+
+    /// Whether the witness must resolve this binding from the request scope rather than construct it.
+    public var isScopeResolved: Bool { transform != nil }
 
     public func contains(_ obligation: BindingObligations) -> Bool { obligations.contains(obligation) }
     public func isDisjoint(with other: BindingObligations) -> Bool { obligations.isDisjoint(with: other) }
@@ -125,18 +157,33 @@ private final class ConformanceScanner: SyntaxVisitor {
 /// if it ever arises rather than a silent last-wins.
 public func scanRequestBindings(in files: [SourceFileSyntax]) -> [String: DeclaredRequestBinding] {
     var found: [String: DeclaredRequestBinding] = [:]
+    var seeds: [String: String] = [:]
     for file in files {
         let scanner = RequestBindingScanner(viewMode: .sourceAccurate)
         scanner.walk(file)
         found.merge(scanner.found) { existing, _ in existing }
+        seeds.merge(scanner.scopedSeeds) { existing, _ in existing }
     }
-    return found
+    // A second pass rather than a lookup during the walk: a worker may be declared after the wrapper that
+    // names it, or in another file entirely, and a scan that resolved as it went would depend on which.
+    return found.mapValues { binding in
+        guard let transform = binding.transform else { return binding }
+        return DeclaredRequestBinding(
+            obligations: binding.obligations,
+            streamType: binding.streamType,
+            transform: transform,
+            transformSeed: seeds[transform]
+        )
+    }
 }
 
 /// Walks rather than iterating top-level statements: a binding may be declared inside a namespace enum, and
 /// the scan should not depend on where its author put it.
 private final class RequestBindingScanner: SyntaxVisitor {
     var found: [String: DeclaredRequestBinding] = [:]
+    /// Every `@Scoped(seed: X.self)` type in this file, by name — the workers a binding may name, whose
+    /// scope decides which controllers can use it.
+    var scopedSeeds: [String: String] = [:]
 
     override func visit(_ node: StructDeclSyntax) -> SyntaxVisitorContinueKind {
         record(name: node.name.text, attributes: node.attributes)
@@ -159,10 +206,25 @@ private final class RequestBindingScanner: SyntaxVisitor {
     }
 
     private func record(name: String, attributes: AttributeListSyntax) {
-        for case let .attribute(attribute) in attributes
-        where attribute.attributeName.trimmedDescription == "RequestBinding" {
-            found[name] = Self.declaration(of: attribute)
+        for case let .attribute(attribute) in attributes {
+            switch attribute.attributeName.trimmedDescription {
+            case "RequestBinding":
+                found[name] = Self.declaration(of: attribute)
+            case "Scoped":
+                if let seed = Self.seed(of: attribute) { scopedSeeds[name] = seed }
+            default:
+                break
+            }
         }
+    }
+
+    /// `@Scoped(seed: X.self)` → `"X"`, spelled as the controller's own seed is where the two are compared.
+    private static func seed(of attribute: AttributeSyntax) -> String? {
+        guard case let .argumentList(arguments) = attribute.arguments,
+            let seed = arguments.first(where: { $0.label?.text == "seed" })
+        else { return nil }
+        let written = seed.expression.trimmedDescription
+        return written.hasSuffix(".self") ? String(written.dropLast(".self".count)) : written
     }
 
     /// `@RequestBinding` → none; `@RequestBinding(.body)` → body; `@RequestBinding(.body, .path)` → both.
@@ -176,7 +238,16 @@ private final class RequestBindingScanner: SyntaxVisitor {
         }
         var result: BindingObligations = []
         var streamType: String?
+        var transform: String?
         for argument in arguments {
+            // The leading `X.self` — the type that does the work. Distinguished by its *spelling* rather
+            // than by position: an obligation is a member reference (`.body`), and a transform is a
+            // metatype, so the two can never be read for one another however they are ordered.
+            let written = argument.expression.trimmedDescription
+            if argument.label == nil, written.hasSuffix(".self") {
+                transform = String(written.dropLast(".self".count))
+                continue
+            }
             if argument.label?.text == "stream" {
                 // A string literal, so the written quotes are not part of the spelling.
                 streamType = argument.expression.as(StringLiteralExprSyntax.self)?.representedLiteralValue
@@ -191,6 +262,6 @@ private final class RequestBindingScanner: SyntaxVisitor {
             default: break
             }
         }
-        return DeclaredRequestBinding(obligations: result, streamType: streamType)
+        return DeclaredRequestBinding(obligations: result, streamType: streamType, transform: transform)
     }
 }

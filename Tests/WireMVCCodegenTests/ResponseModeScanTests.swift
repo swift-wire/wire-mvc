@@ -199,7 +199,7 @@ struct UserDeclaredModeCoverageTests {
                 pathPrefix: "/things",
                 discoveredBindings: WireMVCBuiltIns.bindings,
                 discoveredModes: modes
-            )
+            ).source
             return (witness.source, client ?? "", witness.diagnostics.map { $0.message.message })
         }
         Issue.record("no controller in the fixture source")

@@ -256,7 +256,7 @@ struct ResponseHeaderGenerationTests {
                 pathPrefix: "/things",
                 discoveredBindings: WireMVCBuiltIns.bindings,
                 discoveredModes: WireMVCBuiltIns.modes
-            )
+            ).source
         )
         #expect(client.contains("async throws -> Thing"))
         #expect(!client.contains("status: HTTPResponse.Status"))
@@ -279,7 +279,7 @@ struct ResponseHeaderGenerationTests {
                 pathPrefix: "/things",
                 discoveredBindings: WireMVCBuiltIns.bindings,
                 discoveredModes: WireMVCBuiltIns.modes
-            )
+            ).source
         )
         #expect(client.contains("func moved("))
         #expect(!client.contains("-> (status:"))
