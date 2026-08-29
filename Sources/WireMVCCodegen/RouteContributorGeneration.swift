@@ -585,6 +585,9 @@ private func bootstrapArtifacts(
 /// plain binding without `RequestSendable`. Without this the mismatch surfaces as `has no member 'sendBody'`
 /// inside *generated* code, pointing at emitted text rather than at the declaration that is wrong.
 ///
+/// Two kinds of binding are exempt, and both for the same underlying reason: their routes are omitted from
+/// the generated client, so there is no call for the missing conformance to break. See the guards below.
+///
 /// Warnings, not errors: `scanConformances` is syntactic and cannot see a conformance declared in a module
 /// this build does not parse. A false error would break a valid build; a false warning is noise.
 private func sendConformanceWarnings(
@@ -595,19 +598,27 @@ private func sendConformanceWarnings(
     let trees = parsed.map(\.tree)
     let bodySendable = scanConformances(to: "RequestBodySendable", in: trees)
     let sendable = scanConformances(to: "RequestSendable", in: trees)
-    return discoveredBindings.sorted { $0.key < $1.key }.compactMap { binding, obligations in
+    return discoveredBindings.sorted { $0.key < $1.key }.compactMap { binding, declared in
         // A **lent stream** is exempt. It has no value to send — its parameter is the means of pulling the
         // body, not data — so its route is omitted from the typed client by design, and telling the author
         // to "add the conformance, or the client's call will fail to compile" is advice they cannot take
         // about a call that is never generated. The omission is a stated property, pinned by
         // `LentStreamClientTests`, rather than something this warning needs to chase.
-        guard !obligations.contains(.bodyStream) else { return nil }
+        guard !declared.contains(.bodyStream) else { return nil }
+        // A **graph-aware** binding is exempt for the same reason, arrived at from the other direction. It
+        // has a value, but the value is not the caller's: `@AuthorizedDocument document: Document` is what
+        // the *scope* produced from an id the request already carries, so there is nothing for a client to
+        // send and `.scopeResolvedParameter` says so on the route. Nagging its author about a conformance
+        // is advice about a call that, again, is never generated — and worse advice here than for a stream,
+        // because the type it names is a plausible thing to make `RequestSendable` and doing so would
+        // change nothing.
+        guard !declared.isScopeResolved else { return nil }
         // `.readerBody` counts as supplying the body here. The two differ in how the *server* reads the
         // request — collected versus walked — and not at all in what the client does: it holds whatever it
         // is sending, so it buffers either way. A streaming binding therefore conforms to
         // `RequestBodySendable` like a collecting one, and asking it for `RequestSendable` instead would be
         // asking for a conformance that could not carry a body.
-        let wantsBody = !obligations.isDisjoint(with: [.body, .readerBody])
+        let wantsBody = !declared.isDisjoint(with: [.body, .readerBody])
         let required = wantsBody ? "RequestBodySendable" : "RequestSendable"
         let satisfied = wantsBody ? bodySendable.contains(binding) : sendable.contains(binding)
         guard !satisfied else { return nil }
