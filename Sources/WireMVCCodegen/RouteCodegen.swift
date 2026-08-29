@@ -360,7 +360,8 @@ struct RouteBlockGenerator {
             streamsBody: streamsBody,
             binds: binds,
             errorMappings: errorMappings,
-            foldThreadsDoubles: foldThreadsDoubles
+            foldThreadsDoubles: foldThreadsDoubles,
+            drainsMiddleware: drainsMiddleware
         )
         return emitRegister(
             verb: verb,
@@ -388,32 +389,32 @@ struct RouteBlockGenerator {
         streamsBody: Bool,
         binds: [String],
         errorMappings: [ErrorMapping],
-        foldThreadsDoubles: Bool
+        foldThreadsDoubles: Bool,
+        drainsMiddleware: Bool
     ) -> String {
         // Hoisted above the fold when it threads doubles, so it is dropped from the terminal here.
         let preamble = foldThreadsDoubles ? "" : scopeEntryPreamble
-        let hasBinds = !binds.isEmpty
         switch emission {
         case .streaming(let outcome):
             return streamingClosureBody(
-                hasBinds: hasBinds,
                 hasBody: hasBody,
                 streamsBody: streamsBody,
                 binds: binds,
                 outcome: outcome,
                 scopeEntryPreamble: preamble,
                 scopeEntryPrologue: scopeEntryProloguePrefix,
-                errorMappings: errorMappings
+                errorMappings: errorMappings,
+                drainsMiddleware: drainsMiddleware
             )
         case .buffered(let response):
             return closureBody(
-                hasBinds: hasBinds,
                 hasBody: hasBody,
                 binds: binds,
                 response: response,
                 scopeEntryPreamble: preamble,
                 scopeEntryPrologue: scopeEntryProloguePrefix,
-                errorMappings: errorMappings
+                errorMappings: errorMappings,
+                drainsMiddleware: drainsMiddleware
             )
         }
     }
@@ -555,14 +556,16 @@ extension RouteBlockGenerator {
     /// references it (mappings or the binding-error built-in); a pure-500 terminal doesn't, so the
     /// binding is conditional to avoid an unused-variable warning.
     fileprivate func closureBody(
-        hasBinds: Bool,
         hasBody: Bool,
         binds: [String],
         response: String,
         scopeEntryPreamble: String,
         scopeEntryPrologue: String,
-        errorMappings: [ErrorMapping]
+        errorMappings: [ErrorMapping],
+        drainsMiddleware: Bool
     ) -> String {
+        // Derived rather than passed, for the reason `streamingClosureBody` gives.
+        let hasBinds = !binds.isEmpty
         let collect = hasBody ? "let requestBody = try await WireMVCRequest.collectBody(reader)\n" : ""
         let bindsBlock = binds.isEmpty ? "" : binds.joined(separator: "\n") + "\n"
         let referencesError = !errorMappings.isEmpty || hasBinds
@@ -575,7 +578,11 @@ extension RouteBlockGenerator {
             do {
             \(scopeEntryPrologue)\(collect)\(bindsBlock)\(response)
             \(catchClause)
-            \(errorCatchClause(mappings: errorMappings, includeBindingBuiltin: hasBinds))
+            \(errorCatchClause(
+                mappings: errorMappings,
+                includeBindingBuiltin: hasBinds,
+                drainsMiddleware: drainsMiddleware
+            ))
             }
             try await wireMVCOutcome.send(on: responseSender)
             """
@@ -847,7 +854,11 @@ extension RouteBlockGenerator {
     /// owns it (see LinearSenderErrorModel.md / M5.5 Phase 2). An unmapped throw — a handler error, a
     /// throwing request-scoped binding, or a decode failure with no matching `@ErrorResponse` — becomes a
     /// clean `500`, not a dropped connection.
-    func errorCatchClause(mappings: [ErrorMapping], includeBindingBuiltin: Bool) -> String {
+    func errorCatchClause(
+        mappings: [ErrorMapping],
+        includeBindingBuiltin: Bool,
+        drainsMiddleware: Bool = false
+    ) -> String {
         var elements: [String] = []
         for mapping in mappings where !mapping.isCatchAll {
             elements.append(chainElement(mapping, terminal: false))
@@ -861,7 +872,11 @@ extension RouteBlockGenerator {
             elements.append("WireMVCOutcome.status(.internalServerError)")
         }
 
-        return "wireMVCOutcome = \(errorChainExpression(mappings: mappings, elements: elements))"
+        return drainedOntoMappedError(
+            errorChainExpression(mappings: mappings, elements: elements),
+            drainsMiddleware: drainsMiddleware,
+            assigningTo: "wireMVCOutcome"
+        )
     }
 
     /// The consultation chain as a bare expression. The buffered terminal assigns it; the streaming

@@ -89,6 +89,28 @@ package struct HelloController<G: Greeter> {
         (.found, [.location: "/hello/\(name)"])
     }
 
+    // The **error** path's contributions, which the served path's tiers above say nothing about. A
+    // middleware registers on the way in and cannot know whether the handler will succeed, so a field it
+    // contributed has to reach a mapped refusal as well — and this is the shape where losing it hurts
+    // most: a browser cannot read a response whose CORS field was dropped, and a `401` without the
+    // `WWW-Authenticate` an outer middleware registered is not a well-formed challenge.
+    //
+    // Mapped by the composition root's global `@ErrorResponse(TenantMissing.self, .badRequest)`, so this
+    // also pins that the drain reaches the outermost tier and not only a route-scope mapping.
+    // No `@ResponseHeader` here on purpose. Whether a route's *constants* should reach a mapped refusal
+    // is a separate question with a real argument on both sides — a `Content-Type` constant would be
+    // wrong on a bodiless status — and this route is about the middleware drain, which has no such
+    // argument against it. The constants stay out so the test cannot be read as settling it.
+    @Get("/refused/{name}")
+    @JSONResponse
+    @Middleware(StampKeys.factory)
+    package func refused(@Path name: String) throws -> Greeting {
+        // Recorded *before* the throw, so the middleware's deferred closure has something to find. That is
+        // the point of the test: the drain runs after the handler on this path too.
+        greetingLog.record(name, for: name)
+        throw TenantMissing()
+    }
+
     // M5.5 Phase 3: this controller declares no `@ErrorResponse`, so `TenantMissing` is unmapped here.
     // The `@WireMVCBootstrap` composition root's global `@ErrorResponse(TenantMissing.self, .badRequest)`
     // is the default tier folded into this route's terminal — so `GET /hello/tenant` returns 400.

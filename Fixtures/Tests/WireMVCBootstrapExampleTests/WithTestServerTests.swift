@@ -62,6 +62,30 @@ struct ResponseHeaderOverTheWireTests {
         }
     }
 
+    /// **The same contributions on a refusal.** `/hello/refused` folds the same middleware and throws;
+    /// the composition root maps it to `400`. Every field a served response would have carried has to be
+    /// on the refusal too, and for a while none of them were: the terminal resolved `headerFields` against
+    /// the drain on the success path and built a bare `WireMVCOutcome.status(…)` in its `catch`, so a
+    /// middleware's contributions survived a `200` and vanished from every `@ErrorResponse` status.
+    ///
+    /// Backwards, because the error path is the one that needs them most — a cross-origin caller cannot
+    /// read a `403` whose `Access-Control-Allow-Origin` was dropped. The gate path never had the bug:
+    /// `respondingWith` drains, which is why a middleware that answers *itself* kept its fields while one
+    /// that merely contributed to a mapped throw lost them.
+    ///
+    /// The deferred `Set-Cookie` is asserted too, and it is the sharper half: it proves the drain runs
+    /// rather than that some stashed value was replayed, since the closure can only produce a cookie by
+    /// reading what the handler wrote before it threw.
+    @Test func middlewareContributionsSurviveAMappedRefusal() async throws {
+        try await withClient { client in
+            let response = try await client.get("/hello/refused/Ada")
+            #expect(response.status == 400, "the composition root's global mapping answered")
+            let fields = try #require(response.head?.headerFields)
+            #expect(fields[values: .init("x-stamp")!] == ["middleware"], "contributed on the way in")
+            #expect(fields[values: .setCookie] == ["greeted=Ada; Path=/"], "the deferred closure ran at drain")
+        }
+    }
+
     /// A route with constants and no middleware still gets them, and still gets the JSON content type that
     /// `WireMVCOutcome.json` seeds.
     @Test func routeConstantsShipWithoutMiddleware() async throws {
