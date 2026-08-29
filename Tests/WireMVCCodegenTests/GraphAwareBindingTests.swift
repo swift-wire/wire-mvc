@@ -234,4 +234,80 @@ struct GraphAwareBindingTests {
             diagnostics.contains { if case .routeOmittedFromClient = $0.message { return true } else { return false } }
         )
     }
+
+    /// **And having omitted the route, the generator must not then nag about sending it.** The
+    /// send-conformance warning tells an author to add `RequestSendable` "or the client's call will fail to
+    /// compile" — but there is no call, for exactly the reason the test above asserts.
+    ///
+    /// Worse advice here than for a lent stream, which is the other exempt kind: `Document` is a plausible
+    /// thing to make `RequestSendable`, so an author can follow the advice, get no error, and still have no
+    /// generated call. The warning has to know the difference, and what it knows it by is
+    /// ``DeclaredRequestBinding/isScopeResolved``.
+    ///
+    /// Driven through `generateRouteContributors` rather than the renderer above, because the warning is
+    /// raised by the scan that feeds it and not by emission.
+    @Test func theOmittedRouteIsNotAlsoNaggedAboutRequestSendable() {
+        let result = generateRouteContributors(
+            files: WireMVCBuiltIns.declarationFiles + [
+                (
+                    "AuthorizedDocument.swift",
+                    """
+                    @RequestBinding(DocumentAuthorizer.self)
+                    @propertyWrapper
+                    public struct AuthorizedDocument {
+                        public var wrappedValue: Document
+                        public init(wrappedValue: Document) { self.wrappedValue = wrappedValue }
+                        public init(wrappedValue: Document, _ name: String) { self.wrappedValue = wrappedValue }
+                    }
+
+                    @Scoped(seed: HTTPRequest.self)
+                    public struct DocumentAuthorizer: ScopedRequestBound {
+                        public typealias Value = Document
+                    }
+                    """
+                ),
+                ("Controller.swift", documentsController),
+            ],
+            testEntry: true
+        )
+        let messages = result.diagnostics.map(\.message.message)
+        #expect(!messages.contains { $0.contains("does not conform to RequestSendable") }, "\(messages)")
+    }
+
+    /// The negative control the test above needs: the same scan, on a binding that is *not* graph-aware,
+    /// still warns. Without this, deleting the whole check would leave both tests green.
+    @Test func anOrdinaryBindingIsStillNaggedAboutRequestSendable() {
+        let result = generateRouteContributors(
+            files: WireMVCBuiltIns.declarationFiles + [
+                (
+                    "Ticket.swift",
+                    """
+                    @RequestBinding
+                    @propertyWrapper
+                    public struct Ticket<Value>: RequestBound {
+                        public var wrappedValue: Value
+                        public init(wrappedValue: Value) { self.wrappedValue = wrappedValue }
+                    }
+                    """
+                ),
+                (
+                    "Controller.swift",
+                    """
+                    @Singleton
+                    @Controller("/documents")
+                    struct Documents {
+                        @Get("/{id}")
+                        @JSONResponse
+                        func read(@Ticket ticket: String) -> Document {
+                            fatalError()
+                        }
+                    }
+                    """
+                ),
+            ],
+            testEntry: true
+        )
+        let messages = result.diagnostics.map(\.message.message)
+        #expect(messages.contains { $0.contains("does not conform to RequestSendable") }, "\(messages)")
+    }
 }

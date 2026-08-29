@@ -72,12 +72,24 @@ public protocol RequestBound {
 ///
 /// It is not enough for a binding that *resolves*. Producing the value may need a store to read from, a
 /// policy engine to consult, the caller the request scope built — none of which a static method can reach.
-/// So this binding is an ordinary `@Scoped(seed:)` type with `@Inject` members like any other, and `bind`
-/// is an instance method on the instance the scope constructed:
+/// So the worker is an ordinary `@Scoped(seed:)` type with `@Inject` members like any other, and `bind` is
+/// an instance method on the instance the scope constructed.
+///
+/// **It takes two declarations, and cannot take one.** A parameter attribute has to be a property wrapper —
+/// the language allows nothing else there — and the wrapper's instance holds the value the call site
+/// supplies, while the worker's holds what the graph supplied. No single type can have both initialisers be
+/// total. So the wrapper stays what it always was and names its worker:
+///
+///     @RequestBinding(DocumentAuthorizer.self)
+///     @propertyWrapper
+///     public struct AuthorizedDocument {
+///         public var wrappedValue: Document
+///         public init(wrappedValue: Document) { self.wrappedValue = wrappedValue }
+///         public init(wrappedValue: Document, _ name: String) { self.wrappedValue = wrappedValue }
+///     }
 ///
 ///     @Scoped(seed: HTTPRequest.self)
-///     @RequestBinding(.path)
-///     public struct AuthorizedDocument: ScopedRequestBound {
+///     public struct DocumentAuthorizer: ScopedRequestBound {
 ///         public typealias Value = Document
 ///         @Inject var documents: DocumentStore
 ///         @Inject var policies: PolicyEngine
@@ -88,6 +100,10 @@ public protocol RequestBound {
 ///             pathParameters: [String: Substring], body: [UInt8]?
 ///         ) async throws -> Document { … }
 ///     }
+///
+/// Neither declaration is told about the scope, and the controller is told about neither. `@RequestBinding`
+/// declares swift-wire's `.injectsFromGraph` capability, so a route parameter naming the wrapper is what
+/// makes the scope entry yield the worker, one hop out.
 ///
 /// **The seam is already on the right side of the scope**, which is what makes this cheap: binding happens
 /// *after* `_wireEnterScope` in every generated route, so there is no reordering, no lazy handle and no
@@ -104,7 +120,15 @@ public protocol RequestBound {
 /// > Important: the binding's scope must be the **controller's** scope. A `@Singleton @Controller` enters
 /// > no scope, so there is nothing to resolve the binding from, and the generator says so rather than
 /// > emitting a reference to a value that was never constructed.
-public protocol ScopedRequestBound {
+///
+/// **`Sendable`, where ``RequestBound`` is not**, and the asymmetry is the whole difference between them.
+/// A `RequestBound`'s `bind` is `static`, so no instance of it is ever stored anywhere; a worker *is* an
+/// instance, held on the scope entry the generated route reads and — for an OpenAPI operation — on the
+/// generated conformer, which is `Sendable`. Requiring it here is what makes a worker that cannot be one
+/// fail on its own declaration rather than as `stored property '_wireWorker_X' … contains non-Sendable
+/// type` inside emitted code the author did not write. An internal worker gets the conformance inferred
+/// and never notices; a `public` one has to say it, which is ordinary for a `public` type in a graph.
+public protocol ScopedRequestBound: Sendable {
     /// The value handed to the handler parameter.
     associatedtype Value
 
