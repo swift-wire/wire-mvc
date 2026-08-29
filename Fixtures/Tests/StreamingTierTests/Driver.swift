@@ -14,7 +14,7 @@ func drive<Producer: WireMVCBodyProducer, Sender: HTTPResponseSender & ~Copyable
     headerFields: HTTPFields = [:],
     trailer: HTTPFields? = nil,
     handler: () async throws -> Producer,
-    errorMapping: (any Error) throws -> WireMVCOutcome
+    errorMapping: (any Error) async throws -> WireMVCOutcome
 ) async throws where Sender.Writer: ~Copyable {
     try await wireMVCStreamingTerminal(
         responseSender: responseSender,

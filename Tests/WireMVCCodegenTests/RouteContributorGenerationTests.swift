@@ -235,12 +235,17 @@ struct RouteContributorGenerationTests {
                                     headerFields: WireMVCResponseHeaders.resolved(middleware: try await wireMVCResponseHeaderDrain.drain())
                                 )
                             } catch let wireMVCError {
-                                wireMVCOutcome = (
+                                var wireMVCMapped = (
                                     (wireMVCError as? WireMVCBindingError).map {
                                         WireMVCOutcome.status($0.status)
                                     }
                                     ?? WireMVCOutcome.status(.internalServerError)
                                 )
+                                wireMVCMapped.headerFields = WireMVCResponseHeaders.resolved(
+                                    returned: wireMVCMapped.headerFields,
+                                    middleware: (try? await wireMVCResponseHeaderDrain.drain()) ?? []
+                                )
+                                wireMVCOutcome = wireMVCMapped
                             }
                             try await wireMVCOutcome.send(on: responseSender)
                         }
@@ -834,7 +839,12 @@ struct RouteContributorGenerationTests {
                                     try await self._wireSubject.f()
                                     wireMVCOutcome = .status(.noContent, headerFields: WireMVCResponseHeaders.resolved(middleware: try await wireMVCResponseHeaderDrain.drain()))
                                 } catch {
-                                    wireMVCOutcome = WireMVCOutcome.status(.internalServerError)
+                                    var wireMVCMapped = WireMVCOutcome.status(.internalServerError)
+                                    wireMVCMapped.headerFields = WireMVCResponseHeaders.resolved(
+                                        returned: wireMVCMapped.headerFields,
+                                        middleware: (try? await wireMVCResponseHeaderDrain.drain()) ?? []
+                                    )
+                                    wireMVCOutcome = wireMVCMapped
                                 }
                                 try await wireMVCOutcome.send(on: responseSender)
                                 }
@@ -904,12 +914,17 @@ struct RouteContributorGenerationTests {
                                     headerFields: WireMVCResponseHeaders.resolved(middleware: try await wireMVCResponseHeaderDrain.drain())
                                 )
                             } catch let wireMVCError {
-                                wireMVCOutcome = (
+                                var wireMVCMapped = (
                                     (wireMVCError as? WireMVCBindingError).map {
                                         WireMVCOutcome.status($0.status)
                                     }
                                     ?? WireMVCOutcome.status(.internalServerError)
                                 )
+                                wireMVCMapped.headerFields = WireMVCResponseHeaders.resolved(
+                                    returned: wireMVCMapped.headerFields,
+                                    middleware: (try? await wireMVCResponseHeaderDrain.drain()) ?? []
+                                )
+                                wireMVCOutcome = wireMVCMapped
                             }
                             try await wireMVCOutcome.send(on: responseSender)
                         }
@@ -1038,7 +1053,7 @@ struct RouteContributorGenerationTests {
         )
         #expect(rendered.diagnostics.isEmpty)
         #expect(rendered.source.contains("wireMVCRespondAny(to: wireMVCError, ({ (e: Swift.Error) in"))
-        #expect(rendered.source.contains("wireMVCOutcome = try ("))
+        #expect(rendered.source.contains("var wireMVCMapped = try ("))
         // A catch-all matches everything, so nothing is re-thrown from the terminal.
         #expect(!rendered.source.contains("throw wireMVCError"))
     }

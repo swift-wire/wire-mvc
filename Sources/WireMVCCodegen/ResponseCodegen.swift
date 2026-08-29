@@ -233,15 +233,18 @@ extension RouteBlockGenerator {
     /// mapped; that is inherent to streaming, and is why the producer is only reached once `building`
     /// returns. The generated code never names the producer type: it is inferred from `building`.
     func streamingClosureBody(
-        hasBinds: Bool,
         hasBody: Bool,
         streamsBody: Bool,
         binds: [String],
         outcome: String,
         scopeEntryPreamble: String,
         scopeEntryPrologue: String,
-        errorMappings: [ErrorMapping]
+        errorMappings: [ErrorMapping],
+        drainsMiddleware: Bool
     ) -> String {
+        // Derived rather than passed: every call site computed it as `!binds.isEmpty`, so two arguments
+        // could disagree and only one of them was ever right.
+        let hasBinds = !binds.isEmpty
         let bindsBlock = binds.isEmpty ? "" : binds.joined(separator: "\n") + "\n"
         // `building` ends in the outcome. A single-expression body needs no `return`; a multi-statement one
         // (a response tuple, a bind, a prologue) supplies its own — `streamingOutcome` writes it.
@@ -271,7 +274,11 @@ extension RouteBlockGenerator {
             \(body)
             },
             errorMapping: { wireMVCError in
-            \(errorChainExpression(mappings: errorMappings, includeBindingBuiltin: hasBinds))
+            \(drainedOntoMappedError(
+                errorChainExpression(mappings: errorMappings, includeBindingBuiltin: hasBinds),
+                drainsMiddleware: drainsMiddleware,
+                assigningTo: nil
+            ))
             }
             )
             """
@@ -305,6 +312,44 @@ extension RouteBlockGenerator {
             return list.first { $0.label?.text == "status" }?.expression.trimmedDescription
         }
         return nil
+    }
+
+    /// A mapped error's outcome, with the response-header registry drained onto it.
+    ///
+    /// The served response resolves its `headerFields` against the drain; a mapped one used to be a bare
+    /// `WireMVCOutcome.status(…)`, so every field a middleware contributed survived a `200` and vanished
+    /// from every `@ErrorResponse` status. That is backwards — the error path is the one most likely to
+    /// need them. A cross-origin caller cannot read a `403` whose `Access-Control-Allow-Origin` was
+    /// dropped, and a `401` loses the `WWW-Authenticate` an outer middleware registered, which is what
+    /// makes it a well-formed challenge. The gate path never had the bug: `respondingWith` drains.
+    ///
+    /// **`try?`, and it is not laziness.** This runs inside a `catch` that is already handling an error and
+    /// must still write a response. A deferred contribution (`onSend`) can throw, and a throw here would
+    /// escape the terminal with the sender unconsumed — turning a mapped `403` into a dropped connection,
+    /// which is the failure the whole tier exists to prevent. Contributions are dropped instead: the same
+    /// answer as before this fix, and only in the case where computing them failed.
+    ///
+    /// `returned:` carries whatever the mapping itself set, so a body-form `@ErrorResponse` keeps its
+    /// `Content-Type` and a middleware cannot silently overwrite what the mapping chose.
+    func drainedOntoMappedError(
+        _ expression: String,
+        drainsMiddleware: Bool,
+        assigningTo target: String?
+    )
+        -> String
+    {
+        guard drainsMiddleware else {
+            return target.map { "\($0) = \(expression)" } ?? "return \(expression)"
+        }
+        let tail = target.map { "\($0) = wireMVCMapped" } ?? "return wireMVCMapped"
+        return """
+            var wireMVCMapped = \(expression)
+            wireMVCMapped.headerFields = WireMVCResponseHeaders.resolved(
+            returned: wireMVCMapped.headerFields,
+            middleware: (try? await \(responseHeaderDrainLocal).drain()) ?? []
+            )
+            \(tail)
+            """
     }
 
     /// The `statics:` literal, or `nil` when the route contributes no constant fields.

@@ -123,13 +123,18 @@ public func wireMVCStreamingTerminal<
     responseSender: consuming Sender,
     lendingBodyFrom reader: consuming sending Reader,
     building: (consuming Reader) async throws -> WireMVCStreamingOutcome<Producer>,
-    errorMapping: (any Error) throws -> WireMVCOutcome
+    // `async`, because a mapped refusal has to be able to **drain the response-header registry** onto
+    // itself the way a served response does — and the drain is async, since a deferred contribution
+    // (`onSend`) may await. Without that a middleware's contributed fields survived a 200 and
+    // vanished from every `@ErrorResponse` status, which is exactly the path most likely to need
+    // them: a cross-origin caller cannot read a 403 whose `Access-Control-Allow-Origin` was dropped.
+    errorMapping: (any Error) async throws -> WireMVCOutcome
 ) async throws where Sender.Writer: ~Copyable, Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields? {
     let wireMVCResult: WireMVCTerminalOutcome<Producer>
     do {
         wireMVCResult = .stream(try await building(reader))
     } catch let wireMVCError {
-        wireMVCResult = .buffered(try errorMapping(wireMVCError))
+        wireMVCResult = .buffered(try await errorMapping(wireMVCError))
     }
     switch wireMVCResult {
     case .stream(let streaming):
@@ -162,13 +167,18 @@ public enum WireMVCTerminalOutcome<Producer: WireMVCBodyProducer> {
 public func wireMVCStreamingTerminal<Producer: WireMVCBodyProducer, Sender: HTTPResponseSender & ~Copyable>(
     responseSender: consuming Sender,
     building: () async throws -> WireMVCStreamingOutcome<Producer>,
-    errorMapping: (any Error) throws -> WireMVCOutcome
+    // `async`, because a mapped refusal has to be able to **drain the response-header registry** onto
+    // itself the way a served response does — and the drain is async, since a deferred contribution
+    // (`onSend`) may await. Without that a middleware's contributed fields survived a 200 and
+    // vanished from every `@ErrorResponse` status, which is exactly the path most likely to need
+    // them: a cross-origin caller cannot read a 403 whose `Access-Control-Allow-Origin` was dropped.
+    errorMapping: (any Error) async throws -> WireMVCOutcome
 ) async throws where Sender.Writer: ~Copyable {
     let wireMVCResult: WireMVCTerminalOutcome<Producer>
     do {
         wireMVCResult = .stream(try await building())
     } catch let wireMVCError {
-        wireMVCResult = .buffered(try errorMapping(wireMVCError))
+        wireMVCResult = .buffered(try await errorMapping(wireMVCError))
     }
     switch wireMVCResult {
     case .stream(let streaming):
@@ -194,14 +204,19 @@ public func wireMVCStreamingTerminal<
     responseSender: consuming Sender,
     collectingBodyFrom reader: consuming sending Reader,
     building: ([UInt8]) async throws -> WireMVCStreamingOutcome<Producer>,
-    errorMapping: (any Error) throws -> WireMVCOutcome
+    // `async`, because a mapped refusal has to be able to **drain the response-header registry** onto
+    // itself the way a served response does — and the drain is async, since a deferred contribution
+    // (`onSend`) may await. Without that a middleware's contributed fields survived a 200 and
+    // vanished from every `@ErrorResponse` status, which is exactly the path most likely to need
+    // them: a cross-origin caller cannot read a 403 whose `Access-Control-Allow-Origin` was dropped.
+    errorMapping: (any Error) async throws -> WireMVCOutcome
 ) async throws where Sender.Writer: ~Copyable, Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields? {
     let wireMVCResult: WireMVCTerminalOutcome<Producer>
     do {
         let requestBody = try await WireMVCRequest.collectBody(reader)
         wireMVCResult = .stream(try await building(requestBody))
     } catch let wireMVCError {
-        wireMVCResult = .buffered(try errorMapping(wireMVCError))
+        wireMVCResult = .buffered(try await errorMapping(wireMVCError))
     }
     switch wireMVCResult {
     case .stream(let streaming):
