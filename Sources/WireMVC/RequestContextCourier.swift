@@ -232,7 +232,7 @@ where Base.Writer: ~Copyable {
     /// a raw route spelled with two arguments frames as chunked. Every call site in this package uses one
     /// or three arguments and is unaffected.
     public consuming func send(_ response: HTTPResponse) async throws -> Writer {
-        let resolved = try await applying(to: response)
+        let resolved = try await Self.applying(consume self.registry, to: response)
         let inner = consume self.base
         return try await inner.send(resolved)
     }
@@ -242,7 +242,7 @@ where Base.Writer: ~Copyable {
         buffer: inout Buffer,
         trailer: HTTPFields?
     ) async throws where Buffer.Element: ~Copyable {
-        var resolved = try await applying(to: response)
+        var resolved = try await Self.applying(consume self.registry, to: response)
         // Reached only by a caller that spells `trailer:` explicitly — see ``send(_:)`` for why. Kept
         // correct anyway: a conformer that fuses head and body should not lose the length by taking the
         // faster path. Not when a trailer is present, because trailers require chunked encoding and a
@@ -254,7 +254,10 @@ where Base.Writer: ~Copyable {
 
     /// The handler's own fields come first, so a raw route that sets `Content-Type: text/event-stream`
     /// keeps it; middleware apply over the top, as they do for a typed route's outcome.
-    private borrowing func applying(to response: HTTPResponse) async throws -> HTTPResponse {
+    private static func applying(
+        _ registry: consuming ResponseHeaderRegistry,
+        to response: HTTPResponse
+    ) async throws -> HTTPResponse {
         // Contributions are applied **onto the head the handler wrote**, rather than into a fresh
         // `HTTPFields` that the handler's own fields are then replayed into.
         //
