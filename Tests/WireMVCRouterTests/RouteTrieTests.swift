@@ -433,6 +433,41 @@ struct RouteTrieTests {
         #expect(match.parameters?["id"].map(String.init) == "42")
     }
 
+    // MARK: - Segment walking
+
+    @Test func repeatedSeparatorsCollapseToOneSegment() {
+        // The walk skips runs of "/" where `split(omittingEmptySubsequences:)` dropped the empty
+        // subsequences it would otherwise have produced. Untested while it was `split`'s parameter — it
+        // was the library's behaviour to get right, and is now this router's. Without it an empty segment
+        // becomes a node the trie has no edge for, and every one of these is a 404.
+        var trie = RouteTrie()
+        let index = trie.insert(method: .get, path: "/a/b").index
+        let frozen = trie.freeze()
+        #expect(frozen.resolve(method: .get, path: "//a/b").index == index)
+        #expect(frozen.resolve(method: .get, path: "/a//b").index == index)
+        #expect(frozen.resolve(method: .get, path: "/a/b//").index == index)
+    }
+
+    @Test func aParameterBindsAcrossRepeatedSeparators() {
+        // The same collapse, but on the edge that binds: the value must be the segment, not an empty
+        // string picked up from the run of separators before it.
+        var trie = RouteTrie()
+        _ = trie.insert(method: .get, path: "/users/{id}")
+        let match = trie.freeze().resolve(method: .get, path: "/users//42")
+        #expect(match.parameters?["id"].map(String.init) == "42")
+    }
+
+    @Test func aCatchAllRemainderStartsAtTheSegmentItClaims() {
+        // The remainder is rebuilt as `path[segment.startIndex...]`, so it is a slice of the request path
+        // rather than of anything the walk produced. Pins that the walk's segments keep indices into the
+        // original — a segment copied out of a materialised array would make this remainder wrong.
+        var trie = RouteTrie()
+        let index = trie.insert(method: .get, path: "/files/{path*}").index
+        let match = trie.freeze().resolve(method: .get, path: "/files/a/b/c")
+        #expect(match.index == index)
+        #expect(match.parameters?["path"].map(String.init) == "a/b/c")
+    }
+
     // MARK: - Trailing-slash policy
 
     @Test func lenientTreatsATrailingSlashAsTheSameResource() {
