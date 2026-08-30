@@ -270,7 +270,6 @@ struct RouteBlockGenerator {
         of function: FunctionDeclSyntax,
         call: String,
         staticHeaders: [ResponseHeaderEntry],
-        drainsMiddleware: Bool,
         mode: ResolvedResponseMode?
     ) -> ResponseEmission? {
         if mode?.terminal == .streaming {
@@ -278,7 +277,6 @@ struct RouteBlockGenerator {
                 from: function,
                 call: call,
                 staticHeaders: staticHeaders,
-                drainsMiddleware: drainsMiddleware,
                 mode: mode
             )
             .map(ResponseEmission.streaming)
@@ -287,7 +285,6 @@ struct RouteBlockGenerator {
             from: function,
             call: call,
             staticHeaders: staticHeaders,
-            drainsMiddleware: drainsMiddleware,
             mode: mode
         )
         .map(ResponseEmission.buffered)
@@ -343,7 +340,6 @@ struct RouteBlockGenerator {
                 of: function,
                 call: call,
                 staticHeaders: staticHeaders,
-                drainsMiddleware: drainsMiddleware,
                 mode: mode
             )
         else { return nil }
@@ -379,10 +375,9 @@ struct RouteBlockGenerator {
         )
     }
 
-    /// The terminal the register closure ends in, in whichever of the two shapes the route's response
-    /// half produced — the streaming one ends in an expression its `building` closure returns, the
-    /// buffered one assigns `wireMVCOutcome`. Split out of `routeBlock` to keep it within the body-length
-    /// budget; the choice is `emission`'s and nothing else here reads it.
+    /// The terminal the register closure ends in — one call shape for both tiers, differing only in which
+    /// runtime terminal it names and what its `building` closure returns. Split out of `routeBlock` to keep
+    /// it within the body-length budget; the choice is `emission`'s and nothing else here reads it.
     private func terminalBody(
         emission: ResponseEmission,
         hasBody: Bool,
@@ -394,29 +389,17 @@ struct RouteBlockGenerator {
     ) -> String {
         // Hoisted above the fold when it threads doubles, so it is dropped from the terminal here.
         let preamble = foldThreadsDoubles ? "" : scopeEntryPreamble
-        switch emission {
-        case .streaming(let outcome):
-            return streamingClosureBody(
-                hasBody: hasBody,
-                streamsBody: streamsBody,
-                binds: binds,
-                outcome: outcome,
-                scopeEntryPreamble: preamble,
-                scopeEntryPrologue: scopeEntryProloguePrefix,
-                errorMappings: errorMappings,
-                drainsMiddleware: drainsMiddleware
-            )
-        case .buffered(let response):
-            return closureBody(
-                hasBody: hasBody,
-                binds: binds,
-                response: response,
-                scopeEntryPreamble: preamble,
-                scopeEntryPrologue: scopeEntryProloguePrefix,
-                errorMappings: errorMappings,
-                drainsMiddleware: drainsMiddleware
-            )
-        }
+        return terminalCall(
+            named: emission.terminalFunction,
+            hasBody: hasBody,
+            streamsBody: streamsBody,
+            binds: binds,
+            outcome: emission.outcome,
+            scopeEntryPreamble: preamble,
+            scopeEntryPrologue: scopeEntryProloguePrefix,
+            errorMappings: errorMappings,
+            drainsMiddleware: drainsMiddleware
+        )
     }
 }
 
@@ -542,50 +525,6 @@ extension RouteBlockGenerator {
             return "try await \(target).bindOptional(\(args)) ?? \(defaultValue)"
         }
         return "try await \(receiver ?? "\(binding.wrapper)<\(type)>").bind(\(args))"
-    }
-
-    /// The registration closure body. Compute the outcome — collecting the body first when a
-    /// `@JSONBody` is present, mapping a `WireMVCBindingError` to its status — then send it once.
-    ///
-    /// Every typed terminal wraps its body — the scope-entry prologue (a throwing request-scoped binding),
-    /// the body collect, the parameter binds, and the handler call + response encode — in a single `do`,
-    /// and the `catch` consults the composed mappings (route-inner first) → binding-error built-in →
-    /// `Swift.Error` catch-all → the **built-in 500** (via `errorCatchClause`, which never re-throws). So
-    /// the terminal always holds the sender and writes a response; an unmapped throw is a clean `500`, not
-    /// a dropped connection (M5.5 Phase 2). The `catch` binds `wireMVCError` only when the catch body
-    /// references it (mappings or the binding-error built-in); a pure-500 terminal doesn't, so the
-    /// binding is conditional to avoid an unused-variable warning.
-    fileprivate func closureBody(
-        hasBody: Bool,
-        binds: [String],
-        response: String,
-        scopeEntryPreamble: String,
-        scopeEntryPrologue: String,
-        errorMappings: [ErrorMapping],
-        drainsMiddleware: Bool
-    ) -> String {
-        // Derived rather than passed, for the reason `streamingClosureBody` gives.
-        let hasBinds = !binds.isEmpty
-        let collect = hasBody ? "let requestBody = try await WireMVCRequest.collectBody(reader)\n" : ""
-        let bindsBlock = binds.isEmpty ? "" : binds.joined(separator: "\n") + "\n"
-        let referencesError = !errorMappings.isEmpty || hasBinds
-        let catchClause = referencesError ? "} catch let wireMVCError {" : "} catch {"
-        // The keyed-harness preamble (empty for every other route) sits *before* the `do`, so its explicit
-        // 500 send escapes the closure directly rather than re-consuming the `consuming` sender through the
-        // `catch`.
-        return """
-            \(scopeEntryPreamble)let wireMVCOutcome: WireMVCOutcome
-            do {
-            \(scopeEntryPrologue)\(collect)\(bindsBlock)\(response)
-            \(catchClause)
-            \(errorCatchClause(
-                mappings: errorMappings,
-                includeBindingBuiltin: hasBinds,
-                drainsMiddleware: drainsMiddleware
-            ))
-            }
-            try await wireMVCOutcome.send(on: responseSender)
-            """
     }
 
     /// The `@ErrorResponse` tiers a route's terminal consults, innermost first: the route's own, then the
@@ -846,39 +785,6 @@ extension RouteBlockGenerator {
         return (base.split(separator: ".").last.map(String.init) ?? base) == "Error"
     }
 
-    /// The `catch` clause body assigning `wireMVCOutcome` — consult the composed mappings (route-inner
-    /// first, already ordered by the caller) → the built-in binding-error status → the `Swift.Error`
-    /// catch-all if present, else the **built-in 500**. The chain always ends in a non-optional terminal
-    /// (a declared catch-all, or `.status(.internalServerError)`), so the terminal always writes a
-    /// response: the target servers *abort* an escaped throw rather than synthesising a 500, so WireMVC
-    /// owns it (see LinearSenderErrorModel.md / M5.5 Phase 2). An unmapped throw — a handler error, a
-    /// throwing request-scoped binding, or a decode failure with no matching `@ErrorResponse` — becomes a
-    /// clean `500`, not a dropped connection.
-    func errorCatchClause(
-        mappings: [ErrorMapping],
-        includeBindingBuiltin: Bool,
-        drainsMiddleware: Bool = false
-    ) -> String {
-        var elements: [String] = []
-        for mapping in mappings where !mapping.isCatchAll {
-            elements.append(chainElement(mapping, terminal: false))
-        }
-        if includeBindingBuiltin {
-            elements.append("(wireMVCError as? WireMVCBindingError).map { WireMVCOutcome.status($0.status) }")
-        }
-        if let catchAll = mappings.first(where: { $0.isCatchAll }) {
-            elements.append(chainElement(catchAll, terminal: true))
-        } else {
-            elements.append("WireMVCOutcome.status(.internalServerError)")
-        }
-
-        return drainedOntoMappedError(
-            errorChainExpression(mappings: mappings, elements: elements),
-            drainsMiddleware: drainsMiddleware,
-            assigningTo: "wireMVCOutcome"
-        )
-    }
-
     /// The consultation chain as a bare expression. The buffered terminal assigns it; the streaming
     /// terminal returns it from `errorMapping`. Same chain, same order, two callers.
     func errorChainExpression(mappings: [ErrorMapping], includeBindingBuiltin: Bool) -> String {
@@ -926,9 +832,26 @@ extension RouteBlockGenerator {
     }
 }
 
-/// What a route's response half produced — the two terminal shapes, kept apart because the streaming one
-/// ends in an expression the `building` closure returns while the buffered one assigns `wireMVCOutcome`.
+/// What a route's response half produced — the statements its `building` closure ends in, tagged with which
+/// tier produced them. The two are kept apart only to pick the terminal: both are now returned from the same
+/// closure shape, which is what moving the response-header drain into the terminals collapsed together.
 enum ResponseEmission {
     case buffered(String)
     case streaming(String)
+
+    /// The runtime terminal this tier's generated code calls. The two take the same arguments and differ
+    /// only in what `building` returns, so the emitter picks between them by name.
+    var terminalFunction: String {
+        switch self {
+        case .buffered: "wireMVCBufferedTerminal"
+        case .streaming: "wireMVCStreamingTerminal"
+        }
+    }
+
+    /// The statements `building` ends in — the tier's own emission, unchanged by which terminal takes it.
+    var outcome: String {
+        switch self {
+        case .buffered(let outcome), .streaming(let outcome): outcome
+        }
+    }
 }

@@ -226,28 +226,25 @@ struct RouteContributorGenerationTests {
                         builder.register(method: .get, path: "/todos/{id}") { request, requestContext, pathParameters, _, responseSender in
                             let wireMVCContextContents = requestContext.takeContents()
                             let wireMVCResponseHeaderDrain = wireMVCContextContents.responseHeaders.take()
-                            let wireMVCOutcome: WireMVCOutcome
-                            do {
-                                let id = try await Path<String>.bind(name: "id", request: request, pathParameters: pathParameters, body: nil, coding: wireMVCAppCoding)
-                                wireMVCOutcome = WireMVCResponse.encoded(
-                                    try WireMVCJSONCodec.encodeResponseBody(try await self._wireSubject.get(id: id), coding: wireMVCAppCoding),
-                                    status: .ok,
-                                    headerFields: WireMVCResponseHeaders.resolved(middleware: try await wireMVCResponseHeaderDrain.drain())
-                                )
-                            } catch let wireMVCError {
-                                var wireMVCMapped = (
-                                    (wireMVCError as? WireMVCBindingError).map {
-                                        WireMVCOutcome.status($0.status)
-                                    }
-                                    ?? WireMVCOutcome.status(.internalServerError)
-                                )
-                                wireMVCMapped.headerFields = WireMVCResponseHeaders.resolved(
-                                    returned: wireMVCMapped.headerFields,
-                                    middleware: (try? await wireMVCResponseHeaderDrain.drain()) ?? []
-                                )
-                                wireMVCOutcome = wireMVCMapped
-                            }
-                            try await wireMVCOutcome.send(on: responseSender)
+                            try await wireMVCBufferedTerminal(
+                                responseSender: responseSender,
+                                responseHeaders: wireMVCResponseHeaderDrain,
+                                building: {
+                                    let id = try await Path<String>.bind(name: "id", request: request, pathParameters: pathParameters, body: nil, coding: wireMVCAppCoding)
+                                    return WireMVCResponse.encoded(
+                                        try WireMVCJSONCodec.encodeResponseBody(try await self._wireSubject.get(id: id), coding: wireMVCAppCoding),
+                                        status: .ok
+                                    )
+                                },
+                                errorMapping: { wireMVCError in
+                                    return (
+                                        (wireMVCError as? WireMVCBindingError).map {
+                                            WireMVCOutcome.status($0.status)
+                                        }
+                                        ?? WireMVCOutcome.status(.internalServerError)
+                                    )
+                                }
+                            )
                         }
                     }
                 }
@@ -834,19 +831,17 @@ struct RouteContributorGenerationTests {
                             }
                             try await wireMVCChain.intercept(input: wireMVCBaseBox) { wireMVCFinalBox in
                                 return try await wireMVCFinalBox.withPendingContents { _, _, _, _, responseSender, wireMVCResponseHeaderDrain in
-                                let wireMVCOutcome: WireMVCOutcome
-                                do {
-                                    try await self._wireSubject.f()
-                                    wireMVCOutcome = .status(.noContent, headerFields: WireMVCResponseHeaders.resolved(middleware: try await wireMVCResponseHeaderDrain.drain()))
-                                } catch {
-                                    var wireMVCMapped = WireMVCOutcome.status(.internalServerError)
-                                    wireMVCMapped.headerFields = WireMVCResponseHeaders.resolved(
-                                        returned: wireMVCMapped.headerFields,
-                                        middleware: (try? await wireMVCResponseHeaderDrain.drain()) ?? []
-                                    )
-                                    wireMVCOutcome = wireMVCMapped
-                                }
-                                try await wireMVCOutcome.send(on: responseSender)
+                                try await wireMVCBufferedTerminal(
+                                    responseSender: responseSender,
+                                    responseHeaders: wireMVCResponseHeaderDrain,
+                                    building: {
+                                        try await self._wireSubject.f()
+                                        return .status(.noContent)
+                                    },
+                                    errorMapping: { wireMVCError in
+                                        return WireMVCOutcome.status(.internalServerError)
+                                    }
+                                )
                                 }
                             }
                         }
@@ -900,33 +895,30 @@ struct RouteContributorGenerationTests {
                         builder.register(method: .post, path: "/search/{scope}") { request, requestContext, pathParameters, reader, responseSender in
                             let wireMVCContextContents = requestContext.takeContents()
                             let wireMVCResponseHeaderDrain = wireMVCContextContents.responseHeaders.take()
-                            let wireMVCOutcome: WireMVCOutcome
-                            do {
-                                let requestBody = try await WireMVCRequest.collectBody(reader)
-                                let scope = try await Path<String>.bind(name: "scope", request: request, pathParameters: pathParameters, body: requestBody, coding: wireMVCAppCoding)
-                                let query = try await Query<String>.bind(name: "q", request: request, pathParameters: pathParameters, body: requestBody, coding: wireMVCAppCoding)
-                                let limit = try await Query<Int>.bindOptional(name: "limit", request: request, pathParameters: pathParameters, body: requestBody, coding: wireMVCAppCoding)
-                                let trace = try await Header<String>.bindOptional(name: "X-Trace", request: request, pathParameters: pathParameters, body: requestBody, coding: wireMVCAppCoding) ?? "none"
-                                let filter = try await JSONBody<Filter>.bind(name: "filter", request: request, pathParameters: pathParameters, body: requestBody, coding: wireMVCAppCoding)
-                                wireMVCOutcome = WireMVCResponse.encoded(
-                                    try WireMVCJSONCodec.encodeResponseBody(try await self._wireSubject.run(scope: scope, query: query, limit: limit, trace: trace, filter: filter), coding: wireMVCAppCoding),
-                                    status: .created,
-                                    headerFields: WireMVCResponseHeaders.resolved(middleware: try await wireMVCResponseHeaderDrain.drain())
-                                )
-                            } catch let wireMVCError {
-                                var wireMVCMapped = (
-                                    (wireMVCError as? WireMVCBindingError).map {
-                                        WireMVCOutcome.status($0.status)
-                                    }
-                                    ?? WireMVCOutcome.status(.internalServerError)
-                                )
-                                wireMVCMapped.headerFields = WireMVCResponseHeaders.resolved(
-                                    returned: wireMVCMapped.headerFields,
-                                    middleware: (try? await wireMVCResponseHeaderDrain.drain()) ?? []
-                                )
-                                wireMVCOutcome = wireMVCMapped
-                            }
-                            try await wireMVCOutcome.send(on: responseSender)
+                            try await wireMVCBufferedTerminal(
+                                responseSender: responseSender,
+                                responseHeaders: wireMVCResponseHeaderDrain,
+                                collectingBodyFrom: reader,
+                                building: { requestBody in
+                                    let scope = try await Path<String>.bind(name: "scope", request: request, pathParameters: pathParameters, body: requestBody, coding: wireMVCAppCoding)
+                                    let query = try await Query<String>.bind(name: "q", request: request, pathParameters: pathParameters, body: requestBody, coding: wireMVCAppCoding)
+                                    let limit = try await Query<Int>.bindOptional(name: "limit", request: request, pathParameters: pathParameters, body: requestBody, coding: wireMVCAppCoding)
+                                    let trace = try await Header<String>.bindOptional(name: "X-Trace", request: request, pathParameters: pathParameters, body: requestBody, coding: wireMVCAppCoding) ?? "none"
+                                    let filter = try await JSONBody<Filter>.bind(name: "filter", request: request, pathParameters: pathParameters, body: requestBody, coding: wireMVCAppCoding)
+                                    return WireMVCResponse.encoded(
+                                        try WireMVCJSONCodec.encodeResponseBody(try await self._wireSubject.run(scope: scope, query: query, limit: limit, trace: trace, filter: filter), coding: wireMVCAppCoding),
+                                        status: .created
+                                    )
+                                },
+                                errorMapping: { wireMVCError in
+                                    return (
+                                        (wireMVCError as? WireMVCBindingError).map {
+                                            WireMVCOutcome.status($0.status)
+                                        }
+                                        ?? WireMVCOutcome.status(.internalServerError)
+                                    )
+                                }
+                            )
                         }
                     }
                 }
@@ -959,7 +951,7 @@ struct RouteContributorGenerationTests {
         )
         #expect(rendered.diagnostics.isEmpty)
         // No catch-all → the mapping chain, ending in the built-in 500 terminal (never a rethrow).
-        #expect(rendered.source.contains("} catch let wireMVCError {"))
+        #expect(rendered.source.contains("errorMapping: { wireMVCError in"))
         #expect(rendered.source.contains("(wireMVCError is NotFound ? WireMVCOutcome.status(.notFound) : nil)"))
         // The binding-error built-in is folded in (BasicFormat may reflow the trailing closure).
         #expect(rendered.source.contains("(wireMVCError as? WireMVCBindingError).map"))
@@ -1053,13 +1045,13 @@ struct RouteContributorGenerationTests {
         )
         #expect(rendered.diagnostics.isEmpty)
         #expect(rendered.source.contains("wireMVCRespondAny(to: wireMVCError, ({ (e: Swift.Error) in"))
-        #expect(rendered.source.contains("var wireMVCMapped = try ("))
+        #expect(rendered.source.contains("return try ("))
         // A catch-all matches everything, so nothing is re-thrown from the terminal.
         #expect(!rendered.source.contains("throw wireMVCError"))
     }
 
-    /// A route with no bindings still gets a `do`/`catch` when it declares an `@ErrorResponse`, so a
-    /// handler throw is mapped (the shipped no-binds fast path has no `catch`).
+    /// A route with no bindings still gets an `errorMapping` when it declares an `@ErrorResponse`, so a
+    /// handler throw is mapped (the shipped no-binds fast path maps nothing).
     @Test func noBindsRouteGainsCatchForErrorResponse() {
         let source = """
             @Controller("/users")
@@ -1080,8 +1072,8 @@ struct RouteContributorGenerationTests {
             discoveredModes: WireMVCBuiltIns.modes
         )
         #expect(rendered.diagnostics.isEmpty)
-        #expect(rendered.source.contains("do {"))
-        #expect(rendered.source.contains("} catch let wireMVCError {"))
+        #expect(rendered.source.contains("building: {"))
+        #expect(rendered.source.contains("errorMapping: { wireMVCError in"))
         // No bindings → the binding-error built-in is not folded in.
         #expect(!rendered.source.contains("as? WireMVCBindingError"))
     }
@@ -1110,12 +1102,15 @@ struct RouteContributorGenerationTests {
         )
         #expect(rendered.diagnostics.isEmpty)
         let generated = rendered.source
-        let doOpen = generated.range(of: "do {")
+        // The mapped region is the terminal's `building` closure — everything that can fail before the
+        // head goes out, `errorMapping` maps. It was an inline `do` until the terminal took ownership of
+        // the response-header registry; the property under test is the same one.
+        let mappedRegion = generated.range(of: "building: {")
         let scopeEntry = generated.range(
             of: "let wireMVCScopeEntry = try await self._wireEnterScope(request)"
         )
-        #expect(doOpen != nil && scopeEntry != nil)
-        #expect(doOpen!.lowerBound < scopeEntry!.lowerBound)  // scope entry is inside the do
+        #expect(mappedRegion != nil && scopeEntry != nil)
+        #expect(mappedRegion!.lowerBound < scopeEntry!.lowerBound)  // scope entry is inside the mapped region
     }
 
     // MARK: - @ErrorResponse diagnostics

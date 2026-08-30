@@ -55,11 +55,11 @@ struct ResponseHeaderGenerationTests {
                 "try WireMVCJSONCodec.encodeResponseBody(try await self._wireSubject.get(id: id), coding: wireMVCAppCoding)"
             )
         )
-        #expect(
-            emitted.contains(
-                "headerFields: WireMVCResponseHeaders.resolved(middleware: try await wireMVCResponseHeaderDrain.drain())"
-            )
-        )
+        // A route that states nothing of its own names no `headerFields:` at all — the terminal owns the
+        // registry and folds the middleware's contributions onto whatever it sends. What the route must
+        // still do is hand the registry over; that is what makes the contributions reachable.
+        #expect(emitted.contains("responseHeaders: wireMVCResponseHeaderDrain"))
+        #expect(!emitted.contains("headerFields:"))
         #expect(
             emitted.contains(
                 "let wireMVCResponseHeaderDrain = wireMVCContextContents.responseHeaders.take()"
@@ -87,7 +87,7 @@ struct ResponseHeaderGenerationTests {
             witness(source).contains(
                 "headerFields: WireMVCResponseHeaders.resolved(statics: ["
                     + ".set(.cacheControl, \"public\"), .set(.vary, \"Accept-Encoding\"), "
-                    + ".set(.cacheControl, \"no-store\"), .append(.vary, \"Origin\")], middleware: try await wireMVCResponseHeaderDrain.drain())"
+                    + ".set(.cacheControl, \"no-store\"), .append(.vary, \"Origin\")])"
             )
         )
     }
@@ -115,7 +115,7 @@ struct ResponseHeaderGenerationTests {
         #expect(
             emitted.contains(
                 "headerFields: WireMVCResponseHeaders.resolved("
-                    + "statics: [.set(.cacheControl, \"no-store\")], returned: wireMVCReturn.headers, middleware: try await wireMVCResponseHeaderDrain.drain())"
+                    + "statics: [.set(.cacheControl, \"no-store\")], returned: wireMVCReturn.headers)"
             )
         )
     }
@@ -148,9 +148,8 @@ struct ResponseHeaderGenerationTests {
             """
         #expect(
             witness(source).contains(
-                "wireMVCOutcome = .status(wireMVCReturn.status, "
-                    + "headerFields: WireMVCResponseHeaders.resolved(returned: wireMVCReturn.headers, "
-                    + "middleware: try await wireMVCResponseHeaderDrain.drain()))"
+                "return .status(wireMVCReturn.status, "
+                    + "headerFields: WireMVCResponseHeaders.resolved(returned: wireMVCReturn.headers))"
             )
         )
         #expect(diagnostics(source).isEmpty, "the return type is the declaration; no annotation is owed")
@@ -216,8 +215,8 @@ struct ResponseHeaderGenerationTests {
             """
         #expect(
             witness(source).contains(
-                "wireMVCOutcome = .status(.noContent, headerFields: "
-                    + "WireMVCResponseHeaders.resolved(statics: [.set(.cacheControl, \"no-store\")], middleware: try await wireMVCResponseHeaderDrain.drain()))"
+                "return .status(.noContent, headerFields: "
+                    + "WireMVCResponseHeaders.resolved(statics: [.set(.cacheControl, \"no-store\")]))"
             )
         )
     }
@@ -342,7 +341,7 @@ struct ResponseHeaderGenerationTests {
         #expect(diagnostics(source).isEmpty)
         #expect(
             witness(source).contains(
-                "statics: [.set(.setCookie, \"a=1\"), .append(.setCookie, \"b=2\")], middleware: try await wireMVCResponseHeaderDrain.drain()"
+                "statics: [.set(.setCookie, \"a=1\"), .append(.setCookie, \"b=2\")]"
             )
         )
     }

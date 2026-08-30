@@ -13,7 +13,6 @@ extension RouteBlockGenerator {
         from function: FunctionDeclSyntax,
         call: String,
         staticHeaders: [ResponseHeaderEntry],
-        drainsMiddleware: Bool,
         mode: ResolvedResponseMode?
     ) -> String? {
         let attributes = function.attributes
@@ -42,8 +41,8 @@ extension RouteBlockGenerator {
             }
             return """
                 let \(returnLocal) = \(call)
-                wireMVCOutcome = .status(\(returnLocal).\(responseTupleStatusLabel), \
-                headerFields: \(headerExpression(shape: shape, statics: staticsLiteral, drainsMiddleware: drainsMiddleware)))
+                return .status(\(returnLocal).\(responseTupleStatusLabel)\
+                \(headerFieldsArgument(shape: shape, statics: staticsLiteral)))
                 """
         }
 
@@ -53,7 +52,6 @@ extension RouteBlockGenerator {
                 call: call,
                 shape: shape,
                 staticsLiteral: staticsLiteral,
-                drainsMiddleware: drainsMiddleware,
                 mode: mode
             )
         }
@@ -74,11 +72,8 @@ extension RouteBlockGenerator {
                 record(RouteCodegenDiagnostic(.responseStatusOnValue(route), at: function.name))
                 return nil
             }
-            let fields =
-                (staticsLiteral != nil || drainsMiddleware)
-                ? ", headerFields: \(headerExpression(shape: shape, statics: staticsLiteral, drainsMiddleware: drainsMiddleware))"
-                : ""
-            return "\(call)\nwireMVCOutcome = .status(\(annotatedStatus)\(fields))"
+            let fields = headerFieldsArgument(shape: shape, statics: staticsLiteral)
+            return "\(call)\nreturn .status(\(annotatedStatus)\(fields))"
         }
 
         // Only `.streaming` can reach here, and it never does — `responseEmission` routes it to
@@ -94,7 +89,7 @@ extension RouteBlockGenerator {
 
     /// The buffered terminal's assignment: the handler's return, through the mode's own codec.
     ///
-    /// The counterpart of ``streamingOutcome(from:call:staticHeaders:drainsMiddleware:mode:)``, and shaped
+    /// The counterpart of ``streamingOutcome(from:call:staticHeaders:mode:)``, and shaped
     /// like it deliberately — one function per terminal, each reading the same mode. Every mode emits the
     /// same shape here; the generator no longer knows that JSON is JSON.
     private mutating func bufferedOutcome(
@@ -102,7 +97,6 @@ extension RouteBlockGenerator {
         call: String,
         shape: ResponseReturnShape,
         staticsLiteral: String?,
-        drainsMiddleware: Bool,
         mode: ResolvedResponseMode
     ) -> String? {
         let route = function.name.text
@@ -133,26 +127,24 @@ extension RouteBlockGenerator {
             )
             return nil
         }
-        let fields = headerExpression(shape: shape, statics: staticsLiteral, drainsMiddleware: drainsMiddleware)
+        let fields = headerFieldsArgument(shape: shape, statics: staticsLiteral)
         // The codec is called on its *unbound* generic type: `Value` is inferred from the argument, so
         // this spelling serves a handler whose return type is opaque (`some Encodable`) as well as a
         // named one — which a `Codec<ReturnType>` spelling could not.
         guard shape.isTuple else {
             return """
-                wireMVCOutcome = WireMVCResponse.encoded(
+                return WireMVCResponse.encoded(
                 try \(codec).encodeResponseBody(\(call), coding: \(codingExpression)),
-                status: \(annotatedStatus),
-                headerFields: \(fields)
+                status: \(annotatedStatus)\(fields)
                 )
                 """
         }
         let value = shape.hasStatus ? "\(returnLocal).\(responseTupleStatusLabel)" : annotatedStatus
         return """
             let \(returnLocal) = \(call)
-            wireMVCOutcome = WireMVCResponse.encoded(
+            return WireMVCResponse.encoded(
             try \(codec).encodeResponseBody(\(returnLocal).\(responseTupleBodyLabel), coding: \(codingExpression)),
-            status: \(value),
-            headerFields: \(fields)
+            status: \(value)\(fields)
             )
             """
     }
@@ -168,7 +160,6 @@ extension RouteBlockGenerator {
         from function: FunctionDeclSyntax,
         call: String,
         staticHeaders: [ResponseHeaderEntry],
-        drainsMiddleware: Bool,
         mode: ResolvedResponseMode?
     ) -> String? {
         let route = function.name.text
@@ -195,7 +186,7 @@ extension RouteBlockGenerator {
             return nil
         }
         let statics = staticsLiteral(staticHeaders)
-        let fields = headerExpression(shape: shape, statics: statics, drainsMiddleware: drainsMiddleware)
+        let fields = headerFieldsArgument(shape: shape, statics: statics)
 
         guard shape.isTuple else {
             // `return` even though this is the only statement in the simple case: with a binding or a scope
@@ -203,8 +194,7 @@ extension RouteBlockGenerator {
             // from a bare trailing expression only when it is the *sole* statement. One spelling for both.
             return """
                 return WireMVCStreamingOutcome(
-                status: \(status),
-                headerFields: \(fields),
+                status: \(status)\(fields),
                 producer: \(producer)(\(call))
                 )
                 """
@@ -213,26 +203,32 @@ extension RouteBlockGenerator {
         return """
             let \(returnLocal) = \(call)
             return WireMVCStreamingOutcome(
-            status: \(resolvedStatus),
-            headerFields: \(fields),
+            status: \(resolvedStatus)\(fields),
             producer: \(producer)(\(returnLocal).\(responseTupleBodyLabel))
             )
             """
     }
 
-    /// The terminal for a **streaming** route (`@HTMLResponse`).
+    /// The terminal call every typed route ends in.
     ///
-    /// `wireMVCStreamingTerminal` discriminates inside its own `do`/`catch` and consumes the sender once,
-    /// afterwards — the same single-consume-site invariant the buffered terminal above maintains. Sending
-    /// inside the `do` does not compile (`'responseSender' consumed more than once`), so the shape is the
-    /// checker's choice rather than a preference.
+    /// One emitter for both tiers, because they now have the same shape — `wireMVCBufferedTerminal` and
+    /// `wireMVCStreamingTerminal` differ only in what `building` returns. They were separate while the
+    /// buffered tier wrote its own `do`/`catch` inline; moving the response-header drain into the terminal
+    /// (PendingIssues/18) took the `do`/`catch` with it, and the two collapsed together.
+    ///
+    /// **Why a terminal function rather than an inline `do`/`catch`.** Three linear values have to be used
+    /// exactly once each across two branches that are not exclusive: the sender, the reader, and the
+    /// response-header registry. A `catch` reachable from anywhere in the `do` defeats all three — the
+    /// checker reports `consumed more than once` for the sender, and would for the registry too. Owning
+    /// them in a function that discriminates first and consumes afterwards is what makes each one checked.
     ///
     /// Everything that can fail *before* the head goes out — scope entry, body collection, parameter
-    /// binding, the handler call, the header drain — sits inside `building`, so all of it still maps
-    /// through the same `@ErrorResponse` chain a buffered route uses. Nothing after the first byte can be
-    /// mapped; that is inherent to streaming, and is why the producer is only reached once `building`
-    /// returns. The generated code never names the producer type: it is inferred from `building`.
-    func streamingClosureBody(
+    /// binding, the handler call, the encode — sits inside `building`, so all of it maps through the same
+    /// `@ErrorResponse` chain. Nothing after the first byte can be mapped; that is inherent to streaming,
+    /// and is why a producer is only reached once `building` returns. The generated code never names the
+    /// producer type: it is inferred from `building`.
+    func terminalCall(
+        named terminal: String,
         hasBody: Bool,
         streamsBody: Bool,
         binds: [String],
@@ -247,8 +243,13 @@ extension RouteBlockGenerator {
         let hasBinds = !binds.isEmpty
         let bindsBlock = binds.isEmpty ? "" : binds.joined(separator: "\n") + "\n"
         // `building` ends in the outcome. A single-expression body needs no `return`; a multi-statement one
-        // (a response tuple, a bind, a prologue) supplies its own — `streamingOutcome` writes it.
+        // (a response tuple, a bind, a prologue) supplies its own — the emission writes it.
         let body = "\(scopeEntryPrologue)\(bindsBlock)\(outcome)"
+        // The registry is passed, never captured: a noncopyable value captured by a closure cannot be
+        // consumed at all, so `building` could not drain it even once. Handing it over is what lets
+        // `drain()` be `consuming`.
+        let registryArgument =
+            drainsMiddleware ? "\nresponseHeaders: \(responseHeaderDrainLocal)," : ""
         // Three shapes, one per way a route treats the request body.
         //
         // A **collected** body takes `collectingBodyFrom:`: `collectBody` consumes the reader, which a
@@ -258,7 +259,7 @@ extension RouteBlockGenerator {
         // A **reader** body takes `lendingBodyFrom:` instead, and the reader arrives as a *parameter* of
         // `building` rather than being consumed before it. A consuming parameter is moved in, not
         // captured, so the borrow that blocks the collecting case never arises — and the binding runs
-        // inside the mapped `do`, which is what keeps a malformed body mapping to a status.
+        // inside the mapped region, which is what keeps a malformed body mapping to a status.
         //
         // The parameter is deliberately named `reader`, shadowing the register closure's own. Every
         // `bindReader` expression already spells `reader: reader`, so the shadow is what makes the bind
@@ -268,17 +269,13 @@ extension RouteBlockGenerator {
             ? "\nlendingBodyFrom: reader," : (hasBody ? "\ncollectingBodyFrom: reader," : "")
         let buildingParameter = streamsBody ? " reader in" : (hasBody ? " requestBody in" : "")
         return """
-            \(scopeEntryPreamble)try await wireMVCStreamingTerminal(
-            responseSender: responseSender,\(readerArgument)
+            \(scopeEntryPreamble)try await \(terminal)(
+            responseSender: responseSender,\(registryArgument)\(readerArgument)
             building: {\(buildingParameter)
             \(body)
             },
             errorMapping: { wireMVCError in
-            \(drainedOntoMappedError(
-                errorChainExpression(mappings: errorMappings, includeBindingBuiltin: hasBinds),
-                drainsMiddleware: drainsMiddleware,
-                assigningTo: nil
-            ))
+            return \(errorChainExpression(mappings: errorMappings, includeBindingBuiltin: hasBinds))
             }
             )
             """
@@ -314,61 +311,36 @@ extension RouteBlockGenerator {
         return nil
     }
 
-    /// A mapped error's outcome, with the response-header registry drained onto it.
-    ///
-    /// The served response resolves its `headerFields` against the drain; a mapped one used to be a bare
-    /// `WireMVCOutcome.status(…)`, so every field a middleware contributed survived a `200` and vanished
-    /// from every `@ErrorResponse` status. That is backwards — the error path is the one most likely to
-    /// need them. A cross-origin caller cannot read a `403` whose `Access-Control-Allow-Origin` was
-    /// dropped, and a `401` loses the `WWW-Authenticate` an outer middleware registered, which is what
-    /// makes it a well-formed challenge. The gate path never had the bug: `respondingWith` drains.
-    ///
-    /// **`try?`, and it is not laziness.** This runs inside a `catch` that is already handling an error and
-    /// must still write a response. A deferred contribution (`onSend`) can throw, and a throw here would
-    /// escape the terminal with the sender unconsumed — turning a mapped `403` into a dropped connection,
-    /// which is the failure the whole tier exists to prevent. Contributions are dropped instead: the same
-    /// answer as before this fix, and only in the case where computing them failed.
-    ///
-    /// `returned:` carries whatever the mapping itself set, so a body-form `@ErrorResponse` keeps its
-    /// `Content-Type` and a middleware cannot silently overwrite what the mapping chose.
-    func drainedOntoMappedError(
-        _ expression: String,
-        drainsMiddleware: Bool,
-        assigningTo target: String?
-    )
-        -> String
-    {
-        guard drainsMiddleware else {
-            return target.map { "\($0) = \(expression)" } ?? "return \(expression)"
-        }
-        let tail = target.map { "\($0) = wireMVCMapped" } ?? "return wireMVCMapped"
-        return """
-            var wireMVCMapped = \(expression)
-            wireMVCMapped.headerFields = WireMVCResponseHeaders.resolved(
-            returned: wireMVCMapped.headerFields,
-            middleware: (try? await \(responseHeaderDrainLocal).drain()) ?? []
-            )
-            \(tail)
-            """
-    }
-
     /// The `statics:` literal, or `nil` when the route contributes no constant fields.
     func staticsLiteral(_ entries: [ResponseHeaderEntry]) -> String? {
         entries.isEmpty ? nil : responseHeaderLiteral(entries)
     }
 
-    /// The `headerFields:` argument — one `WireMVCResponseHeaders.resolved` call over whichever
-    /// contributors this route actually has. Both arguments default, so a route with only one names only
-    /// that one.
-    func headerExpression(shape: ResponseReturnShape, statics: String?, drainsMiddleware: Bool) -> String {
+    /// The `headerFields:` argument — one `WireMVCResponseHeaders.resolved` call over the two contributors
+    /// a route states *in its own source*: `@ResponseHeader` constants and the handler's returned fields.
+    /// Both arguments default, so a route with only one names only that one.
+    ///
+    /// **Middleware contributions are not among them.** They are folded on by the terminal, which owns the
+    /// registry and drains it exactly once — see `wireMVCBufferedTerminal`. Emitting the drain here is what
+    /// put a second one in the mapped-error path, since a route needs the contributions on both.
+    /// `nil` when the route states nothing of its own, so the call **omits** `headerFields:` rather than
+    /// passing an empty literal. Every outcome initialiser defaults it to `HTTPFields()`, and `[:]` is not
+    /// that: a dictionary literal goes through `init(dictionaryLiteral:)` and allocates. That fallback was
+    /// unreachable while the drain was emitted here — every typed route named at least `middleware:` — and
+    /// became the common case the moment the terminal took the drain over.
+    func headerExpression(shape: ResponseReturnShape, statics: String?) -> String? {
         let returned = shape.hasHeaders ? "\(returnLocal).\(responseTupleHeadersLabel)" : nil
         let arguments = [
             statics.map { "statics: \($0)" },
             returned.map { "returned: \($0)" },
-            drainsMiddleware ? "middleware: try await \(responseHeaderDrainLocal).drain()" : nil,
         ].compactMap { $0 }
-        guard !arguments.isEmpty else { return "[:]" }
+        guard !arguments.isEmpty else { return nil }
         return "WireMVCResponseHeaders.resolved(\(arguments.joined(separator: ", ")))"
+    }
+
+    /// ``headerExpression(shape:statics:)`` as a trailing argument, or `""` when there is nothing to pass.
+    func headerFieldsArgument(shape: ResponseReturnShape, statics: String?) -> String {
+        headerExpression(shape: shape, statics: statics).map { ", headerFields: \($0)" } ?? ""
     }
 
     /// The `[ResponseHeaderContribution]` literal for a route's `@ResponseHeader` constants, in tier order

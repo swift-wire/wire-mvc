@@ -728,3 +728,142 @@ struct RawRouteFramingTests {
         #expect(record.head?.headerFields[.init("x-trace")!] == "abc")
     }
 }
+
+// MARK: - The terminal drains exactly once
+
+/// A deferred contribution's **side effects**, and how many times they ran.
+private final class DeferredSideEffect: @unchecked Sendable {
+    // The registry is single-region by construction — one request's middleware writes it and that
+    // request's terminal drains it — so a plain counter is enough, exactly as `RecordedResponse` above.
+    private(set) var runs = 0
+    func record() { runs += 1 }
+}
+
+private struct ContributionFailed: Error {}
+
+/// The `~Copyable` registry cannot be built inside a `building` closure, so each case makes its own.
+private func registry(
+    firstRuns effect: DeferredSideEffect,
+    secondThrows: Bool
+) -> ResponseHeaderRegistry {
+    var registry = ResponseHeaderRegistry()
+    // Registration order is reversed at drain, so the *second* registration is evaluated first. Register
+    // the throwing one first so the recording one runs before it and is the contribution at risk.
+    if secondThrows {
+        registry.onSend { throw ContributionFailed() }
+    }
+    registry.onSend {
+        effect.record()
+        return [.set(HTTPField.Name("x-deferred")!, "late")]
+    }
+    return registry
+}
+
+@Suite("The terminal drains the response-header registry exactly once")
+struct TerminalDrainsOnceTests {
+    /// **PendingIssues/18.** A deferred contribution that succeeds, followed by one that throws, used to
+    /// run **twice**: the success drain got part-way, the throw sent the terminal into its `catch`, and the
+    /// mapped-error path drained the same registry again from the start. `onSend` is deliberately
+    /// non-`@Sendable` so a middleware can capture per-request state in it, which is what makes a second
+    /// run a real hazard rather than a theoretical one.
+    @Test
+    func aDeferredContributionRunsOnceWhenALaterOneThrows() async throws {
+        let effect = DeferredSideEffect()
+        let record = RecordedResponse()
+        try await wireMVCBufferedTerminal(
+            responseSender: RecordingSender(record: record),
+            responseHeaders: registry(firstRuns: effect, secondThrows: true),
+            building: { .status(.ok) },
+            errorMapping: { _ in .status(.internalServerError) }
+        )
+        #expect(effect.runs == 1, "the contribution's side effect happened once, not once per drain")
+        // A drain that failed part-way drops every contribution — the documented answer for a contribution
+        // that fails to compute — and maps through the same chain a route error does.
+        #expect(record.head?.status == .internalServerError)
+        #expect(record.head?.headerFields[HTTPField.Name("x-deferred")!] == nil)
+    }
+
+    /// The ordinary path still drains, once.
+    @Test
+    func aSucceedingDrainRunsOnceAndReachesTheResponse() async throws {
+        let effect = DeferredSideEffect()
+        let record = RecordedResponse()
+        try await wireMVCBufferedTerminal(
+            responseSender: RecordingSender(record: record),
+            responseHeaders: registry(firstRuns: effect, secondThrows: false),
+            building: { .status(.ok) },
+            errorMapping: { _ in .status(.internalServerError) }
+        )
+        #expect(effect.runs == 1)
+        #expect(record.head?.status == .ok)
+        #expect(record.head?.headerFields[HTTPField.Name("x-deferred")!] == "late")
+    }
+
+    /// A handler that throws never reached the success drain, so the contributions have to be picked up on
+    /// the mapped path — the gap `#155` closed, and the one a single drain must not reopen. A `401` whose
+    /// `WWW-Authenticate` was dropped is not a well-formed challenge.
+    @Test
+    func aMappedErrorStillCarriesTheContributions() async throws {
+        let effect = DeferredSideEffect()
+        let record = RecordedResponse()
+        try await wireMVCBufferedTerminal(
+            responseSender: RecordingSender(record: record),
+            responseHeaders: registry(firstRuns: effect, secondThrows: false),
+            building: { throw ContributionFailed() },
+            errorMapping: { _ in .status(.unauthorized) }
+        )
+        #expect(effect.runs == 1)
+        #expect(record.head?.status == .unauthorized)
+        #expect(record.head?.headerFields[HTTPField.Name("x-deferred")!] == "late")
+    }
+
+    /// Statics and returned fields resolved by the route compose with the terminal's late fold exactly as
+    /// one `resolved(statics:returned:middleware:)` call would. That equivalence is what lets the drain move
+    /// out of the emission and into the terminal: middleware contributions apply *last*, over whatever
+    /// statics and returned fields composed, so re-entering with the composed result as `returned` and no
+    /// statics reproduces the single call. If it ever stops holding, every route's header order is wrong.
+    @Test(arguments: [
+        [] as [ResponseHeaderContribution],
+        [.set(HTTPField.Name("cache-control")!, "no-store")],
+        [.append(HTTPField.Name("vary")!, "Origin"), .set(HTTPField.Name("cache-control")!, "private")],
+    ])
+    func theLateFoldMatchesOneResolvedCall(_ middleware: [ResponseHeaderContribution]) {
+        let cacheControl = HTTPField.Name("cache-control")!
+        let vary = HTTPField.Name("vary")!
+        let statics: [ResponseHeaderContribution] = [.set(cacheControl, "public"), .append(vary, "Accept")]
+        var returned = HTTPFields()
+        returned[HTTPField.Name("x-route")!] = "yes"
+
+        let inOneCall = WireMVCResponseHeaders.resolved(
+            statics: statics,
+            returned: returned,
+            middleware: middleware
+        )
+        let lateFold = wireMVCResolved(
+            WireMVCResponseHeaders.resolved(statics: statics, returned: returned),
+            applying: middleware
+        )
+        #expect(lateFold == inOneCall)
+    }
+
+    /// And the whole composition survives the trip to the wire, middleware last.
+    @Test
+    func aMiddlewareContributionWinsOverTheRoutesOwn() async throws {
+        let cacheControl = HTTPField.Name("cache-control")!
+        var registry = ResponseHeaderRegistry()
+        registry.add(.set(cacheControl, "no-store"))
+
+        let record = RecordedResponse()
+        try await wireMVCBufferedTerminal(
+            responseSender: RecordingSender(record: record),
+            responseHeaders: registry,
+            building: {
+                .status(.ok, headerFields: WireMVCResponseHeaders.resolved(statics: [.set(cacheControl, "public")]))
+            },
+            errorMapping: { _ in .status(.internalServerError) }
+        )
+        #expect(record.head?.headerFields[cacheControl] == "no-store", "middleware applies last and wins")
+        #expect(record.head?.headerFields[values: cacheControl].count == 1, "set replaces rather than adding")
+    }
+}
+

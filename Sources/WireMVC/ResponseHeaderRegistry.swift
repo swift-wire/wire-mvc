@@ -116,8 +116,10 @@ public struct ResponseHeaderRegistry: ~Copyable {
     }
 
     /// Contribute fields that cannot be known until the handler has run — a session cookie, an ETag
-    /// computed from what was written. The closure runs once, at drain, inside the terminal's `do`, so a
-    /// throw from it maps through `@ErrorResponse` like any other route error.
+    /// computed from what was written. The closure runs **exactly once**, at drain — after the handler and
+    /// before the response head exists — and a throw from it maps through `@ErrorResponse` like any other
+    /// route error. The terminal owns the drain, which is what makes "exactly once" a compiler-checked
+    /// property rather than a convention; see ``drain()``.
     public mutating func onSend(_ contribute: @escaping () async throws -> [ResponseHeaderContribution]) {
         append(.deferred(contribute))
     }
@@ -133,7 +135,6 @@ public struct ResponseHeaderRegistry: ~Copyable {
     /// closure runs a second time, side effects included. Linearity already gives exclusive *ownership*
     /// of the registry; it does not by itself stop the one owner draining twice, and this does.
     ///
-    /// ``drain()`` cannot say the same yet — see there.
     public consuming func drain(into fields: inout HTTPFields) async throws {
         for index in 0..<registrationCount {
             guard let registration = registration(fromNewest: index) else { continue }
@@ -148,21 +149,19 @@ public struct ResponseHeaderRegistry: ~Copyable {
         }
     }
 
-    /// Evaluate every registration, outermost last. Called by the route terminal (and by
+    /// Evaluate every registration, outermost last. Called by the route terminals (and by
     /// ``RequestResponseMiddlewareBox/respondingWith(_:)`` on the gate path) — not by user code.
     ///
-    /// **Still `borrowing`, and that is a known gap rather than a preference.** Making it `consuming`
-    /// does not compile, and the failure is the point: a typed terminal drains in its `do` and again in
-    /// the `catch` that maps an error, so the compiler reports `'wireMVCResponseHeaderDrain' consumed
-    /// more than once` against generated code. The two are not exclusive. Argument evaluation reaches
-    /// this drain last, so a handler that throws never got here — but a *deferred* contribution that
-    /// throws part-way has already run the ones before it, and the `catch` then runs them all again.
+    /// **`consuming`, so "drained exactly once" is checked rather than trusted** — the same guarantee
+    /// ``drain(into:)`` carries, and for the same reason: draining twice runs every `onSend` closure a
+    /// second time, side effects included.
     ///
-    /// Closing it is a design decision, not a keyword. Draining once before the `do` would run `onSend`
-    /// ahead of the handler, which defeats what deferral is for; draining once after the `do`/`catch`
-    /// loses the documented behaviour that a throw from `onSend` maps through `@ErrorResponse`. Recorded
-    /// rather than forced.
-    public borrowing func drain() async throws -> [ResponseHeaderContribution] {
+    /// A typed terminal needs the contributions on *both* its success and its mapped-error path, and the
+    /// two are not exclusive — which is why this cannot be reached from generated code directly. The
+    /// registry is handed to ``wireMVCBufferedTerminal(responseSender:responseHeaders:building:errorMapping:)``
+    /// (or its streaming siblings) instead, which drains once between the handler and the outcome and
+    /// resolves the result onto whichever branch ran. See Notes/LinearResponseHeaderRegistry.md.
+    public consuming func drain() async throws -> [ResponseHeaderContribution] {
         var contributions: [ResponseHeaderContribution] = []
         for index in 0..<registrationCount {
             guard let registration = registration(fromNewest: index) else { continue }
