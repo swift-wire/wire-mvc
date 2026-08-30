@@ -40,6 +40,13 @@ public enum WireMVCBindingObligation: Sendable {
     /// `associatedtype` is fixed by the conformance before any reader exists. The same reasoning as the
     /// response side's `codec:`.
     ///
+    /// **Construction only.** The stream must still conform to ``LentBodyStream``, whose `validateRequest()`
+    /// the terminal calls on the constructed value, before the handler runs and before anything is
+    /// committed to a response. Rejecting a request the stream cannot be produced from involves no reader,
+    /// so it is a requirement rather than a spelling — and it has to be, because the duplex shape runs the
+    /// handler *after* the head, where a check deferred to the handler truncates a response instead of
+    /// mapping to a status.
+    ///
     /// The parameter must be `consuming`: a stream is used up once, through a `withParts`-style entry point
     /// that consumes it. `inout` is not a matter of taste or of a missing feature — calling a consuming
     /// method on an `inout` binding demands a replacement value, and a stream has none.

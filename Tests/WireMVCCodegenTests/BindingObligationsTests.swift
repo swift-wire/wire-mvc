@@ -706,6 +706,49 @@ struct BodyStreamBindingTests {
         #expect(!source.contains("MultipartParts<"), "no type argument — the reader is inferred from the call")
     }
 
+    /// The construction is a spelling; the check that the request can produce the stream at all is a
+    /// `LentBodyStream` requirement, called on the constructed value.
+    ///
+    /// It is emitted **before** the handler is called and inside `building`, which is the whole point. On
+    /// today's tiers a check deferred to `withParts` would map just as well — the handler runs before the
+    /// head. The duplex shape runs it after, where the same deferred check truncates a response that has
+    /// already claimed a status.
+    @Test("a lent stream is validated after construction and before the handler")
+    func lentStreamValidated() {
+        let (source, diagnostics) = generate(controller(ownership: "consuming"))
+        #expect(diagnostics.isEmpty, "\(diagnostics)")
+        let construct = source.range(of: "let parts = MultipartParts(request: request, reader: reader)")
+        let validate = source.range(of: "try parts.validateRequest()")
+        let call = source.range(of: "receive(parts: parts)")
+        #expect(construct != nil && validate != nil && call != nil, "\(source)")
+        if let construct, let validate, let call {
+            #expect(construct.upperBound < validate.lowerBound, "validated after it exists")
+            #expect(validate.upperBound < call.lowerBound, "and before the handler is given it")
+        }
+        // Borrowing, so the stream survives to be lent on: it is still `parts` that reaches the handler,
+        // not something the check handed back.
+        #expect(!source.contains("parts = try parts.validateRequest()"), "\(source)")
+    }
+
+    /// Only a lent stream gets the call. Every other binding's construction can throw on its own, so a
+    /// second statement would be a check with nothing to check.
+    @Test("an ordinary binding is not given a validation step")
+    func ordinaryBindingNotValidated() {
+        let (source, diagnostics) = generate(
+            """
+            @Singleton @Controller("/files")
+            public struct Files {
+                @Post("/{id}") @JSONResponse
+                public func receive(@Path id: String, @JSONBody meta: Meta) async throws -> Receipt {
+                    Receipt()
+                }
+            }
+            """
+        )
+        #expect(diagnostics.isEmpty, "\(diagnostics)")
+        #expect(!source.contains("validateRequest()"), "\(source)")
+    }
+
     /// `inout` is refused rather than emitted. It was briefly supported on the theory that SE-0293 would
     /// make it usable — but it is wrong for this shape regardless: calling a `consuming` method on an
     /// `inout` binding is `missing reinitialization of inout parameter after consume`, and a stream has
