@@ -331,10 +331,6 @@ struct RouteBlockGenerator {
         let hasBinds = !binds.isEmpty
         let call =
             "\(effectMarkers(of: function))\(subjectExpression).\(function.name.text)(\(callArgs.joined(separator: ", ")))"
-        // Every typed route drains. The registry rides the courier context, so it exists whether or not
-        // this route has a fold — and a global middleware must reach a route with no `@Middleware` of its
-        // own, which is most of them. Making it conditional would miss those silently.
-        let drainsMiddleware = true
         guard
             let emission = responseEmission(
                 of: function,
@@ -356,8 +352,7 @@ struct RouteBlockGenerator {
             streamsBody: streamsBody,
             binds: binds,
             errorMappings: errorMappings,
-            foldThreadsDoubles: foldThreadsDoubles,
-            drainsMiddleware: drainsMiddleware
+            foldThreadsDoubles: foldThreadsDoubles
         )
         return emitRegister(
             verb: verb,
@@ -370,7 +365,8 @@ struct RouteBlockGenerator {
             contextName: middleware.isEmpty ? "requestContext" : "_",
             parametersName: names.pathParameters,
             readerName: names.reader,
-            registryLocal: drainsMiddleware ? responseHeaderDrainLocal : nil,
+            // Unconditional: every typed route hands its registry to the terminal — see `terminalCall`.
+            registryLocal: responseHeaderDrainLocal,
             terminalBody: terminalBody
         )
     }
@@ -384,8 +380,7 @@ struct RouteBlockGenerator {
         streamsBody: Bool,
         binds: [String],
         errorMappings: [ErrorMapping],
-        foldThreadsDoubles: Bool,
-        drainsMiddleware: Bool
+        foldThreadsDoubles: Bool
     ) -> String {
         // Hoisted above the fold when it threads doubles, so it is dropped from the terminal here.
         let preamble = foldThreadsDoubles ? "" : scopeEntryPreamble
@@ -397,8 +392,7 @@ struct RouteBlockGenerator {
             outcome: emission.outcome,
             scopeEntryPreamble: preamble,
             scopeEntryPrologue: scopeEntryProloguePrefix,
-            errorMappings: errorMappings,
-            drainsMiddleware: drainsMiddleware
+            errorMappings: errorMappings
         )
     }
 }

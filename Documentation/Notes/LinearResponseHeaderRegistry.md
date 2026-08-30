@@ -433,8 +433,8 @@ buffered terminal grew the same `collectingBodyFrom:` / `lendingBodyFrom:` overl
 Generated code got **smaller**. The buffered tier no longer writes its own `do`/`catch`, so the mapped-error
 block — `var wireMVCMapped = …; wireMVCMapped.headerFields = resolved(returned:middleware:); wireMVCOutcome =
 wireMVCMapped` — collapses to `return WireMVCOutcome.status(…)`, and the two terminal emitters merged into
-one: they had differed only in the shape the buffered `do`/`catch` forced. Net −143 lines of codegen against
-+193 of hand-written, tested runtime.
+one: they had differed only in the shape the buffered `do`/`catch` forced. Net −107 lines of codegen (208
+deleted against 101 added) for +193 of hand-written, tested runtime.
 
 Two things came out of the emission that had been hidden by it. A route now names `headerFields:` only when
 it states one — the empty-arguments fallback was unreachable while every typed route named at least

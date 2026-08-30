@@ -235,8 +235,7 @@ extension RouteBlockGenerator {
         outcome: String,
         scopeEntryPreamble: String,
         scopeEntryPrologue: String,
-        errorMappings: [ErrorMapping],
-        drainsMiddleware: Bool
+        errorMappings: [ErrorMapping]
     ) -> String {
         // Derived rather than passed: every call site computed it as `!binds.isEmpty`, so two arguments
         // could disagree and only one of them was ever right.
@@ -248,8 +247,13 @@ extension RouteBlockGenerator {
         // The registry is passed, never captured: a noncopyable value captured by a closure cannot be
         // consumed at all, so `building` could not drain it even once. Handing it over is what lets
         // `drain()` be `consuming`.
-        let registryArgument =
-            drainsMiddleware ? "\nresponseHeaders: \(responseHeaderDrainLocal)," : ""
+        //
+        // Unconditional, and it has to be. Every typed route drains — the registry rides the courier, so
+        // it exists whether or not this route has a fold, and a global middleware must reach a route with
+        // no `@Middleware` of its own, which is most of them. There is also no longer a terminal overload
+        // without it, so a route that skipped this argument would emit code that does not compile rather
+        // than code that quietly drops a header.
+        let registryArgument = "\nresponseHeaders: \(responseHeaderDrainLocal),"
         // Three shapes, one per way a route treats the request body.
         //
         // A **collected** body takes `collectingBodyFrom:`: `collectBody` consumes the reader, which a

@@ -867,3 +867,76 @@ struct TerminalDrainsOnceTests {
     }
 }
 
+/// The smallest producer that terminates its own response, which is the tier's one hard obligation.
+private struct TextProducer: WireMVCBodyProducer {
+    let text: String
+    var contentType: String? { "text/plain" }
+
+    consuming func writeBody<W: CallerAsyncWriter & ~Copyable & ~Escapable>(
+        into writer: consuming W,
+        terminatedBy trailer: HTTPFields?
+    ) async throws where W.WriteElement == UInt8, W.FinalElement == HTTPFields? {
+        var buffer = UniqueArray<UInt8>()
+        for byte in Array(text.utf8) { buffer.append(byte) }
+        try await writer.finish(buffer: &buffer, finalElement: trailer)
+    }
+}
+
+/// The streaming tier is **why** the drain had to move into the terminal: its two drain sites sat in the
+/// `building` and `errorMapping` closures, and a noncopyable value captured by a closure cannot be consumed
+/// at all — so no rearrangement of them could reach a `consuming drain()`. It gets the same three cases.
+@Suite("The streaming terminal drains the registry exactly once")
+struct StreamingTerminalDrainsOnceTests {
+    private static let deferred = HTTPField.Name("x-deferred")!
+
+    @Test
+    func aDeferredContributionRunsOnceWhenALaterOneThrows() async throws {
+        let effect = DeferredSideEffect()
+        let record = RecordedResponse()
+        try await wireMVCStreamingTerminal(
+            responseSender: RecordingSender(record: record),
+            responseHeaders: registry(firstRuns: effect, secondThrows: true),
+            building: { WireMVCStreamingOutcome(status: .ok, producer: TextProducer(text: "streamed")) },
+            errorMapping: { _ in .status(.internalServerError) }
+        )
+        #expect(effect.runs == 1, "the contribution's side effect happened once, not once per drain")
+        // A failed drain collapses the stream to the mapped buffered outcome — the head has not gone out
+        // yet, which is the whole reason the drain sits before the producer runs.
+        #expect(record.head?.status == .internalServerError)
+        #expect(record.head?.headerFields[Self.deferred] == nil)
+        #expect(record.body.isEmpty, "the producer never ran")
+    }
+
+    @Test
+    func aSucceedingDrainReachesTheStreamedHead() async throws {
+        let effect = DeferredSideEffect()
+        let record = RecordedResponse()
+        try await wireMVCStreamingTerminal(
+            responseSender: RecordingSender(record: record),
+            responseHeaders: registry(firstRuns: effect, secondThrows: false),
+            building: { WireMVCStreamingOutcome(status: .ok, producer: TextProducer(text: "streamed")) },
+            errorMapping: { _ in .status(.internalServerError) }
+        )
+        #expect(effect.runs == 1)
+        #expect(record.head?.status == .ok)
+        // Contributed onto the *streamed* head, which is the case `WireMVCOutcome` never covers.
+        #expect(record.head?.headerFields[Self.deferred] == "late")
+        #expect(record.head?.headerFields[.contentType] == "text/plain", "the producer still seeds its own")
+        #expect(record.body == Array("streamed".utf8))
+    }
+
+    @Test
+    func aMappedErrorStillCarriesTheContributions() async throws {
+        let effect = DeferredSideEffect()
+        let record = RecordedResponse()
+        try await wireMVCStreamingTerminal(
+            responseSender: RecordingSender(record: record),
+            responseHeaders: registry(firstRuns: effect, secondThrows: false),
+            building: { () -> WireMVCStreamingOutcome<TextProducer> in throw ContributionFailed() },
+            errorMapping: { _ in .status(.unauthorized) }
+        )
+        #expect(effect.runs == 1)
+        #expect(record.head?.status == .unauthorized)
+        #expect(record.head?.headerFields[Self.deferred] == "late")
+    }
+}
