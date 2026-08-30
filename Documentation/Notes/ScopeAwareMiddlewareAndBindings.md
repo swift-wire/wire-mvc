@@ -87,6 +87,10 @@ context-transforming middleware, which the box does support, reaches no handler.
 
 ## Two claims to withdraw
 
+Both are claims made *elsewhere* while `auth-abac` was being written. A third — one this note made itself,
+and got wrong — is withdrawn at the point it was made: see *Withdrawn: that the split must be two tiers*.
+
+
 **"Closing the double resolution needs a framework change, not an application one."** False. An application
 closes the *cost* by caching the directory lookup, which is what a deployment with a real identity provider
 does anyway. What a framework change buys is narrower: the two tiers agreeing *by construction* rather than
@@ -534,10 +538,42 @@ Recorded here so a later reader finds the argument rather than the gap.
 
 ## What this does not change
 
-The `auth-abac` **two-tier authorisation split is not a framework limitation and no step here removes it.**
-An ABAC decision is a function of subject, action, resource and environment; the resource is not loaded when
-the front tier runs, so partial evaluation is sound for denial and unsound for permission, and the gate must
-answer deny-or-undecided. Every framework in the survey has the same split — ASP.NET names both halves,
-*declarative* and *imperative*. Graph-aware bindings move the second half from the handler body into the
-argument; they do not merge the halves. The authorisation model itself, including where this stack's
+The `auth-abac` **two-*question* split is not a framework limitation and no step here removes it.** An ABAC
+decision is a function of subject, action, resource and environment; the resource is not loaded when the
+request arrives, so partial evaluation is sound for denial and unsound for permission, and whatever asks
+first must answer deny-or-undecided. Every framework in the survey has the same split — ASP.NET names both
+halves, *declarative* and *imperative*. The authorisation model itself, including where this stack's
 abstention handling is better and worse than Symfony's voters, belongs to the parity note rather than here.
+
+### Withdrawn: that the split must be two *tiers*
+
+This section previously read "two-tier authorisation split", and concluded that graph-aware bindings "move
+the second half from the handler body into the argument; they do not merge the halves." The first half of
+that is right and the second is a conflation, which measurement caught after step 4 shipped.
+
+**Two questions is not two layers.** The split is by which *attributes* the question needs, and a binding
+has both sets: it runs after scope entry, with the request in hand and the store reachable. So one binding
+can screen from the request, then load, then decide — in that order, which is the only part that is
+forced. `wire-mvc-examples` deleted its screening middleware, folded `screen` into the binding ahead of the
+load, bound the collection the same way, and **no status changed on any route**. The 21 policy tests and
+all three runtime suites pass either way.
+
+What the survey actually shows, re-read, is that four of five frameworks have two tiers *and none of them
+splits on the scope boundary* — which was already quoted here as evidence against a scoped tier. It is
+equally evidence against reading their tiering as a requirement about authorisation: ASP.NET is explicit
+that its inner tier exists because filters "have access to context and constructs", not because a decision
+cannot be made in one place.
+
+**A front tier is therefore an optimisation, and a real one.** It refuses before the request scope is
+constructed at all — which a binding cannot, since it *is* the scope — and it applies to routes nobody has
+written yet, because a fold is per controller. Both matter under load. Neither is a correctness argument,
+and the two costs are worth stating beside them: such a middleware cannot reach `Caller`, so the
+application resolves the subject twice; and it must answer deny-or-undecided, which is the one rule here
+that would be a security bug if relaxed.
+
+**For wire-mvc this changes nothing and removes nothing.** Both shapes are expressible and neither is
+privileged: the box, the fold and `respondingWith` are unchanged, and a screening middleware remains an
+ordinary `@Factory` + `@MiddlewareFactory`. What changed is a claim in this note about what an application
+*must* do, which was stronger than the evidence for it — and it is worth correcting rather than quietly
+dropping, because the same conflation is what made a scoped middleware tier look necessary in the first
+place.
