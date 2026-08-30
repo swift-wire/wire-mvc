@@ -273,8 +273,27 @@ struct FrozenRouteTrie: Sendable {
         // makes precedence fall out rather than be coded: a literal edge is tried first, then the
         // parameter edge, and the catch-all is what is left when neither matches.
         var fallback: (node: Int, values: [Substring], remainder: Substring)?
-        let segments = requestPath.split(separator: "/", omittingEmptySubsequences: true)
-        for (position, segment) in segments.enumerated() {
+        // Walked rather than `split(separator:omittingEmptySubsequences:)`, which materialised a
+        // `[Substring]` nothing indexes or keeps. The cost was `Array` *growth* — 2 allocations for a
+        // two-segment path and 4 for a five-segment one, the capacity-doubling sequence rather than one
+        // per segment — so a deeper route paid more for a container that was consumed once, forward, and
+        // discarded. Walking gets better the deeper the route instead of worse.
+        //
+        // Each segment is a slice of `requestPath`, which `remainder(of:from:)` relies on: it rebuilds
+        // the catch-all tail as `path[segment.startIndex...]`, so the indices have to stay indices *into
+        // the request path* rather than into a copy.
+        var cursor = requestPath.startIndex
+        while cursor < requestPath.endIndex {
+            // Skipping runs of "/" is what `omittingEmptySubsequences` did: `//a` is one segment, and
+            // `/a//b` is two. Dropping it would make an empty segment a node the trie has no edge for.
+            while cursor < requestPath.endIndex, requestPath[cursor] == "/" {
+                cursor = requestPath.index(after: cursor)
+            }
+            guard cursor < requestPath.endIndex else { break }
+            let segmentEnd = requestPath[cursor...].firstIndex(of: "/") ?? requestPath.endIndex
+            let segment = requestPath[cursor..<segmentEnd]
+            cursor = segmentEnd
+
             let node = nodes[current]
             if !node.catchAllRoutes.isEmpty {
                 fallback = (current, parameterValues, Self.remainder(of: requestPath, from: segment))
@@ -290,7 +309,6 @@ struct FrozenRouteTrie: Sendable {
             } else {
                 return .notFound
             }
-            _ = position
         }
         let routes = nodes[current].routes
         if let route = routes.first(where: { $0.method == method }) {
