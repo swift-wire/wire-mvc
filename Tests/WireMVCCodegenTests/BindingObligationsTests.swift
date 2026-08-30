@@ -325,7 +325,9 @@ struct UserBindingIntegrationTests {
             }
             """
         )
-        #expect(source.contains("WireMVCRequest.collectBody(reader)"), "the == \"JSONBody\" hardcode's job")
+        // The terminal collects — `collectBody` consumes the reader, which the `building` closure could
+        // only borrow — so the obligation shows up as the overload the route calls.
+        #expect(source.contains("collectingBodyFrom: reader"), "the == \"JSONBody\" hardcode's job")
         #expect(source.contains("body: requestBody"))
     }
 

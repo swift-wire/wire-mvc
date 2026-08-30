@@ -121,25 +121,36 @@ public func wireMVCStreamingTerminal<
     Reader: AsyncReader & ~Copyable
 >(
     responseSender: consuming Sender,
+    responseHeaders: consuming ResponseHeaderRegistry,
     lendingBodyFrom reader: consuming sending Reader,
     building: (consuming Reader) async throws -> WireMVCStreamingOutcome<Producer>,
-    // `async`, because a mapped refusal has to be able to **drain the response-header registry** onto
-    // itself the way a served response does — and the drain is async, since a deferred contribution
-    // (`onSend`) may await. Without that a middleware's contributed fields survived a 200 and
-    // vanished from every `@ErrorResponse` status, which is exactly the path most likely to need
+    // `async` because a mapped refusal may still await — and it no longer drains: the registry is owned
+    // by this function and resolved onto whichever branch ran, so a middleware's contributed fields reach
+    // a mapped `403` without a second drain. That mattered because a middleware's fields used to survive a
+    // 200 and vanish from every `@ErrorResponse` status, which is exactly the path most likely to need
     // them: a cross-origin caller cannot read a 403 whose `Access-Control-Allow-Origin` was dropped.
     errorMapping: (any Error) async throws -> WireMVCOutcome
 ) async throws where Sender.Writer: ~Copyable, Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields? {
-    let wireMVCResult: WireMVCTerminalOutcome<Producer>
+    let wireMVCProduced: Result<WireMVCStreamingOutcome<Producer>, any Error>
     do {
-        wireMVCResult = .stream(try await building(reader))
+        wireMVCProduced = .success(try await building(reader))
     } catch let wireMVCError {
-        wireMVCResult = .buffered(try await errorMapping(wireMVCError))
+        wireMVCProduced = .failure(wireMVCError)
     }
+    // Between the handler and the head: late enough that a deferred contribution reads what the handler
+    // did, early enough that a throw from one still maps. Once, because the registry is owned here.
+    let wireMVCDrained = await wireMVCDrainedHeaders(from: responseHeaders)
+    let wireMVCResult = try await wireMVCSettled(
+        wireMVCProduced,
+        drained: wireMVCDrained,
+        errorMapping: errorMapping
+    )
     switch wireMVCResult {
-    case .stream(let streaming):
+    case .stream(var streaming):
+        streaming.headerFields = wireMVCResolved(streaming.headerFields, applying: wireMVCDrained.contributions)
         try await streaming.send(on: responseSender)
-    case .buffered(let buffered):
+    case .buffered(var buffered):
+        buffered.headerFields = wireMVCResolved(buffered.headerFields, applying: wireMVCDrained.contributions)
         try await buffered.send(on: responseSender)
     }
 }
@@ -166,24 +177,35 @@ public enum WireMVCTerminalOutcome<Producer: WireMVCBodyProducer> {
 /// handler returning an opaque type it cannot spell.
 public func wireMVCStreamingTerminal<Producer: WireMVCBodyProducer, Sender: HTTPResponseSender & ~Copyable>(
     responseSender: consuming Sender,
+    responseHeaders: consuming ResponseHeaderRegistry,
     building: () async throws -> WireMVCStreamingOutcome<Producer>,
-    // `async`, because a mapped refusal has to be able to **drain the response-header registry** onto
-    // itself the way a served response does — and the drain is async, since a deferred contribution
-    // (`onSend`) may await. Without that a middleware's contributed fields survived a 200 and
-    // vanished from every `@ErrorResponse` status, which is exactly the path most likely to need
+    // `async` because a mapped refusal may still await — and it no longer drains: the registry is owned
+    // by this function and resolved onto whichever branch ran, so a middleware's contributed fields reach
+    // a mapped `403` without a second drain. That mattered because a middleware's fields used to survive a
+    // 200 and vanish from every `@ErrorResponse` status, which is exactly the path most likely to need
     // them: a cross-origin caller cannot read a 403 whose `Access-Control-Allow-Origin` was dropped.
     errorMapping: (any Error) async throws -> WireMVCOutcome
 ) async throws where Sender.Writer: ~Copyable {
-    let wireMVCResult: WireMVCTerminalOutcome<Producer>
+    let wireMVCProduced: Result<WireMVCStreamingOutcome<Producer>, any Error>
     do {
-        wireMVCResult = .stream(try await building())
+        wireMVCProduced = .success(try await building())
     } catch let wireMVCError {
-        wireMVCResult = .buffered(try await errorMapping(wireMVCError))
+        wireMVCProduced = .failure(wireMVCError)
     }
+    // Between the handler and the head: late enough that a deferred contribution reads what the handler
+    // did, early enough that a throw from one still maps. Once, because the registry is owned here.
+    let wireMVCDrained = await wireMVCDrainedHeaders(from: responseHeaders)
+    let wireMVCResult = try await wireMVCSettled(
+        wireMVCProduced,
+        drained: wireMVCDrained,
+        errorMapping: errorMapping
+    )
     switch wireMVCResult {
-    case .stream(let streaming):
+    case .stream(var streaming):
+        streaming.headerFields = wireMVCResolved(streaming.headerFields, applying: wireMVCDrained.contributions)
         try await streaming.send(on: responseSender)
-    case .buffered(let buffered):
+    case .buffered(var buffered):
+        buffered.headerFields = wireMVCResolved(buffered.headerFields, applying: wireMVCDrained.contributions)
         try await buffered.send(on: responseSender)
     }
 }
@@ -202,26 +224,37 @@ public func wireMVCStreamingTerminal<
     Reader: AsyncReader & ~Copyable
 >(
     responseSender: consuming Sender,
+    responseHeaders: consuming ResponseHeaderRegistry,
     collectingBodyFrom reader: consuming sending Reader,
     building: ([UInt8]) async throws -> WireMVCStreamingOutcome<Producer>,
-    // `async`, because a mapped refusal has to be able to **drain the response-header registry** onto
-    // itself the way a served response does — and the drain is async, since a deferred contribution
-    // (`onSend`) may await. Without that a middleware's contributed fields survived a 200 and
-    // vanished from every `@ErrorResponse` status, which is exactly the path most likely to need
+    // `async` because a mapped refusal may still await — and it no longer drains: the registry is owned
+    // by this function and resolved onto whichever branch ran, so a middleware's contributed fields reach
+    // a mapped `403` without a second drain. That mattered because a middleware's fields used to survive a
+    // 200 and vanish from every `@ErrorResponse` status, which is exactly the path most likely to need
     // them: a cross-origin caller cannot read a 403 whose `Access-Control-Allow-Origin` was dropped.
     errorMapping: (any Error) async throws -> WireMVCOutcome
 ) async throws where Sender.Writer: ~Copyable, Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields? {
-    let wireMVCResult: WireMVCTerminalOutcome<Producer>
+    let wireMVCProduced: Result<WireMVCStreamingOutcome<Producer>, any Error>
     do {
         let requestBody = try await WireMVCRequest.collectBody(reader)
-        wireMVCResult = .stream(try await building(requestBody))
+        wireMVCProduced = .success(try await building(requestBody))
     } catch let wireMVCError {
-        wireMVCResult = .buffered(try await errorMapping(wireMVCError))
+        wireMVCProduced = .failure(wireMVCError)
     }
+    // Between the handler and the head: late enough that a deferred contribution reads what the handler
+    // did, early enough that a throw from one still maps. Once, because the registry is owned here.
+    let wireMVCDrained = await wireMVCDrainedHeaders(from: responseHeaders)
+    let wireMVCResult = try await wireMVCSettled(
+        wireMVCProduced,
+        drained: wireMVCDrained,
+        errorMapping: errorMapping
+    )
     switch wireMVCResult {
-    case .stream(let streaming):
+    case .stream(var streaming):
+        streaming.headerFields = wireMVCResolved(streaming.headerFields, applying: wireMVCDrained.contributions)
         try await streaming.send(on: responseSender)
-    case .buffered(let buffered):
+    case .buffered(var buffered):
+        buffered.headerFields = wireMVCResolved(buffered.headerFields, applying: wireMVCDrained.contributions)
         try await buffered.send(on: responseSender)
     }
 }

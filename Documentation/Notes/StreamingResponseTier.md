@@ -386,16 +386,23 @@ The generated terminal for `func home() async throws -> some HTML`:
 ```swift
 try await wireMVCStreamingTerminal(
 responseSender: responseSender,
+responseHeaders: wireMVCResponseHeaderDrain,
 building: {
 return WireMVCStreamingOutcome(
 status: .ok,
-headerFields: WireMVCResponseHeaders.resolved(statics: [.setIfAbsent(.contentType, "text/html; charset=utf-8")], middleware: try await wireMVCResponseHeaderDrain.drain()),
+headerFields: WireMVCResponseHeaders.resolved(statics: [.setIfAbsent(.contentType, "text/html; charset=utf-8")]),
 producer: WireMVCHTMLProducer(try await self._wireSubject.home())
 )
 },
 errorMapping: { wireMVCError in … }
 )
 ```
+
+The registry is **handed to the terminal** rather than drained in the `building` closure. That is not a
+formatting choice: a route needs the contributions on the mapped path too, and draining at both sites ran a
+deferred contribution twice — while a noncopyable value captured by a closure cannot be consumed at all, so
+`building` could not hold the drain even once. wire-mvc's
+[`LinearResponseHeaderRegistry.md`](LinearResponseHeaderRegistry.md) carries the account, under *The sequel*.
 
 Four decisions in that, three of which the build forced.
 

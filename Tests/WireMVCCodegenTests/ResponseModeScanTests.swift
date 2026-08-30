@@ -229,8 +229,8 @@ struct UserDeclaredModeCoverageTests {
         let generated = Self.generated()
         #expect(generated.witness.contains("try CSVCodec.encodeResponseBody(try await self._wireSubject.ledger()"))
         #expect(generated.witness.contains("producer: SSEProducer(try await self._wireSubject.events())"))
-        #expect(generated.witness.contains("wireMVCOutcome = .status(.noContent"))
-        #expect(generated.witness.contains("wireMVCOutcome = .status(.accepted"), "the labelled spelling too")
+        #expect(generated.witness.contains("return .status(.noContent"))
+        #expect(generated.witness.contains("return .status(.accepted"), "the labelled spelling too")
 
         #expect(generated.client.contains("try CSVCodec<Ledger>.decodeResponseBody("))
         #expect(generated.client.contains("return wireMVCResponse.bodyText"), "a `.text` mode hands back markup")

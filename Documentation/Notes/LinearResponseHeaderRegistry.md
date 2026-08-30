@@ -10,6 +10,10 @@
 > to `input.contributing { headers in … } then: { … }`, and a transforming one's `withContents` lost the
 > registry from its `responded` branch. Ten middleware across four repositories.
 >
+> **Since built:** `drain()` became `consuming` and the terminals took ownership of the drain — see
+> *The sequel: exactly-once draining*, which is where this brief's central claim about linearity gets
+> corrected.
+>
 > **What it bought, measured:** the second payoff this brief hoped for and could not promise —
 > **six allocations and 1536 bytes per request**, reproducible to the allocation, on a case where the
 > registry genuinely escapes. See *Measured*, and note that the brief predicted one allocation, not six.
@@ -122,7 +126,7 @@ Swift has no noncopyable classes, so `public final class` (`ResponseHeaderRegist
 `public struct … : ~Copyable`.
 
 - `add(_:)`, the variadic `add(_:…)` and `onSend(_:)` become `mutating`.
-- `drain(into:)` and `drain()` stay non-mutating — `borrowing`.
+- `drain(into:)` and `drain()` stay non-mutating — `borrowing`. **Both are `consuming` now**: `drain(into:)` in #159 and `drain()` in the sequel below, which is where the reasoning is.
 - Internal storage is unaffected: `InlineArray<4, Registration?>`, `overflow: [Registration]` and the
   `.deferred` closures are all copyable and stay exactly as they are.
 - **`onSend`'s closure stays non-`@Sendable`.** This is the advantage over making the registry `Sendable`,
@@ -229,7 +233,7 @@ box with none.
 
 `let registry: ResponseHeaderRegistry` (`RequestContextCourier.swift:162-173`) becomes an owned linear
 stored property, and `init(wrapping:registry:)` takes it `consuming sending`. `applying(to:)` stays
-`borrowing` since `drain(into:)` only reads.
+`borrowing` since `drain(into:)` only reads. (It consumes now — see the sequel below.)
 
 Watch the `consuming` methods: `send(_:)` and `sendAndFinish(_:buffer:trailer:)` do `let inner = consume
 self.base`, which becomes a *partial* consumption of a struct with two noncopyable fields. Legal without a
@@ -361,6 +365,92 @@ registry was never the expensive part of contributing a header — the README pu
   machinery be deleted, which is a simplification worth taking but not urgent.
 - **The round trip in step 3 does not typecheck cleanly.** It does, with no `unsafe` beyond the
   ``WireDisconnected`` that was already in the design.
+
+## The sequel: exactly-once draining
+
+**Status: shipped.** This brief argued ownership on the grounds that linearity turns "drained exactly once"
+from a convention into a compiler-checked property. It delivered exclusive **ownership** of the registry. It
+did not deliver exactly-once **draining**, and the gap between the two was a live defect for the whole
+interval — recorded as swift-wire's PendingIssues #18, found by trying to make `drain()` `consuming` and
+being refused.
+
+### What the gap was
+
+A typed terminal needs the middleware's contributions on two paths that are **not exclusive**: the outcome
+the handler built, and the `@ErrorResponse` mapping of a throw. It drained at both. Argument evaluation
+reaches the success drain last, so a handler that throws never got there — the ordinary path drained once.
+The window was a *deferred* contribution: the success drain runs `onSend` closures in order, one throws
+part-way, the `catch` maps the error and drains **the same registry again from the start**, re-running every
+closure that had already succeeded. `onSend`'s closure is deliberately non-`@Sendable` so a middleware can
+capture per-request state in it — the capability this brief calls the advantage over making the registry
+`Sendable` — which is exactly what makes a second run a hazard rather than a curiosity.
+
+### Why generated code could not close it
+
+Three arrangements were available and all three trade something the tier had already bought:
+
+- **Drain before the route body.** Runs `onSend` ahead of the handler, which is precisely what deferral
+  exists to avoid.
+- **Drain after the mapping.** Loses the documented behaviour that a throw from `onSend` maps through
+  `@ErrorResponse` like any other route error.
+- **Hold the registry in an `Optional` and take it.** Preserves both, and works — `take()` on an `Optional`
+  of a noncopyable is five lines the standard library does not supply but nothing prevents. Enforcement is
+  the `nil`, not the compiler, which is the property #148 was argued on.
+
+The **streaming** tier settles it, and is the half worth recording. There, the two drains sit in the
+`building` and `errorMapping` closures handed to `wireMVCStreamingTerminal`, and a noncopyable value
+captured by a closure cannot be consumed **at all** — not twice, once:
+
+```
+error: noncopyable 'wireMVCResponseHeaderDrain' cannot be consumed when captured by an escaping
+       closure or borrowed by a non-Escapable type
+   |         `- error: noncopyable 'wireMVCResponseHeaderDrain' cannot be consumed ...
+   |   building: { … try await wireMVCResponseHeaderDrain.drain() … },
+   |                                                      `- note: consumed here
+```
+
+So no rearrangement of the drain sites reaches a `consuming drain()` on that tier. The registry has to stop
+being something generated code holds.
+
+### What shipped
+
+The terminals own it. `wireMVCBufferedTerminal` and the three `wireMVCStreamingTerminal` overloads each take
+`responseHeaders: consuming ResponseHeaderRegistry`, run `building`, drain **once**, and resolve the result
+onto whichever branch ran (`ResponseTerminals.swift`). The drain sits after the handler, so deferral still
+works; before anything reaches the wire, so a throw from a contribution still maps; on every path, so a
+mapped `401` still carries the `WWW-Authenticate` #155 restored. `drain()` is `consuming`, and every route
+in the fixture suite compiles against it.
+
+This is the move the **response sender** already made, for the same reason and one value over. `wireMVCStreamingTerminal`'s
+own note records it: discriminate inside the `do`/`catch`, consume the sender once, outside it — because
+`'responseSender' consumed more than once` is what the checker says otherwise. The registry was the second
+linear value in that function and had not been given the same treatment. The reader is now the third: a
+route body that has moved inside `building` can no longer consume the reader either, which is why the
+buffered terminal grew the same `collectingBodyFrom:` / `lendingBodyFrom:` overloads the streaming one had.
+
+### What it cost, and what it gave back
+
+Generated code got **smaller**. The buffered tier no longer writes its own `do`/`catch`, so the mapped-error
+block — `var wireMVCMapped = …; wireMVCMapped.headerFields = resolved(returned:middleware:); wireMVCOutcome =
+wireMVCMapped` — collapses to `return WireMVCOutcome.status(…)`, and the two terminal emitters merged into
+one: they had differed only in the shape the buffered `do`/`catch` forced. Net −107 lines of codegen (208
+deleted against 101 added) for +193 of hand-written, tested runtime.
+
+Two things came out of the emission that had been hidden by it. A route now names `headerFields:` only when
+it states one — the empty-arguments fallback was unreachable while every typed route named at least
+`middleware:`, and it emitted `[:]`, which allocates where the defaulted `HTTPFields()` does not. And the
+late fold rests on an equivalence worth stating: middleware contributions apply **last**, over whatever
+`statics` and `returned` composed, so `resolved(returned: resolved(statics:returned:), middleware:)` is
+`resolved(statics:returned:middleware:)`. The mapped-error path had always relied on it; it now has a test.
+
+### What this says about the original argument
+
+The brief was right that ownership was the thing to buy and right that soundness, not allocations, was the
+forcing reason. What it got wrong is smaller and more useful: it treated "exactly once" as something
+linearity *gives* you. Linearity gives you one owner. Exactly-once is a property of where the owner puts the
+value, and on a control-flow shape with two non-exclusive exits, the only place that works is a function
+that owns the value and discriminates before it consumes anything. That shape already existed in this tier,
+for the sender, and was not recognised as the general answer.
 
 ## What it does not buy
 

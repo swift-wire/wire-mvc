@@ -241,8 +241,7 @@ struct HTMLResponseGenerationTests {
             }
             """
         )
-        #expect(emitted.contains("let wireMVCOutcome: WireMVCOutcome"))
-        #expect(emitted.contains("try await wireMVCOutcome.send(on: responseSender)"))
+        #expect(emitted.contains("try await wireMVCBufferedTerminal("))
         #expect(!emitted.contains("wireMVCStreamingTerminal"))
         #expect(!emitted.contains("text/html"))
     }
