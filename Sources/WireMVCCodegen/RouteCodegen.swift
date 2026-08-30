@@ -470,6 +470,19 @@ extension RouteBlockGenerator {
             binds.append(
                 "\(keyword) \(internalName) = \(bindExpression(for: param, binding: binding, name: bindingName, hasBody: hasBody, function: function))"
             )
+            // A lent stream is the one binding whose construction cannot fail. Its type is inferred from
+            // the reader, so it is built by a spelling rather than through a requirement, and a throwing
+            // initialiser would be a rule imposed on every future lent-stream type rather than one type's
+            // choice. So the check it defers instead runs here — a second statement, still inside
+            // `building`, so a request the stream cannot be produced from maps through `@ErrorResponse`
+            // exactly as a decode failure does. See `LentBodyStream`.
+            //
+            // Emitted for every lent stream rather than only where one has something to check: the
+            // requirement is defaulted, the generator does not type-check, and a check that appears only
+            // when the generator guessed it was needed is the shape that goes missing.
+            if lendsBodyStream(binding.wrapper) {
+                binds.append("try \(internalName).validateRequest()")
+            }
             callArgs.append(isWildcard ? internalName : "\(param.firstName.text): \(internalName)")
         }
         return (binds, callArgs)

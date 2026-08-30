@@ -190,6 +190,10 @@ public macro Delete() = #externalMacro(module: "WireMVCMacros", type: "RouteMark
 /// a property wrapper is generic over the parameter's type, so `Wrapper.makeStream(reader:)` cannot resolve
 /// — `generic parameter 'Value' could not be inferred`, since `Value` appears nowhere in the factory's
 /// signature. The factory therefore cannot live on the binding, and the declaration has to say where it does.
+///
+/// That covers construction and stops there: the named type must conform to `LentBodyStream`, and the
+/// terminal calls its `validateRequest()` on the constructed value. What a stream can refuse from the
+/// request alone needs no reader, so it is a requirement rather than a second spelling.
 @attached(peer)
 public macro RequestBinding(_ obligations: WireMVCBindingObligation..., stream: String? = nil) =
     #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")

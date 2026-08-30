@@ -111,3 +111,64 @@ extension WireMVCRequest {
         }
     }
 }
+
+// MARK: - The lent-stream tier
+
+/// A stream a `.bodyStream` binding lends to the handler, and the one thing WireMVC requires of it: that
+/// it can refuse a request it cannot be produced from, *before* the terminal commits to a response.
+///
+/// **Construction stays a spelling; validation does not, and the distinction is the whole of this
+/// protocol.** The terminal builds the stream by writing `MultipartParts(request: request, reader: reader)`,
+/// read off `@RequestBinding(stream:)` rather than called through a requirement, because the stream's type
+/// depends on the reader and a protocol's `associatedtype` is fixed by the conformance before any reader
+/// exists. That reasoning covers the *initialiser* and nothing else. Whether the request can produce this
+/// stream at all — a `Content-Type` that is not `multipart/form-data`, a missing boundary — involves no
+/// reader, so it can be a requirement; the only reason it was not one is that the tier had nowhere to
+/// state it.
+///
+/// **Why it has to be one.** A non-throwing initialiser defers its check to whatever the handler calls
+/// first, and on today's tiers that is harmless: the handler runs before the head goes out, so a throw from
+/// `withParts` maps through `@ErrorResponse` exactly as a decode failure does. The duplex shape inverts
+/// that — the handler holds the response and runs *after* the head — so the same deferred check would
+/// truncate a response that had already claimed a status, instead of mapping to 415. The check belongs
+/// where every other binding's does: inside `building`, before the terminal has committed to anything.
+///
+/// This is why the requirement lands now rather than with the feature it serves. It changes a **public**
+/// binding protocol — every lent stream anyone writes conforms — which is a mechanical sweep before 1.0
+/// and a break after it. `@RequestBinding(.bodyStream)`'s duplex half is paused on
+/// [swiftlang/swift#91473](https://github.com/swiftlang/swift/issues/91473); this half is on 1.0's
+/// schedule, not that bug's. The `.readerBody` tier already checks up front — ``RequestBodyReading``'s
+/// `bindReader` throws before it reads a byte — so what this does is give the two request-streaming tiers
+/// the same order of operations rather than inventing one.
+///
+/// The generated terminal binds and then validates, one statement later and still inside `building`:
+///
+///     let parts = MultipartParts(request: request, reader: reader)
+///     try parts.validateRequest()
+///
+/// **An instance method, and `borrowing`.** A static `validate(request:)` cannot be called from generated
+/// code: the stream type is spelled with no type argument — that is what lets a witness name a
+/// reader-dependent type at all — so `MultipartParts.validate(…)` leaves `Reader` uninferred. On the
+/// constructed value the type is already settled. Borrowing rather than consuming leaves the stream whole
+/// to be lent on, so validating costs the route nothing but the check.
+public protocol LentBodyStream: ~Copyable, ~Escapable {
+    /// Refuse a request this stream cannot be produced from.
+    ///
+    /// Throw in the binding's **own** vocabulary — a type the route can name in `@ErrorResponse`, the way
+    /// `MultipartBindingError.notMultipart` is what a route naming `MultipartBindingError` maps. An error
+    /// from a layer underneath is an unmapped 500, which is the same trap ``RequestBodyReading`` documents
+    /// for the reader tier.
+    ///
+    /// Called once per request, immediately after construction. It is not a substitute for the checks a
+    /// stream makes while reading — a malformed delimiter is not knowable here — only for the ones it can
+    /// make from the request alone.
+    borrowing func validateRequest() throws
+}
+
+extension LentBodyStream where Self: ~Copyable & ~Escapable {
+    /// Defaulted, so a stream with nothing to check from the request alone conforms with an empty
+    /// extension and says nothing. The requirement exists to give the check a *place*, not to insist every
+    /// stream has one — the same reason ``RequestBound``'s coding-aware `bind` is defaulted rather than
+    /// required.
+    public borrowing func validateRequest() throws {}
+}
