@@ -127,7 +127,14 @@ public struct ResponseHeaderRegistry: ~Copyable {
     ///
     /// Every caller of ``drain()`` immediately iterates what it returns and applies each element, so the
     /// returned array exists only to cross a function boundary. This applies as it walks.
-    public borrowing func drain(into fields: inout HTTPFields) async throws {
+    ///
+    /// **`consuming`, so "drained exactly once" is checked rather than trusted.** Draining twice is not
+    /// idempotent — ``ResponseHeaderContribution/append(_:_:)`` duplicates the field, and every `onSend`
+    /// closure runs a second time, side effects included. Linearity already gives exclusive *ownership*
+    /// of the registry; it does not by itself stop the one owner draining twice, and this does.
+    ///
+    /// ``drain()`` cannot say the same yet — see there.
+    public consuming func drain(into fields: inout HTTPFields) async throws {
         for index in 0..<registrationCount {
             guard let registration = registration(fromNewest: index) else { continue }
             switch registration {
@@ -143,6 +150,18 @@ public struct ResponseHeaderRegistry: ~Copyable {
 
     /// Evaluate every registration, outermost last. Called by the route terminal (and by
     /// ``RequestResponseMiddlewareBox/respondingWith(_:)`` on the gate path) — not by user code.
+    ///
+    /// **Still `borrowing`, and that is a known gap rather than a preference.** Making it `consuming`
+    /// does not compile, and the failure is the point: a typed terminal drains in its `do` and again in
+    /// the `catch` that maps an error, so the compiler reports `'wireMVCResponseHeaderDrain' consumed
+    /// more than once` against generated code. The two are not exclusive. Argument evaluation reaches
+    /// this drain last, so a handler that throws never got here — but a *deferred* contribution that
+    /// throws part-way has already run the ones before it, and the `catch` then runs them all again.
+    ///
+    /// Closing it is a design decision, not a keyword. Draining once before the `do` would run `onSend`
+    /// ahead of the handler, which defeats what deferral is for; draining once after the `do`/`catch`
+    /// loses the documented behaviour that a throw from `onSend` maps through `@ErrorResponse`. Recorded
+    /// rather than forced.
     public borrowing func drain() async throws -> [ResponseHeaderContribution] {
         var contributions: [ResponseHeaderContribution] = []
         for index in 0..<registrationCount {
