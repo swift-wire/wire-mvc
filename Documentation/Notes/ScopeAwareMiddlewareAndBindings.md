@@ -1,6 +1,7 @@
 # Scope-aware middleware and bindings — a design note
 
-> **Status:** design note, 2026-08-26; **step 1 built, 2026-08-27** (see *Proposed sequence*).
+> **Status:** design note, 2026-08-26; **steps 1–4 built, 2026-08-27 to 2026-08-30** (see *Proposed
+> sequence*), which is the whole of what `auth-abac` needed. Steps 5 and 6 remain unscheduled.
 > Everything else here is still a design. It records why a route-scope
 > `@Middleware` cannot reach a request-scoped binding, what four other frameworks do about it, and — on
 > that evidence — **a decision that a middleware's dependencies stay app-scoped permanently**, rather than
@@ -453,10 +454,63 @@ where the shipped fix-it names a fix that cannot be written.
 plus any scope binding a consumer asked for; `reachableBindings(from:)` takes a set of roots. **Forced by:**
 step 4.
 
-**4 — wire-mvc: graph-aware bindings.** An instance form for `RequestBound`, resolved from the scope;
-codegen reading `RequestSendable.Value` for the client's send side; a diagnostic for a scoped binding on a
-`@Singleton @Controller`. **Forced by:** `auth-abac`. **Stop here if that is the whole appetite** — this
-closes the item on its own.
+**4 — wire-mvc: graph-aware bindings. Done, 2026-08-29.** `@RequestBinding(Worker.self)` on a property
+wrapper, a `ScopedRequestBound` protocol whose `bind` is an instance method, swift-wire yielding the worker
+on the controller's scope entry, and two diagnostics —
+`scopedBindingOnUnscopedController` and `scopedBindingSeedMismatch`. **Forced by:** `auth-abac`. **Stop
+here if that is the whole appetite** — this closed the item, as predicted.
+
+Three things the design above got wrong, and they are the interesting part:
+
+- **It cannot be "an instance form for `RequestBound`". It takes two declarations.** The sketch above puts
+  `@Scoped(seed:)`, `@Inject` members and `bind` on `AuthorizedDocument` and then writes
+  `@AuthorizedDocument(.read) document: Document`. That does not compile, and the reason is not a missing
+  feature: **only a property wrapper attaches to a parameter**, and a wrapper's instance holds the value
+  the call site supplies, while a graph binding's instance holds what the graph supplied. No single type
+  can have both initialisers be total — whichever runs is missing what the other stores. So the wrapper
+  stays what it always was and *names* its worker, `@RequestBinding(DocumentAuthorizer.self)`, and
+  swift-wire follows one hop from the parameter's attribute to the worker to decide what the scope entry
+  yields. Neither declaration mentions the scope and the controller mentions neither.
+
+  The ceremony this replaced was worse and was rejected on sight: an explicit `@ScopeYield(Worker.self)` on
+  the wrapper. *"It will not be clear to a user why `AuthorizedDocument.self` needs to be `@ScopeYield`. It
+  doesn't do anything for them."* The one-hop rule is inference doing the same work with nothing to write.
+- **The typed client does not learn to send a different type; the route leaves the client.** The design
+  wanted codegen to read `RequestSendable.Value` for the send side. But there is nothing to send: an
+  `@AuthorizedDocument document: Document` is what the *scope* produced from an id the request already
+  carries, so a client has no value for it. The route is omitted and said so
+  (`routeOmittedFromClient`), and stays drivable through the untyped client. That also means such a
+  binding must be **exempt from the send-conformance warning**, which it was not at first — the warning
+  told an author to add `RequestSendable` "or the client's call will fail to compile" about a call that is
+  never generated, which is worse advice than the same warning gives a lent stream, because `Document` is
+  a plausible thing to make conform.
+- **The two "what it does not solve" items were both solved, one of them by deletion.** The collection
+  route does bind — `@AuthorizedDocuments("read") documents: [Document]`, screening then filtering — and
+  tier-1 screening did **not** have to stay outside the scope. See *What this does not change*, which is
+  the claim that measurement contradicted.
+
+**And the seam is not wire-mvc's alone.** The same `@AuthorizedDocument` works on an `@Operation`:
+WireOpenAPI's typed shim calls the worker's `bind` inside the forwarder rather than projecting the
+parameter from the generated `Input`, and excuses it from the document match, since what it binds never
+crosses the wire. One binding, declared once, used from both authoring styles — which is the concrete form
+of "an operation *is* a WireMVC route".
+
+**Four upstream defects surfaced, none of them by a fixture.** Each was found by putting the seam to work
+in an application, and the pattern is worth naming: a fixture agrees with itself.
+
+- `ScopedRequestBound` did not refine `Sendable`, though a worker is *stored* on the emitted scope entry
+  and on WireOpenAPI's `Sendable` conformer. An internal fixture gets the conformance inferred and never
+  notices; a `public` worker met it as `stored property … contains non-Sendable type` inside emitted code.
+- WireOpenAPI enters the request scope in the route terminal, one level outside the `@ErrorResponse`
+  clauses its conformer emits — so a `@Scoped(seed:)` binding that threw reached the router with no
+  response to write, which is a dropped connection rather than a status.
+- The conformer's per-request rebuild filled *every* worker field from the one scope entry it had made,
+  naming members that entry does not have. It takes two scoped controllers in one document, only one using
+  a graph-aware binding, to reach.
+- And the route terminal resolved `headerFields` against the response-header drain on the success path but
+  built a bare status in its `catch`, so every middleware-contributed field vanished from every
+  `@ErrorResponse` refusal — invisible for as long as the one refusal anybody drove came from a gate, which
+  answers through `respondingWith` and drains.
 
 **5 — wire-mvc: `RouteContext` in the seed as well.** The composite seed, so the controller and every scope
 member can reach it. **Forced by:** three controllers hand-writing a `Location` under a comment apologising
