@@ -133,7 +133,7 @@ let package = Package(
             plugins: [.plugin(name: "WireMVCBuildPlugin", package: "wire-mvc")]
         ),
         // Integration test on the REAL graph. Its own `WireMVCBuildPlugin` re-composes the app's graph (the
-        // app carries `_WireExports.swift`) — inheriting `RealGreeter` unchanged. Depending on
+        // app depends on the `Wire` product, which is what marks it composable) — inheriting `RealGreeter` unchanged. Depending on
         // `WireMVCTesting` makes the plugin emit the `.wiremvc(_:)` suite-trait factory (not a `@main`,
         // which can't live in a test bundle); the suite runs `.swiftHttpServer` — a harness-owned server on
         // an ephemeral loopback port — and drives `GET /hello/Alice` over real HTTP.
