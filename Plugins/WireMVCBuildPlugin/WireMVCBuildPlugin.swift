@@ -166,7 +166,6 @@ struct WireMVCBuildPlugin: BuildToolPlugin {
     }
 }
 
-
 /// Whether `module` can declare Wire bindings or WireMVC controllers — the signal that replaced the
 /// hand-declared `_WireExports.swift` marker when swift-wire retired it (M7b.5).
 ///
