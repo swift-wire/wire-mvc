@@ -5,7 +5,7 @@ import WireMVCTesting
 @testable import WireMVCBootstrapExample
 
 // Proof that `@Replaces` swaps a re-composed app binding for a test double. This target re-composes the
-// app's graph via its own `WireMVCBuildPlugin` (the app carries `_WireExports.swift`), and its
+// app's graph via its own `WireMVCBuildPlugin` (the app depends on the `Wire` product, which is what marks it composable), and its
 // `@Replaces FakeGreeter` supersedes the app's `RealGreeter`. `@Replaces` carries no `TestingKey`, so the
 // keyless `.wiremvc(_:)` serving the replaced graph is exactly right here.
 //

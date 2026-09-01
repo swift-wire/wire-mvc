@@ -32,10 +32,12 @@ struct WireMVCRouteGenPlugin: BuildToolPlugin {
         let routesURL = context.pluginWorkDirectoryURL.appendingPathComponent("_WireRoutes.swift")
 
         // Cross-module composition (same rule as swift-wire's WireBuildPlugin): re-parse the sources of
-        // every Wire-aware library this target *directly* depends on — a library opts in with a
-        // `_WireExports.swift` marker — so its controllers + bindings compose into this consumer. Both
-        // tools read the same source set: WireGen for the graph + proxy structs, WireMVCRouteGen for the
-        // witnesses (a controller may live in a shared library while its proxy is emitted here).
+        // every Wire-aware library this target *directly* depends on — a library is Wire-aware when it
+        // depends on the `Wire` product itself (see `dependsOnWireModules`; swift-wire retired the
+        // hand-declared `_WireExports.swift` marker in M7b.5) — so its controllers + bindings compose into
+        // this consumer. Both tools read the same source set: WireGen for the graph + proxy structs,
+        // WireMVCRouteGen for the witnesses (a controller may live in a shared library while its proxy is
+        // emitted here).
         var dependencyGroups: [(module: String, sources: [URL], isExternal: Bool)] = []
         var seenModules: Set<String> = []
         for dependency in target.dependencies {
@@ -56,9 +58,8 @@ struct WireMVCRouteGenPlugin: BuildToolPlugin {
                 guard let dependencyModule = dependencyTarget.sourceModule,
                     !seenModules.contains(dependencyModule.moduleName)
                 else { continue }
+                guard dependsOnWireModules(dependencyModule) else { continue }
                 let dependencySources = dependencyModule.sourceFiles(withSuffix: "swift").map(\.url)
-                let isWireAware = dependencySources.contains { $0.lastPathComponent == "_WireExports.swift" }
-                guard isWireAware else { continue }
                 seenModules.insert(dependencyModule.moduleName)
                 dependencyGroups.append((dependencyModule.moduleName, dependencySources, isExternal))
             }
@@ -135,3 +136,27 @@ struct WireMVCRouteGenPlugin: BuildToolPlugin {
         return visit(target.dependencies)
     }
 }
+
+/// Whether `module` can declare Wire bindings or WireMVC controllers — the signal that replaced the
+/// hand-declared `_WireExports.swift` marker when swift-wire retired it (M7b.5).
+///
+/// A target that declares any of them must import `Wire` (for `@Singleton` / `@Scoped` / `@Inject`) or
+/// `WireMVC` (for `@Controller` / `@Middleware`), and an import requires a dependency the plugin can read
+/// at plan time. So the predicate cannot under-fire. Over-firing is harmless: a scanned library that
+/// declares nothing contributes nothing, and since swift-wire's reachability pruning anything it does
+/// declare that this consumer never reaches is stripped before it can cost anything or fail to resolve.
+///
+/// Both dependency kinds are matched by name, because inside wire-mvc's own package `WireMVC` is a target
+/// dependency while to every consumer it is a product.
+private func dependsOnWireModules(_ module: SourceModuleTarget) -> Bool {
+    module.dependencies.contains { dependency in
+        switch dependency {
+        case .target(let target): return wireModuleNames.contains(target.name)
+        case .product(let product): return wireModuleNames.contains(product.name)
+        @unknown default: return false
+        }
+    }
+}
+
+/// The modules a Wire-aware library imports, and therefore depends on.
+private let wireModuleNames: Set<String> = ["Wire", "WireMVC"]

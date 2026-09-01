@@ -5,7 +5,7 @@ import Wire
 import WireMVC
 
 // `WireMVCLogging`'s bindings compose in because this *target depends on it* — activation is
-// depend-to-activate, and the plugin finds it by the `_WireExports.swift` marker in its sources
+// depend-to-activate, and the plugin finds it by its dependency on the `Wire` product
 // (`WireMVCBuildPlugin.swift`). Imports have nothing to do with it: the generated graph emits its own
 // `import WireMVCLogging` to name the providers. So there is deliberately no import here — nothing in
 // this file names one of its symbols (`WireMVCRequest` and `WireMVCLogMetadata` are core WireMVC).
