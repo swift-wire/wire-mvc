@@ -269,15 +269,15 @@ identifier no client sent. Against it: emitting one would need a fourth `RouteRe
 leniency keeps a bad URI a routing question rather than an error the router invented. Recorded as a choice
 rather than an oversight, so revisiting it starts from the trade rather than from scratch.
 
-**Shipped since v1:** `registerNotFound(handler:)` (M5.5 Phase 4) — `TrieRouteBuilder` stores one
+**Shipped since v1:** `registerNotFound(handler:)` — `TrieRouteBuilder` stores one
 optional fallback handler, `FrozenTrieRouter` dispatches to it on a miss (the built-in 404 is the
 never-registered safety net). It's on the `FinalizableHTTPServerRouteBuilder` refinement, so a
 `@WireMVCBootstrap`'s generated `@main` registers the app's `@NotFound` handler (or a synthesized 404)
 before `finalize()`.
 
-## Relationship to M5.5 phases
+## Relationship to `@WireMVCBootstrap`
 
-- **Phase 4** added `registerNotFound` here; the generated `@main` registers the `@NotFound` fallback
-  handler (or a synth-404) so it's a real route.
-- **Phase 5** (global middleware fold) folds the global `@Middleware` into every route *including* the
+- **The `@NotFound` fallback** is what `registerNotFound` exists for; the generated `@main` registers the
+  app's `@NotFound` handler (or a synth-404) so it's a real route.
+- **The global-middleware front layer** folds the global `@Middleware` into every route *including* the
   fallback — so global concerns (access log, CORS) wrap the 404 too.

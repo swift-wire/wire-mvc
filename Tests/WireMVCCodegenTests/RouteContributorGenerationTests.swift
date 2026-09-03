@@ -252,7 +252,7 @@ struct RouteContributorGenerationTests {
         )
     }
 
-    // MARK: - @WireMVCBootstrap composition root (M5.5 Phase 1)
+    // MARK: - @WireMVCBootstrap composition root
 
     /// The generated `@main` entry: reads the `@WireMVCBootstrap` binding off the graph
     /// (`graph.appBootstrap`), builds the server + router from its factories, applies the collated
@@ -517,7 +517,7 @@ struct RouteContributorGenerationTests {
         #expect(!ext.source.contains("registerIntrospection"))
     }
 
-    /// M5.5 Phase 5: the global-middleware proxy's `wrapGlobalMiddleware<Handler>` folds the Bootstrap's
+    /// The global-middleware proxy's `wrapGlobalMiddleware<Handler>` folds the Bootstrap's
     /// factory `@Middleware`s around the router via `GlobalMiddlewareHandler`, each `.create`d at the
     /// handler's box types. Two compose in written order.
     @Test func globalMiddlewareProxyWrapsRouterWithFactories() {
@@ -663,7 +663,7 @@ struct RouteContributorGenerationTests {
         #expect(rendered.source.contains("import WireMVCBootstrapExample\n"))
     }
 
-    /// M5.5 Phase 3: the `@WireMVCBootstrap` composition root's `@ErrorResponse` is the global default
+    /// The `@WireMVCBootstrap` composition root's `@ErrorResponse` is the global default
     /// tier — folded into every route's terminal, even a route (and controller) that declares no local
     /// `@ErrorResponse`. Read once from the Bootstrap; consulted after route/controller, before the 500.
     @Test func globalErrorResponseFoldsIntoEveryRoute() {
@@ -695,7 +695,7 @@ struct RouteContributorGenerationTests {
         )
     }
 
-    /// M5.5 Phase 4: a `@NotFound @RawRoute` method on the Bootstrap becomes the fallback — the generated
+    /// A `@NotFound @RawRoute` method on the Bootstrap becomes the fallback — the generated
     /// `@main` registers it via `registerNotFound`, dispatching through the `bootstrap` local (DI-capable).
     ///
     /// The fixture spells its sender `consuming sending Sender`, which this test only ever *parses* — it
@@ -776,7 +776,7 @@ struct RouteContributorGenerationTests {
                 "let wireMVCScopeEntry = try await self._wireEnterScope(request)"
             )
         )
-        // The scope's teardown runs on every exit via an async defer (M5.4.5); BasicFormat may reflow the block.
+        // The scope's teardown runs on every exit via an async defer; BasicFormat may reflow the block.
         #expect(rendered.source.contains("defer {"))
         #expect(rendered.source.contains("_ = await wireMVCScopeTeardown()"))
         #expect(rendered.source.contains("let wireMVCController = wireMVCScopeEntry._wireSubject"))
@@ -956,7 +956,7 @@ struct RouteContributorGenerationTests {
         // The binding-error built-in is folded in (BasicFormat may reflow the trailing closure).
         #expect(rendered.source.contains("(wireMVCError as? WireMVCBindingError).map"))
         #expect(rendered.source.contains("WireMVCOutcome.status($0.status)"))
-        // M5.5 Phase 2: the terminal owns the 500 — an unmapped throw is written, never re-thrown.
+        // The terminal owns the 500 — an unmapped throw is written, never re-thrown.
         #expect(rendered.source.contains("?? WireMVCOutcome.status(.internalServerError)"))
         #expect(!rendered.source.contains("throw wireMVCError"))
         // The shipped binding-only catch is gone once @ErrorResponse is present.
@@ -1871,7 +1871,7 @@ struct RouteContributorGenerationTests {
     /// One `TestingKey` per target. A second key is an error against its own declaration, naming the one
     /// that won — the harness emits a single `.wiremvc(_ key:, _ mode:)` factory bound to one variant graph,
     /// so a suite passing the second key would silently be served the first's mocks. Serving several
-    /// variants from one target is deferred (swift-wire's PendingIssues/11); this keeps the deferral loud.
+    /// variants from one target is deferred (tachyonics/swift-wire#336); this keeps the deferral loud.
     @Test func aSecondTestingKeyIsRejected() {
         let source = keyedHarnessFixture.replacingOccurrences(
             of: "enum Binds {",
@@ -1892,7 +1892,7 @@ struct RouteContributorGenerationTests {
         #expect(messages.count == 1)
         #expect(messages[0].contains("OtherBinds.mock") || messages[0].contains("Binds.mock"))
         #expect(messages[0].contains("one TestingKey per target"))
-        #expect(messages[0].contains("PendingIssues/11"))
+        #expect(messages[0].contains("tachyonics/swift-wire#336"))
     }
 
     /// A `TestingKey` in a re-parsed *dependency* is not this target's to serve. It is passed first here, so
@@ -2005,7 +2005,7 @@ struct RouteContributorGenerationTests {
         }
         """
 
-    /// Phase B: a mock-consuming lifted `@Factory` (`Audit`, which `@Inject`s the mocked `NoteBackend`) folds
+    /// A mock-consuming lifted `@Factory` (`Audit`, which `@Inject`s the mocked `NoteBackend`) folds
     /// on the app-scoped variant witness with the per-request doubles threaded to its `create(doubles:)` —
     /// swift-wire re-emits it as a variant factory whose mock rides the call. The production witness's fold is
     /// box-role-only, and the doubles correlation is hoisted above the fold so `wireMVCDoubles` is in scope.
@@ -2042,7 +2042,7 @@ struct RouteContributorGenerationTests {
         }
     }
 
-    /// The wire-mvc-examples shapes (Phase C): a generic `@TestScopable` controller carrying a **generic**
+    /// The wire-mvc-examples shapes: a generic `@TestScopable` controller carrying a **generic**
     /// mock-consuming `@Factory` (`Audit<…, Repository: TodoRepository>`, `@Inject var repository: Repository`)
     /// and a `@RawRoute`, under a two-slot key whose source order differs from alphabetical.
     private let phaseCFixture = """

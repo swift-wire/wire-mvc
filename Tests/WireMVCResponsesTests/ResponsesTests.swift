@@ -761,7 +761,7 @@ private func registry(
 
 @Suite("The terminal drains the response-header registry exactly once")
 struct TerminalDrainsOnceTests {
-    /// **PendingIssues/18.** A deferred contribution that succeeds, followed by one that throws, used to
+    /// **#176.** A deferred contribution that succeeds, followed by one that throws, used to
     /// run **twice**: the success drain got part-way, the throw sent the terminal into its `catch`, and the
     /// mapped-error path drained the same registry again from the start. `onSend` is deliberately
     /// non-`@Sendable` so a middleware can capture per-request state in it, which is what makes a second

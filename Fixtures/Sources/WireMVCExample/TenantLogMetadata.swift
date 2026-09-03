@@ -3,7 +3,7 @@ import Wire
 import WireMVC
 import WireMVCLogging
 
-// M6b extensibility — an app-side field joining the request logger's metadata map. It stands in for what a
+// Request-logger extensibility — an app-side field joining the request logger's metadata map. It stands in for what a
 // distributed-tracing integration does: contribute a field, edit nothing. `WireMVCLogging` neither knows
 // nor names this, and `requestLogger`'s signature is untouched — the map is the extension point.
 //

@@ -10,13 +10,13 @@ import WireMVC
 // `import WireMVCLogging` to name the providers. So there is deliberately no import here — nothing in
 // this file names one of its symbols (`WireMVCRequest` and `WireMVCLogMetadata` are core WireMVC).
 
-// A request-scoped controller — the M5.4 case. `@Scoped(seed: HTTPRequest.self) @Controller` makes the
+// A request-scoped controller. `@Scoped(seed: HTTPRequest.self) @Controller` makes the
 // controller a *bridge* proxy: it's constructed fresh per request from the request seed (via the
 // plugin-generated `_wireEnterScope` thunk), injecting a request-scoped `RequestInfo` built from that
 // same seed, alongside the app-`@Singleton` `UserStore` (shared across every request).
 
 /// A global probe the request-scoped resource's `@Teardown` bumps, so the self-test can observe that
-/// request-scope teardown actually fires (M5.4.5).
+/// request-scope teardown actually fires.
 let scopeTeardownProbe = Atomic<Int>(0)
 
 /// A request-scoped resource carrying a `@Teardown` — verifies request-scope teardown runs per request
@@ -57,9 +57,9 @@ struct WhoAmI: Codable, Sendable {
 @Controller("/whoami")
 struct WhoAmIController: Sendable {
     @Inject var info: RequestInfo  // request-scoped — fresh per request, async-constructed
-    @Inject var resource: RequestResource  // request-scoped — @Teardown fires per request (M5.4.5)
+    @Inject var resource: RequestResource  // request-scoped — @Teardown fires per request
     @Inject var store: UserStore  // app singleton — shared
-    // M6b: the bare, *unkeyed* `Logger` resolves to `WireMVCLogging`'s request-scoped binding — supplied
+    // The bare, *unkeyed* `Logger` resolves to `WireMVCLogging`'s request-scoped binding — supplied
     // by a dependency module's `@Scoped(seed:)` block, not by anything in this target. The app-scoped
     // logger is keyed (`WireMVCApplication.logger`), so this spelling can only mean the per-request one.
     @Inject var logger: Logger

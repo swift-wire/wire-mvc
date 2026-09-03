@@ -149,7 +149,7 @@ extension RouteBlockGenerator {
         return (callArgs, used)
     }
 
-    /// The `builder.registerNotFound { … }` for a `@NotFound` handler method (M5.5 Phase 4), called
+    /// The `builder.registerNotFound { … }` for a `@NotFound` handler method, called
     /// through `subjectExpression` (the generated `@main`'s `bootstrap` local — not `self`). In practice
     /// the method is `@RawRoute` (it writes the response directly); the raw role mapping is reused, so a
     /// `@NotFound @RawRoute func handleNotFound(request:, responseSender:)` binds exactly like a route.

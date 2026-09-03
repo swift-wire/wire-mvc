@@ -68,7 +68,7 @@ public protocol FinalizableHTTPServerRouteBuilder<RequestContext, Reader, Respon
     /// `register`, with empty path parameters (there is no template). The `@WireMVCBootstrap` generated
     /// `@main` calls this with the app's `@NotFound` handler (or a synthesized 404) *before* `finalize()`,
     /// so the fallback is a real route — it folds in the global middleware/error tiers like any other
-    /// (M5.5 Phase 4/5). Unregistered (a hand-written app), the router answers a built-in 404.
+    /// Unregistered (a hand-written app), the router answers a built-in 404.
     mutating func registerNotFound(
         handler:
             @escaping @Sendable (

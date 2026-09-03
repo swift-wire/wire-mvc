@@ -22,11 +22,11 @@ import Foundation
 // currency. It's a thin per-route adapter: `ServerTransport` does its own routing and supplies the
 // path parameters, so there's no router here — one `transport.register` per collated route.
 //
-// The response bridge **streams**: a raw handler (M5.2 — SSE, chunked bodies) drives the sender
+// The response bridge **streams**: a raw handler (SSE, chunked bodies) drives the sender
 // incrementally, and each write flows to the transport's `HTTPBody` through a rendezvous `AsyncChannel`
 // (backpressure), so an unbounded stream never buffers. Typed handlers take a one-shot `sendAndFinish`
 // fast path that keeps a known-length body (`Content-Length`, not chunked). Proven end-to-end in
-// swift-wire-spikes/spike-14.
+// a prototype before it was built here.
 //
 // The request bridge streams the same way: `BridgeReader` pulls one chunk per `read` off the
 // transport's `HTTPBody`, so a streaming binding on this path behaves as it does on the proposal-native

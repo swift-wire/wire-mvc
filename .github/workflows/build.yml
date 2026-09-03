@@ -102,9 +102,9 @@ jobs:
             sleep 1
           done
           # /hello/tenant throws an unmapped-locally error → the Bootstrap's global @ErrorResponse
-          # (Phase 3) maps it to 400. -o /dev/null since curl -f already fails on non-2xx.
+          # The Bootstrap's global @ErrorResponse tier maps it to 400. -o /dev/null since curl -f already fails on non-2xx.
           tenant=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/hello/tenant)
-          # An unmatched path → the @NotFound fallback (Phase 4): a custom 404 with "no route here".
+          # An unmatched path → the @NotFound fallback: a custom 404 with "no route here".
           notfound=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/nope)
           # mountIntrospectionAt() → the graph's wiring model as JSON at /wiring.
           wiring=$(curl -s -w ' [%{http_code}]' http://127.0.0.1:8080/wiring)
@@ -118,7 +118,7 @@ jobs:
           case "$notfound" in *"no route here"*"[404]") ;; *) echo "@NotFound fallback did not fire"; exit 1;; esac
           echo "GET /wiring → $wiring (expect 200 + the introspection model, mountIntrospectionAt)"
           case "$wiring" in *'"bindings"'*"[200]") ;; *) echo "mountIntrospectionAt did not serve /wiring"; exit 1;; esac
-          # Phase 5: the global @Middleware (the AccessLog factory) folds around EVERY request via the
+          # The global @Middleware (the AccessLog factory) folds around EVERY request via the
           # generated global-middleware proxy's wrapGlobalMiddleware — matched routes and the @NotFound miss
           # alike. Its `access:` line must appear for both a matched route and the miss.
           echo "=== server log ==="; grep -E '^access:|^introspection-guard:' serverlog.txt || true

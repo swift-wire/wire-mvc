@@ -1,7 +1,7 @@
 public import SwiftDiagnostics
 public import SwiftSyntax
 
-/// The `@Controller` route-codegen diagnostics — node-anchored `error`s (M1 standard), each emitted at
+/// The `@Controller` route-codegen diagnostics — node-anchored `error`s, each emitted at
 /// the offending parameter or function so the fix-it location is precise. Shared by the `@Controller`
 /// macro (which routes them to the expansion context) and the `WireMVCRouteGen` tool (which prints them
 /// as `file:line:col: error:`).
@@ -84,7 +84,7 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
         case .notFoundNotRaw(let name):
             "@NotFound handler '\(name)' must be @RawRoute — the fallback writes the response directly (no matched route to decode/encode against). Add @RawRoute and take the response sender."
         case .multipleTestingKeys(let reference, let first):
-            "the keyed test harness serves one TestingKey per target, and '\(first)' is already this target's key — a suite passing '\(reference)' would be served '\(first)''s variant graph instead, silently. Move '\(reference)' to its own test target, or fold its @BindType markers into '\(first)'. (Serving several variants from one target is deferred — see swift-wire's PendingIssues/11.)"
+            "the keyed test harness serves one TestingKey per target, and '\(first)' is already this target's key — a suite passing '\(reference)' would be served '\(first)''s variant graph instead, silently. Move '\(reference)' to its own test target, or fold its @BindType markers into '\(first)'. (Serving several variants from one target is deferred — see tachyonics/swift-wire#336.)"
         case .redundantCodingOverride(let reference, let scope):
             "@Coding(\(reference)) on this \(scope) names the binding the enclosing scope already selected, so it overrides nothing. Name a different binding — a BindingKey<WireMVCCoding> distinguishes several codings of the same type — or drop the annotation."
         case .responseTupleInvalidLabels(let route, let labels):

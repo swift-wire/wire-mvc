@@ -16,7 +16,7 @@ private let macros: [String: any Macro.Type] = [
     "Middleware": RouteMarkerMacro.self,
 ]
 
-/// Phase A — `@Controller` is a **marker**. It expands to nothing: the route-contributor proxy (struct +
+/// `@Controller` is a **marker**. It expands to nothing: the route-contributor proxy (struct +
 /// witness) is generated in the consumer module under plugin orchestration (WireGen emits the struct,
 /// `WireMVCRouteGen` the witness — see `WireMVCCodegenTests` for the route codegen). These tests pin that
 /// the macro adds no peer and, in particular, no longer diagnoses (route-shape validation moved to the

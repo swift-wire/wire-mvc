@@ -35,7 +35,7 @@ struct RouteBlockGenerator {
     /// annotated `@JSONResponse` must still generate identically there. A mode declared anywhere else needs
     /// the plugin, exactly as a user binding does.
     var discoveredModes: [String: DeclaredResponseMode] = [:]
-    /// The `@WireMVCBootstrap` composition root's `@ErrorResponse` entries (M5.5 Phase 3) — the **global
+    /// The `@WireMVCBootstrap` composition root's `@ErrorResponse` entries — the **global
     /// default tier**, folded into every route's terminal after the controller's own, before the
     /// binding-error built-in. Empty for the `@Controller` macro path (which has no whole-graph view of
     /// the Bootstrap); populated by `WireMVCRouteGen`, which reads the Bootstrap once.
@@ -94,7 +94,7 @@ struct RouteBlockGenerator {
     let scopeEntryLocalName = "wireMVCController"
 
     /// The per-request scope-teardown closure's local name — the `@Teardown` walk for the request scope's
-    /// own bindings, handed back by `_wireEnterScope` alongside the controller (M5.4.5).
+    /// own bindings, handed back by `_wireEnterScope` alongside the controller.
     private let scopeTeardownLocalName = "wireMVCScopeTeardown"
 
     /// The local the scope entry's result is bound to, before its fields are read off.
@@ -535,7 +535,7 @@ extension RouteBlockGenerator {
     }
 
     /// The `@ErrorResponse` tiers a route's terminal consults, innermost first: the route's own, then the
-    /// controller's, then the Bootstrap's global default (M5.5 Phase 3). Order *is* the rule — the fold
+    /// controller's, then the Bootstrap's global default. Order *is* the rule — the fold
     /// takes the first match — so this is one place rather than a concatenation repeated at each call.
     fileprivate mutating func tieredErrorMappings(
         of function: FunctionDeclSyntax,

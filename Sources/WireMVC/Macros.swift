@@ -97,7 +97,7 @@ public let wireMVCCodingAlias = WireAdapterAnnotationV1(
 
 /// Marks a controller: each `@Get`/`@Post`/… route is registered onto a `some HTTPServerRouteBuilder`
 /// under the optional path prefix. `@Singleton @Controller("/users")` is all an app-scoped controller
-/// needs. A **marker** (Phase A) — it expands to nothing; the route-contributor proxy is generated in
+/// needs. A **marker** — it expands to nothing; the route-contributor proxy is generated in
 /// the consumer module under plugin orchestration (WireGen emits the struct, `WireMVCRouteGen` the
 /// witness). WireGen reads `@Controller` as the proxy-contribution directive via `wireMVCControllerAlias`.
 @attached(peer)
@@ -133,7 +133,8 @@ public let wireMVCBootstrapAlias = WireAdapterAnnotationV1(
 /// and serves the router alongside the collated `ServiceLifecycle` services. `@Singleton` is required
 /// (it makes the type a graph binding, exactly as `@Singleton @Controller` does); the entry point is
 /// generated, not written. A **marker** — it expands to nothing (reuses `RouteMarkerMacro`); the
-/// generated `@main` is emitted into the consumer module. See [Notes/../M5_5_PLAN.md].
+/// generated `@main` is emitted into the consumer module. See
+/// [the `@WireMVCBootstrap` design](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Archive/M5_5_PLAN.md).
 @attached(peer)
 public macro WireMVCBootstrap() = #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
 
@@ -142,7 +143,7 @@ public macro WireMVCBootstrap() = #externalMacro(module: "WireMVCMacros", type: 
 /// the same annotations a route handler does (in practice `@RawRoute`, to write the response directly);
 /// `@Path` is unavailable (there's no matched template). The generated `@main` registers it via
 /// `registerNotFound` *before* `finalize()`, so it's a real route — the global middleware/error tiers
-/// fold into it (M5.5 Phase 4/5), and being DI-capable it can use the Bootstrap's `@Inject`ed deps. If
+/// fold into it, and being DI-capable it can use the Bootstrap's `@Inject`ed deps. If
 /// no method carries `@NotFound`, the plugin synthesises a plain 404 fallback (still fold-able). A
 /// **marker** — it expands to nothing; the plugin reads it.
 @attached(peer)
@@ -412,7 +413,7 @@ public macro Middleware(_ key: FactoryKey) =
 /// > type mid-expansion), and a reference to a separate type needs cross-module signature resolution the
 /// > codegen doesn't do. Use an inline closure.
 ///
-/// See [Notes/RouteErrorHandling.md](RouteErrorHandling.md).
+/// See [RouteErrorHandling.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/RouteErrorHandling.md).
 @attached(peer)
 public macro ErrorResponse<E: Error>(_ type: E.Type, _ status: HTTPResponse.Status) =
     #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")

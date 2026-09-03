@@ -1,7 +1,7 @@
 import Foundation
 import PackagePlugin
 
-/// `WireMVCBuildPlugin` — the adapter-owned build-tool plugin for a WireMVC graph consumer (Phase A).
+/// `WireMVCBuildPlugin` — the adapter-owned build-tool plugin for a WireMVC graph consumer.
 /// It runs **two** tools into the consumer module, the two halves of a route contributor:
 ///   • `WireGen` (swift-wire's codegen executable) — the graph, the key checks, and the contributor
 ///     proxies' *structural* declarations (`_WireGraph.swift` / `_WireKeyChecks.swift`);
@@ -33,7 +33,7 @@ struct WireMVCBuildPlugin: BuildToolPlugin {
         // Cross-module composition (same rule as swift-wire's WireBuildPlugin): re-parse the sources of
         // every Wire-aware library this target *directly* depends on — a library is Wire-aware when it
         // depends on the `Wire` product itself (see `dependsOnWireModules`; swift-wire retired the
-        // hand-declared `_WireExports.swift` marker in M7b.5) — so its controllers + bindings compose into
+        // hand-declared `_WireExports.swift` marker this replaced is retired) — so its controllers + bindings compose into
         // this consumer. Both tools read the same source set: WireGen for the graph + proxy structs,
         // WireMVCRouteGen for the witnesses (a controller may live in a shared library while its proxy is
         // emitted here).
@@ -167,7 +167,7 @@ struct WireMVCBuildPlugin: BuildToolPlugin {
 }
 
 /// Whether `module` can declare Wire bindings or WireMVC controllers — the signal that replaced the
-/// hand-declared `_WireExports.swift` marker when swift-wire retired it (M7b.5).
+/// hand-declared `_WireExports.swift` marker swift-wire has since retired.
 ///
 /// A target that declares any of them must import `Wire` (for `@Singleton` / `@Scoped` / `@Inject`) or
 /// `WireMVC` (for `@Controller` / `@Middleware`), and an import requires a dependency the plugin can read

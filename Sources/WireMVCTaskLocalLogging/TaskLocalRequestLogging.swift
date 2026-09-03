@@ -10,7 +10,7 @@ import WireMVC
 //
 // Where that matters is Hummingbird, which wraps its whole responder chain in
 // `withLogger(logger.with(metadataKey: "hb.request.id", …))`. Adopting it means WireMVC's handler log lines
-// and Hummingbird's own carry the *same* id, which minting a second one cannot achieve. spike-30 measured
+// and Hummingbird's own carry the *same* id, which minting a second one cannot achieve. It was measured
 // that the binding survives the `WireMVCServerTransport` bridge's unstructured `Task {}`, including the
 // streaming case where the handler outlives the register closure.
 //

@@ -6,7 +6,7 @@ public import SwiftSyntax
 //   • the `@Controller` macro splices `renderRegisterWireRoutesWitness` into its peer *struct* (subject
 //     accessor `controller`) — its structural scaffolding is unchanged;
 //   • the `WireMVCRouteGen` tool wraps the same witness in an `extension` (subject accessor
-//     `_wireSubject`) on the plugin-emitted structural proxy (Phase A), and formats it.
+//     `_wireSubject`) on the plugin-emitted structural proxy, and formats it.
 // Both fold the identical witness body from `RouteBlockGenerator`, so they cannot drift.
 
 /// The `RouteContributor` witness signature — invariant boilerplate restating the `~Copyable`
@@ -60,7 +60,7 @@ public func renderRegisterWireRoutesWitness(
 }
 
 /// The route-contributor witness as an `extension` on the plugin-emitted structural proxy — the domain
-/// half the `WireMVCRouteGen` tool emits into the consumer module (Phase A). The struct itself (fields +
+/// half the `WireMVCRouteGen` tool emits into the consumer module. The struct itself (fields +
 /// init + `Sendable`) is emitted by WireGen; this extension adds the `RouteContributor` conformance and
 /// the witness, meeting the struct on the `_wireSubject` / `_wireFactory_<key>` field names. Formatted so
 /// the generated file reads cleanly.
@@ -536,7 +536,7 @@ private func renderControllerExtensions(
 }
 
 /// The `@WireMVCBootstrap` composition root's generated artifacts, emitted last at module scope: the
-/// keyless global-middleware proxy's `wrapGlobalMiddleware` extension (M5.5 Phase 5), always, plus exactly
+/// keyless global-middleware proxy's `wrapGlobalMiddleware` extension, always, plus exactly
 /// one program entry — the `@main` for a program consumer, or the `.wiremvc()` suite-trait factory for a test
 /// consumer (`testEntry`). The two entries are mutually exclusive: a `@main` in a test bundle collides with
 /// the test runner's own entry point, so a re-composing test target emits `.wiremvc()` in its place.

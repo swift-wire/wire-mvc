@@ -48,7 +48,7 @@ where
     /// `createRouteBuilder(for:)` — because it is a property of the app's URL contract, not of a route.
     private let trailingSlash: TrailingSlashPolicy
     private var handlers: [Handler] = []
-    /// The fallback dispatched to on an unmatched request (M5.5 Phase 4). `nil` until `registerNotFound`;
+    /// The fallback dispatched to on an unmatched request. `nil` until `registerNotFound`;
     /// the frozen router answers a built-in 404 when it stays `nil`.
     private var notFoundHandler: Handler?
     /// The handler for a matched path with an unmatched method. `nil` until `registerMethodNotAllowed`;

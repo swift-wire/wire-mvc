@@ -140,7 +140,7 @@ consumes none. Making the fields optional to fix that turns the per-key `withBin
 so multi-key and the doubles model are one problem. The preferred direction is per-controller bind values
 (`with<Controller>BindValues`, taking exactly what that controller's scope consumes, all required), which
 keeps the compile-time guarantee at the granularity testing happens *and* weakens the case for multi-key.
-Recorded in full as swift-wire's `PendingIssues/11`, and — together with a typed per-route client derived
+Recorded in full as [tachyonics/swift-wire#336](https://github.com/tachyonics/swift-wire/issues/336), and — together with a typed per-route client derived
 from the same controller — in [Notes/ControllerScopedTesting.md](Notes/ControllerScopedTesting.md), to
 revisit after Phase 5.
 
@@ -391,7 +391,7 @@ Complete the mode surface + retire the config hack.
   against its own declaration, naming the one that won.
 - **Scope change from the original plan:** the plan was to *serve* several keys via a `switch` over
   `(fileID, line)`. Building it showed multi-key is inseparable from the per-key doubles model — see the
-  section above and swift-wire's `PendingIssues/11` — and the use case is narrow enough (different *graph
+  section above and [tachyonics/swift-wire#336](https://github.com/tachyonics/swift-wire/issues/336) — and the use case is narrow enough (different *graph
   substitutions*, not different mock instances) that a second test target is a fine answer. Deferred
   deliberately, with the deferral enforced rather than latent.
 - **Gate:** a second `TestingKey` in one target fails the build with a message naming both keys; a single key

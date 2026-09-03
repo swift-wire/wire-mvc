@@ -40,7 +40,7 @@ extension RouteBlockGenerator {
     }
 
     /// The register-closure emission, shared by `builder.register(method:path:)` (routes) and
-    /// `builder.registerNotFound` (the `@NotFound` fallback, M5.5 Phase 4) — the closure body is
+    /// `builder.registerNotFound` (the `@NotFound` fallback) — the closure body is
     /// identical; only the call that takes it differs. `registerCall` is everything up to the trailing
     /// closure.
     func emitRegisterClosure(

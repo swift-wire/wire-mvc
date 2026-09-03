@@ -1,7 +1,7 @@
 package import Wire
 package import WireMVC
 
-// A global middleware (M5.5 Phase 5): the composition root's `@Middleware(AccessLogKeys.factory)` folds this
+// A global middleware: the composition root's `@Middleware(AccessLogKeys.factory)` folds this
 // around *every* request — matched routes and the `@NotFound` fallback alike — via the generated
 // global-middleware proxy's `wrapGlobalMiddleware`. Non-transforming (`Input == NextInput`), the constraint
 // the front layer requires (the router is fixed on its box type).

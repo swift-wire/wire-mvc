@@ -674,7 +674,7 @@ struct BodyStreamBindingTests {
     /// The reason is the typed tier's shape rather than the reader's ownership: a handler returns before its
     /// response body is written, so it cannot still be holding the stream. Expressing it needs the response
     /// to be a parameter rather than a return value, which is designed and ownership-verified but blocked on
-    /// swiftlang/swift#91473 (swift-wire `PendingIssues/14`). `@RawRoute` serves the case meanwhile.
+    /// swiftlang/swift#91473 (#173). `@RawRoute` serves the case meanwhile.
     @Test("a lent stream on a streaming response route is refused")
     func lentStreamOnStreamingResponseRefused() {
         let (_, diagnostics) = generate(

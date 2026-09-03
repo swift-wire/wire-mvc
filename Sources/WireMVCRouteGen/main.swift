@@ -1,12 +1,13 @@
 import Foundation
 import WireMVCCodegen
 
-// `WireMVCRouteGen` — the WireMVC route-codegen tool (the domain half of Phase A). A thin CLI over
+// `WireMVCRouteGen` — the WireMVC route-codegen tool, the domain half of the plugin-owned
+// codegen split. A thin CLI over
 // `WireMVCCodegen.generateRouteContributors`: it parses the consumer's controller sources and emits a
 // `_WireRoutes.swift` of `RouteContributor` extensions on the plugin-emitted structural proxies (the
 // witness body referencing `_wireSubject` / `_wireFactory_<key>`). The build plugin runs it alongside
 // WireGen (which emits the structs) — the two tools, one module, the field-name handshake. Until the A3
-// cutover wires it into a build, it stands alone (spike-23 proved the two-tool orchestration).
+// cutover wires it into a build, it stands alone.
 //
 // CLI: WireMVCRouteGen <output-path> [--test-entry] [--import <Module>]... [--module <Name>] <source-files...>
 //

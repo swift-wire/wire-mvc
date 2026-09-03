@@ -157,7 +157,8 @@ let package = Package(
                 .product(name: "SwiftDiagnostics", package: "swift-syntax"),
             ]
         ),
-        // The WireMVC route-codegen tool (Phase A domain half) — emits `RouteContributor` extensions on
+        // The WireMVC route-codegen tool, the domain half of the plugin-owned codegen split — emits
+        // `RouteContributor` extensions on
         // the plugin-emitted structural proxies. A thin CLI over `WireMVCCodegen`; wired into the build
         // at the A3 cutover.
         .executableTarget(

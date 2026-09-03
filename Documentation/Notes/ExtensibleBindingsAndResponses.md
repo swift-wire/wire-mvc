@@ -86,7 +86,7 @@ The obvious blocker is that codegen is **syntactic and cross-module**: it sees `
 text, in a different module from where `FormBody` is declared, and cannot ask whether `FormBody: RequestBound`.
 
 That is not a constraint here. The build plugin **already re-parses Wire-aware dependency modules**
-(`WireMVCBuildPlugin.swift:33,59`), gated on the dependency's own dependency on the `Wire` product (the `_WireExports.swift` marker it replaced was retired in swift-wire's M7b.5) — the same mechanism that lets a
+(`WireMVCBuildPlugin.swift:33,59`), gated on the dependency's own dependency on the `Wire` product (the `_WireExports.swift` marker it replaced is retired) — the same mechanism that lets a
 consumer's graph compose a dependency's `@Controller`s. So the codegen sees the *declaration* of a user's
 binding as well as its use.
 
