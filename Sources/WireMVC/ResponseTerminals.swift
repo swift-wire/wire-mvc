@@ -6,7 +6,7 @@ import HTTPTypes
 // A typed route needs the middleware's contributions on two paths that are not exclusive — the outcome it
 // built, and the `@ErrorResponse` mapping of a throw. Draining at both sites is what let a *deferred*
 // contribution run twice: the success drain gets part-way through the `onSend` closures, one throws, and the
-// mapped-error drain re-runs the ones that already succeeded (PendingIssues/18). Generated code cannot close
+// mapped-error drain re-runs the ones that already succeeded (#176). Generated code cannot close
 // that itself. `drain()` is `consuming`, and the two sites are neither exclusive (the buffered `do`/`catch`)
 // nor even reachable (the streaming pair, since a noncopyable value captured by a closure cannot be consumed
 // at all, once or twice).

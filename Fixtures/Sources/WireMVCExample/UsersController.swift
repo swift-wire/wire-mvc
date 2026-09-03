@@ -16,7 +16,7 @@ import WireMVC
 // controller-scope @ErrorResponse: a thrown UserStore.NotFound → 404 + JSON body. The three-argument
 // form — matched type, status, and a closure producing the body — folded into the generated terminal's
 // `catch` and called when a route throws `UserStore.NotFound` (e.g. `getUser`'s `try store.find(id)` for
-// an unknown id, which returned 500 before M5.4E).
+// an unknown id, which returned 500 before `@ErrorResponse` existed).
 //
 // The closure form spells the same thing as `try .json(value, status:)`; this says it declaratively, with
 // the status where a reader looks for it. It also gives an adapter that reads a schema somewhere to check

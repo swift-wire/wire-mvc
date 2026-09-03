@@ -16,8 +16,8 @@ import WireMVCRouter
 
 @Singleton
 @WireMVCBootstrap
-@ErrorResponse(TenantMissing.self, .badRequest)  // global default tier — folds into every route (Phase 3)
-@Middleware(AccessLogKeys.factory)  // global front layer — wraps every request incl. the 404 fallback (Phase 5)
+@ErrorResponse(TenantMissing.self, .badRequest)  // global default tier — folds into every route
+@Middleware(AccessLogKeys.factory)  // global front layer — wraps every request incl. the 404 fallback
 package struct AppBootstrap {
     @Inject let config: ServerConfig
     @Inject let startup: StartupReport
@@ -70,14 +70,14 @@ package struct AppBootstrap {
         TrieRouteBuilder(for: server)
     }
 
-    // M5.5: mount the graph's wiring model (`introspect()` as JSON) at `/wiring`. Returning `nil` skips it.
+    // Mount the graph's wiring model (`introspect()` as JSON) at `/wiring`. Returning `nil` skips it.
     // The generated `@main` registers it before `finalize()`, so it's a real route (the front layer wraps it).
     // The route-scoped `@Middleware` guards *only* `/wiring` (folded via the proxy's `registerIntrospection`),
     // unlike the global `@Middleware(AccessLogKeys.factory)` on the type.
     @Middleware(IntrospectionGuardKeys.factory)
     package func mountIntrospectionAt() -> String? { "/wiring" }
 
-    // M5.5 Phase 4: the fallback for unmatched requests — a `@RawRoute` handler that writes the response
+    // The fallback for unmatched requests — a `@RawRoute` handler that writes the response
     // itself. Being a Bootstrap method it's DI-capable (it could use `self.config`); the generated `@main`
     // registers it via `registerNotFound`, before `finalize()`, so it's a real route (the global tiers
     // fold into it). Without it, the plugin would synthesise a plain 404.

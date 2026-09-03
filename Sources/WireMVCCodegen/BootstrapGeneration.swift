@@ -7,7 +7,7 @@ public import SwiftSyntax
 // off it, builds the server + route builder from the type's factories, registers the collated routes
 // via `WireMVC.apply`, and serves the router alongside the graph's collated services.
 //
-// M5.5 Phase 1: no global middleware/error tiers, no introspection mount, no synthetic fallback route
+// The plain form: no global middleware/error tiers, no introspection mount, no synthetic fallback route
 // (later phases). The `@main` is *generated*, not user-written; the composition root carries only
 // `@Singleton @WireMVCBootstrap` (the `@Singleton` makes it a graph binding, as `@Singleton @Controller`
 // does), and the factory methods.
@@ -339,6 +339,11 @@ func introspectionMount(bootstrap: ControllerDeclaration, factoryKeys: Set<Strin
 }
 
 /// Global tier `@Middleware` fold-entries (type-level, over `Handler`) — see ``middlewareFactoryConstructions``.
+///
+/// **This path does not thread per-request doubles.** The route/controller fold emits `create(doubles:)` for a
+/// mock-consuming factory; this one still emits the box-role-only `create`, so a global `@Middleware` whose
+/// factory injects a `@BindType`'d slot either fails to compile under a keyed suite or resolves the real
+/// binding. Whether to support it or diagnose it is undecided — see #165.
 func globalMiddlewareConstructions(
     bootstrap: ControllerDeclaration,
     factoryKeys: Set<String>
@@ -407,7 +412,7 @@ func middlewareFactoryConstructions(
     return (constructions, diagnostics)
 }
 
-/// The `builder.registerNotFound { … }` for a `@WireMVCBootstrap`'s fallback (M5.5 Phase 4): the
+/// The `builder.registerNotFound { … }` for a `@WireMVCBootstrap`'s fallback: the
 /// `@NotFound` method rendered through the raw-route machinery (subject = the `@main`'s `bootstrap`
 /// local), or a synthesised plain 404 when none is declared. The fallback is registered before
 /// `finalize()`, so it's a real route the global tiers fold into. Any `@NotFound` diagnostics are

@@ -3,7 +3,7 @@ public import HTTPAPIs
 public import HTTPTypes
 public import Middleware
 
-/// The global-middleware **front layer** (M5.5 Phase 5). The `@WireMVCBootstrap` composition root's
+/// The global-middleware **front layer**. The `@WireMVCBootstrap` composition root's
 /// `@Middleware` wraps *every* request — matched routes and the `@NotFound` fallback alike — by wrapping
 /// the finalized router in this handler once, in the generated `@main`. It folds a composed non-transforming
 /// global chain around the inner handler's `handle`, so global concerns (access logging, auth gates, CORS)

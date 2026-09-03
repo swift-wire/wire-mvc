@@ -3,7 +3,7 @@ import Synchronization
 import Wire
 import WireMVC
 
-// Per-root reachability validation (M5.4.6): a SECOND `@Scoped(seed: HTTPRequest.self)` controller sharing
+// Per-root reachability validation: a SECOND `@Scoped(seed: HTTPRequest.self)` controller sharing
 // the seed with WhoAmIController, each reaching its OWN request-scoped resource. Each controller's
 // scope-entry thunk constructs (and tears down) only *its* reachable subgraph, so a request routed to
 // /whoami never builds or tears down OtherResource, and a /other request never touches RequestResource —

@@ -5,7 +5,7 @@ import HTTPTypes
 import Wire
 import WireMVC
 
-// M5.4R — a `@RawRoute(.responseSender)` handler whose sender type is *transformed* by a middleware. The
+// A `@RawRoute(.responseSender)` handler whose sender type is *transformed* by a middleware. The
 // middleware wraps the real response sender in a `MultiPartSender<S>`; the raw handler receives that
 // concrete-wrapped type (which constraint inference can't name) and calls its richer `sendParts` API.
 // Removing the middleware makes the handler's parameter type unsatisfiable — the compile-time coupling.

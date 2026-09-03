@@ -1,7 +1,7 @@
 package import Wire
 package import WireMVC
 
-// A mock-CONSUMING middleware factory (Phase B): unlike `AccessLog` (which injects nothing), `SummaryAudit`
+// A mock-CONSUMING middleware factory: unlike `AccessLog` (which injects nothing), `SummaryAudit`
 // `@Inject`s the `@BindType`'d `NoteBackend`. In production the factory holds the real backend, built once when
 // the route contributor's facade runs. But under a keyed suite the mock arrives per request (header →
 // `TestBindStore`, after the server is up), so the factory can't hold it — swift-wire re-emits it as a variant

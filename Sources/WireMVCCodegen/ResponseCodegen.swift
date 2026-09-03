@@ -214,7 +214,7 @@ extension RouteBlockGenerator {
     /// One emitter for both tiers, because they now have the same shape — `wireMVCBufferedTerminal` and
     /// `wireMVCStreamingTerminal` differ only in what `building` returns. They were separate while the
     /// buffered tier wrote its own `do`/`catch` inline; moving the response-header drain into the terminal
-    /// (PendingIssues/18) took the `do`/`catch` with it, and the two collapsed together.
+    /// (#176) took the `do`/`catch` with it, and the two collapsed together.
     ///
     /// **Why a terminal function rather than an inline `do`/`catch`.** Three linear values have to be used
     /// exactly once each across two branches that are not exclusive: the sender, the reader, and the

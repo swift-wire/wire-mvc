@@ -1,8 +1,8 @@
 # Catch-all mounting — a probe brief
 
-> **Status:** proposed spike, not started. Belongs in
-> [`swift-wire-spikes`](../../../swift-wire-spikes/), the way spike-14 answered the `ServerTransport`
-> bridge and spikes 31–33 answered duplex routes — not in wire-mvc.
+> **Status:** proposed spike, not started. Belongs in the out-of-tree spike repository, the way the
+> `ServerTransport` bridge and the duplex-route question were both answered before being built here —
+> not in wire-mvc.
 
 ## The question
 

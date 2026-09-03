@@ -32,7 +32,7 @@ struct BindTests {
     }
 
     /// The **app-scoped** (`@Singleton`) `SummaryController`, marked `@TestScopable` — the seedless case, plus a
-    /// **mock-consuming middleware factory** (Phase B). It's built once against the real backend in production,
+    /// **mock-consuming middleware factory**. It's built once against the real backend in production,
     /// but under the keyed suite the variant rebuilds it per request from the doubles alone
     /// (`_wireEnterScope(doubles)`, no seed), so `GET /summary/{id}` serves the supplied mock. Its
     /// `@Middleware(SummaryAuditKeys.factory)` also `@Inject`s the backend — it can't hold the mock (built once

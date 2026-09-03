@@ -102,7 +102,7 @@ package struct AccountController: Sendable {
 }
 
 /// An **app-scoped** (`@Singleton`) route contributor consuming the `@BindType`'d `NoteBackend` directly — the
-/// seedless case (Phase A). `@TestScopable`: under a keyed suite the variant rebuilds it per-request from the
+/// seedless case. `@TestScopable`: under a keyed suite the variant rebuilds it per-request from the
 /// doubles alone (no seed), so `/summary` serves the mock; in production it's an ordinary shared singleton
 /// built once against the real backend.
 @TestScopable

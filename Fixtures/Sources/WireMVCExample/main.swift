@@ -94,7 +94,7 @@ try await withThrowingTaskGroup(of: Void.self) { group in
     }
 
     // @ErrorResponse(UsersController.userNotFound) — getUser throws UserStore.NotFound for an unknown id;
-    // the controller-scope mapping turns it into 404 + a JSON body (500 before M5.4E).
+    // the controller-scope mapping turns it into 404 + a JSON body (500 before `@ErrorResponse`).
     do {
         let (status, body) = try await send("GET", "/users/999", port: port)
         let error = try JSONDecoder().decode(APIError.self, from: body)
@@ -104,10 +104,10 @@ try await withThrowingTaskGroup(of: Void.self) { group in
         )
     }
 
-    // M5.5 Phase 2: the terminal owns the 500. BoomController.boom throws an *unmapped* error (not a
+    // The terminal owns the 500. BoomController.boom throws an *unmapped* error (not a
     // WireMVCBindingError, no @ErrorResponse) — the terminal's catch chain ends in a built-in 500 write,
     // so the client gets a clean 500 rather than a dropped connection (which is what a rethrow → server
-    // abort produced before Phase 2).
+    // abort this used to produce).
     do {
         let (status, _) = try await send("GET", "/boom", port: port)
         check(status == 500, "GET /boom (unmapped throw)  → 500, terminal owns the 500 (not a dropped connection)")
@@ -145,7 +145,7 @@ try await withThrowingTaskGroup(of: Void.self) { group in
 
     // @JSONBody content-type rules. (The lenient-on-a-genuinely-missing-Content-Type path is a
     // binding-layer detail that a real HTTP client can't exercise — `URLSession` injects a default
-    // `Content-Type` for any body — so it's covered by spike-11, not here.)
+    // `Content-Type` for any body — so it's covered by the transport bridge, not here.)
     do {
         let (wrong, _) = try await send(
             "POST",
@@ -214,7 +214,7 @@ try await withThrowingTaskGroup(of: Void.self) { group in
                 && w1.storeShared && w2.storeShared,
             "@Scoped(seed:) @Controller  → request-scoped value (async @Inject init) fresh per request, @Singleton shared"
         )
-        // M6b — the request logger. Four things at once: the bare unkeyed `@Inject var logger: Logger`
+        // The request logger. Four things at once: the bare unkeyed `@Inject var logger: Logger`
         // resolved (to WireMVCLogging's request-scoped binding, supplied by a *dependency module's*
         // `@Scoped(seed:)` block); the keyed app logger it derives from coexists rather than colliding;
         // the id is per-request, not per-process; and the id actually rode on the logger the handler
@@ -239,14 +239,14 @@ try await withThrowingTaskGroup(of: Void.self) { group in
                 + "metadata (tenant=\(w1.loggerTenant)) and the same binding injects directly"
         )
         // @Teardown on a request-scoped binding (RequestResource) — the generated witness's async defer runs
-        // the scope teardown after each request, so the probe counts one per /whoami request above (M5.4.5).
+        // the scope teardown after each request, so the probe counts one per /whoami request above.
         check(
             scopeTeardownProbe.load(ordering: .relaxed) >= 2,
             "@Teardown on a @Scoped binding  → request-scope teardown fired per request "
                 + "(probe counted \(scopeTeardownProbe.load(ordering: .relaxed)))"
         )
 
-        // Per-root reachability (M5.4.6): OtherController is a *second* @Scoped(seed: HTTPRequest.self)
+        // Per-root reachability: OtherController is a *second* @Scoped(seed: HTTPRequest.self)
         // controller sharing the seed. The two /whoami requests above must have torn down ONLY
         // WhoAmIController's RequestResource — never the sibling's OtherResource (its thunk isn't run). Then
         // a /other request tears down only its own OtherResource, leaving WhoAmIController's probe untouched.
@@ -258,11 +258,11 @@ try await withThrowingTaskGroup(of: Void.self) { group in
                 && otherBefore == 0  // per-root: /whoami never constructed or tore down OtherResource
                 && otherTeardownProbe.load(ordering: .relaxed) == otherBefore + 1  // /other tore down its own
                 && scopeTeardownProbe.load(ordering: .relaxed) == whoamiTeardowns,  // ...and not RequestResource
-            "@Scoped per-root reachability (M5.4.6)  → sibling scoped controllers don't cross-construct or cross-teardown"
+            "@Scoped per-root reachability            → sibling scoped controllers don't cross-construct or cross-teardown"
         )
     }
 
-    // @RawRoute(.responseSender) + a sender-transforming @Middleware (M5.4R) — the handler receives a
+    // @RawRoute(.responseSender) + a sender-transforming @Middleware — the handler receives a
     // MultiPartSender<S> (a type constraint-inference can't name) and calls its richer sendParts API; the
     // middleware wrapped the real sender. Removing the middleware would fail to compile at the handler.
     do {

@@ -111,7 +111,7 @@ package struct HelloController<G: Greeter> {
         throw TenantMissing()
     }
 
-    // M5.5 Phase 3: this controller declares no `@ErrorResponse`, so `TenantMissing` is unmapped here.
+    // This controller declares no `@ErrorResponse`, so `TenantMissing` is unmapped here.
     // The `@WireMVCBootstrap` composition root's global `@ErrorResponse(TenantMissing.self, .badRequest)`
     // is the default tier folded into this route's terminal — so `GET /hello/tenant` returns 400.
     @Get("/tenant")

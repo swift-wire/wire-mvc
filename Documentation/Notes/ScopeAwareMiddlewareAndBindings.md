@@ -74,7 +74,7 @@ live on `create`, not on the struct — so a factory *object* would sit in a sco
 cannot be scoped is the *template as a binding*, which is what the annotation asks for.
 
 swift-wire's guided fix-it for this names a combination that has no spelling; filed as
-[swift-wire PendingIssues/16](https://github.com/tachyonics/swift-wire/blob/main/PendingIssues/16-factory-template-scope-hint.md).
+[tachyonics/swift-wire#337](https://github.com/tachyonics/swift-wire/issues/337).
 
 **3. A seeded scope returns exactly one subject, and is pruned to it.** `ScopeEntryEmission.swift:124`
 emits `return (subject, teardown)`, and `:80` prunes with `reachableBindings(from: subjectLocal)`. A
@@ -280,7 +280,7 @@ by design"), so the annotation moves on four types in wire-mvc-examples, one lin
   reachable `404`s distinct bodies so `StaticFileServingTests` could tell which layer answered.
 - **The `.responded` case keeps only the request today**, "so always-run observe middleware can still read
   it". Route context should follow the same rule, for the same reason.
-- **Phase 5 is an allocation pass**, so whether holding the dictionary longer costs anything is to be
+- **The pass this lands in is an allocation pass**, so whether holding the dictionary longer costs anything is to be
   measured rather than asserted. It is already a closure parameter, so it ought to be a move.
 - `registerNotFound` has no matched template, and `[String: Substring]` borrows the request's storage —
   safe only because the request rides alongside it, which is a property of the type's design and belongs in
@@ -451,7 +451,7 @@ diagnostics: `@Factory` alongside `@Singleton`/`@Scoped` refused as two lifetime
 cross-scope hint that says what is actually true. **No source migration** — `@Factory(K)` is already
 written correctly everywhere; what changes is what the compiler says when it is combined or when a scoped
 value is asked of it. **Forced by:**
-[PendingIssues/16](https://github.com/tachyonics/swift-wire/blob/main/PendingIssues/16-factory-template-scope-hint.md),
+[tachyonics/swift-wire#337](https://github.com/tachyonics/swift-wire/issues/337),
 where the shipped fix-it names a fix that cannot be written.
 
 **3 — swift-wire: a seeded scope yields more than its subject.** `ScopeEntryEmission` returns the subject

@@ -1,6 +1,6 @@
-# Prior art: Vapor's `@Controller` macro routing (relation to WireMVC / M5)
+# Prior art: Vapor's `@Controller` macro routing (relation to WireMVC)
 
-Notes on Vapor's macro-based routing, for the M5 writeup's "related work" section.
+Notes on Vapor's macro-based routing, for WireMVC's "related work" section.
 The aim is to record **how the two approaches differ architecturally** and **how
 each relates to prior art in the declarative-routing / DI space** — not to critique
 an evolving proposal. Vapor's is experimental and early; specifics below may change.
@@ -69,12 +69,12 @@ resolver scopes) live outside its scope.
   and shared across requests (the generated wrappers are `@Sendable`), i.e.
   **app-scoped singletons**. Per-request state is carried by the `Request`.
 - **WireMVC:** additionally offers **request-scoped controllers** — `@Scoped(seed:)`
-  constructs a fresh controller per request (M5.4), alongside `@Singleton` controllers
+  constructs a fresh controller per request, alongside `@Singleton` controllers
   in the same app. This maps onto **Spring's bean scopes** (`singleton` vs `request`),
   realised at compile time rather than via a runtime container. It is the capability
   furthest from anything in the Vapor proposal, and a primary reason WireMVC exists as
-  a layer rather than staying with framework-native controllers. See
-  [swift-wire M5_PLAN.md, Iteration M5.4](https://github.com/tachyonics/swift-wire/blob/main/Documentation/M5_PLAN.md).
+  a layer rather than staying with framework-native controllers. See swift-wire's
+  [WireMVC design note](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/WireMVCDesign.md).
 
 ## Controller registration
 
@@ -84,7 +84,7 @@ resolver scopes) live outside its scope.
   cross-controller aggregation isn't something a `@Controller`-style macro does on its
   own.)
 - **WireMVC:** `@Controller` emits a `TransportContributor` witness, and swift-wire's
-  M3 `ServerTransport` surface aggregates contributors and drives `transport.register`
+  `ServerTransport` collation surface aggregates contributors and drives `transport.register`
   per route. Note WireMVC does not *auto-discover* controllers either (same Swift
   constraints) — the difference is that collation is expressed as a first-class
   surface rather than as per-controller registration calls.
@@ -98,7 +98,7 @@ underneath, on the same axis as the binding/DI layers.
 
 (Status: Vapor's auth-principal middleware has merged; general per-route/controller
 `@Middleware` is still evolving, so its shape may change. The design below reflects
-the current proposal. WireMVC's is M5.3 in the plan, interleaved with M5.4.)
+the current proposal. WireMVC's landed together with request scope, for the reason below.)
 
 - **Composition mechanism.** Vapor splices the `@Middleware` expressions verbatim into
   `routes.grouped(...)` in the generated `boot` — handed to Vapor's own middleware
@@ -123,15 +123,15 @@ the current proposal. WireMVC's is M5.3 in the plan, interleaved with M5.4.)
   `@MiddlewareBuilder`'s `buildPartialBlock` enforces `First.NextInput == Second.Input`),
   so *removing the auth middleware fails to compile*. Same request-as-context vs.
   typed-signature split as the binding and DI layers, one level up.
-- **Bridge to request scope.** This is why M5.3 and M5.4 interleave: a type-transforming
+- **Bridge to request scope.** This is why the two landed together: a type-transforming
   auth middleware produces the *typed* principal that seeds the request scope a
   request-scoped controller (§ *Controller lifecycle*) consumes. Vapor's analogue
   deposits the principal into `req.auth` (untyped side-channel), consumed by a shared
   singleton controller via `req.auth.require`.
 - **Global (pre-routing) middleware.** Vapor's `@Middleware` is per-route/controller;
   global middleware stays in Vapor's existing app-level mechanism. WireMVC likewise
-  scopes per-route/controller to M5.3 and defers global middleware to M5.5 (the
-  router-assembly / Tier-2 layer).
+  scopes `@Middleware` per-route/controller, and handles global middleware in the
+  `@WireMVCBootstrap` composition root as a front layer around the finalized router.
 
 Prior art: `@Middleware` as controller/route decoration descends from Spring's
 `HandlerInterceptor` / JAX-RS `@NameBinding` filters (untyped interception); the
@@ -170,8 +170,8 @@ construct it descends from:
 | Path-param binding | Spring `@PathVariable`; JAX-RS `@PathParam` | positional-by-type — unlike either; no named binding | `@Path` marker — aligns with `@PathVariable` |
 | Response encoding | Spring `@ResponseBody` + message converters | `ResponseEncodable` / `encodeResponse` — framework content system | `@JSONResponse` / `@ResponseStatus` — aligns with `@ResponseBody` / `@ResponseStatus` |
 | Controller registration | Spring component-scan + container | per-controller `app.register(collection:)` — manual, framework-native | `ServerTransport` collation of contributors — container-driven (explicit, not reflective) |
-| Auth principal into handler | Spring Security `@AuthenticationPrincipal` | `@AuthMiddleware(User.self)` → `req.auth.require` | request-scoped principal (M5.4) |
-| Middleware (per-route/controller) | Spring `HandlerInterceptor`; JAX-RS filters | `@Middleware(expr)` → `.grouped(...)`, Vapor `Middleware`, runtime wrap (evolving) | `@Middleware(expr)` composed around decoded handler, typed `Middleware<Input, NextInput>` (M5.3) |
+| Auth principal into handler | Spring Security `@AuthenticationPrincipal` | `@AuthMiddleware(User.self)` → `req.auth.require` | request-scoped principal |
+| Middleware (per-route/controller) | Spring `HandlerInterceptor`; JAX-RS filters | `@Middleware(expr)` → `.grouped(...)`, Vapor `Middleware`, runtime wrap (evolving) | `@Middleware(expr)` composed around decoded handler, typed `Middleware<Input, NextInput>` |
 
 **The pattern the column reveals:** each proposal is the natural shape of its host
 philosophy. Vapor's rows lean *framework-native* — its own content system, manual

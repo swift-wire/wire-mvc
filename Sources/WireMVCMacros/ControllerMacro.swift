@@ -1,7 +1,7 @@
 import SwiftSyntax
 import SwiftSyntaxMacros
 
-/// `@Controller(_ path: String)` / `@Controller()` — a **marker** (Phase A). It expands to nothing: the
+/// `@Controller(_ path: String)` / `@Controller()` — a **marker**. It expands to nothing: the
 /// controller's route-contributor proxy is generated under plugin orchestration in the consumer module,
 /// not by this macro. WireGen emits the proxy's *structural* half (the `struct` — subject + factory
 /// fields + init, from `.contributesProxy`), and the `WireMVCRouteGen` tool emits the *witness* as an

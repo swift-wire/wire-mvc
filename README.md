@@ -3,7 +3,7 @@
 `WireMVC` — a cross-runtime, declarative-routing [swift-wire](https://github.com/tachyonics/swift-wire)
 adapter. Controllers are written with `@Controller` / HTTP-verb / parameter / response
 annotations, and the `@Controller` macro generates their route registration onto a
-`some ServerTransport` (swift-wire's M3 collation surface). Because the target is
+`some ServerTransport` (swift-wire's collation surface). Because the target is
 `ServerTransport` — and the package depends only on `OpenAPIRuntime`, no HTTP framework — the
 same controller mounts on Hummingbird, Vapor, or Lambda unchanged.
 
@@ -74,18 +74,28 @@ and non-`{name}` path syntax are unreachable through the bridge whatever the hos
 
 ## Status
 
-Under construction (M5.1).
+Built, pre-1.0. The surface below is shipped and exercised by the fixtures in this repository
+and by [wire-mvc-examples](https://github.com/tachyonics/wire-mvc-examples) on three runtimes.
 
-- **M5.1a** — the member-walking `@Controller` macro + the `RequestBound` bindings + the
-  generated witness, served through a `ServerTransport` in `WireMVCExample`. **Done.**
-- **M5.1b** — swift-wire graph integration: `@Singleton` + the `@Contributes` alias +
-  `TransportComposable` conformance + `Wire.bootstrap()` + `WireMVC.apply`. **Done** —
-  `WireMVCExample` now bootstraps the graph, which constructs `UserStore`, injects it into the
-  collated `UsersController`, and applies its routes onto the transport.
-- **M5.1c** — example ports (`hello`, `todos`) + live cross-runtime on Hummingbird + Vapor.
-  **Current.**
-- **M5.1d** — extract the shared `ServerTransport` collation surface so WireMVC and WireOpenAPI
-  fold into one key (migrating wire-open-api onto it).
+- **Routing.** The member-walking `@Controller` macro, typed parameter/body/response bindings,
+  `@RawRoute` for handlers that own the wire, and a generated route-contributor proxy that
+  composes into the Wire graph through the `@Contributes` alias.
+- **Composition root.** `@WireMVCBootstrap` generates the program entry point — no hand-written
+  `main.swift` — folding in the `@NotFound` fallback, global `@ErrorResponse` tiers, an optional
+  `introspect()` mount and global `@Middleware` as a front layer.
+- **Request scope.** `@Scoped(seed: HTTPRequest.self)` controllers, each a per-request
+  reachability root, with `@Teardown` firing at the end of the request.
+- **Logging.** A per-request logger in two interchangeable targets, `WireMVCLogging` (mints a
+  correlation id) and `WireMVCTaskLocalLogging` (adopts swift-log's task-local, so the
+  framework's own lines share the id).
+- **Testing.** `@Suite(.wiremvc())`, per-`TestingKey` variant app graphs, `@BindType` doubles and
+  a typed client — a mocked suite runs without the real backends.
+- **One routing model.** An `@Operation` from an OpenAPI document contributes to the same
+  collation key as a `@Get`, so middleware, error mapping, request scope and encoding are
+  expressed identically across both authoring styles.
+
+Known gaps are tracked as [issues](https://github.com/tachyonics/wire-mvc/issues) and indexed in
+swift-wire's [KnownGaps.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/KnownGaps.md).
 
 Validated on macOS and Linux (see CI).
 

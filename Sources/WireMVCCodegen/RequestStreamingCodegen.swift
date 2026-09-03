@@ -86,7 +86,7 @@ extension RouteBlockGenerator {
         // Lending the stream to the *handler* is the one that stays refused, and for a different reason:
         // the typed tier's handler returns before the body is written, so a duplex route needs the
         // response to be a parameter rather than a return value. That is designed and ownership-verified
-        // but blocked upstream — swift-wire `PendingIssues/14`, swiftlang/swift#91473.
+        // but blocked upstream — #173, swiftlang/swift#91473.
         if mode?.terminal == .streaming, let lent = streaming.first,
             lendsBodyStream(binding(from: lent.attributes)?.wrapper ?? "")
         {

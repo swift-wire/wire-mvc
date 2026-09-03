@@ -61,6 +61,9 @@ public protocol RequestBound {
     /// if given, else the parameter name). `pathParameters` are the router's matched `{name}`
     /// values; `body` is the request body, collected once by the witness (`nil` for routes without
     /// a body binding).
+    ///
+    /// The `[String: Substring]` shape is a pre-1.0 public decision, not a settled one: it appears in two
+    /// public protocols, so changing it is cheap now and expensive after 1.0. See #175.
     static func bind(
         name: String,
         request: HTTPRequest,
