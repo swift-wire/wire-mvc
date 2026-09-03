@@ -682,7 +682,8 @@ private final class FactoryKeyFinder: SyntaxVisitor {
 /// the key's `@BindType` field names; then swift-wire re-emits it as a variant factory whose `create` takes
 /// doubles, and the variant witness's fold threads them. Uses the same `identifierName(forType:key:)` field
 /// rule as `@BindType` discovery, so the two agree blind — one hop (the factory's own `@Inject`s), matching
-/// swift-wire's variant-factory detection (which likewise inspects the factory's direct dependencies).
+/// swift-wire's variant-factory detection (which likewise inspects the factory's direct dependencies). A factory
+/// reaching the mock transitively is therefore not detected, in both repositories alike — see #167.
 private func factoryTemplateInjectFields(in sourceFile: SourceFileSyntax) -> [String: Set<String>] {
     let finder = FactoryInjectFinder()
     finder.walk(sourceFile)

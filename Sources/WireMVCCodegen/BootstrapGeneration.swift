@@ -339,6 +339,11 @@ func introspectionMount(bootstrap: ControllerDeclaration, factoryKeys: Set<Strin
 }
 
 /// Global tier `@Middleware` fold-entries (type-level, over `Handler`) — see ``middlewareFactoryConstructions``.
+///
+/// **This path does not thread per-request doubles.** The route/controller fold emits `create(doubles:)` for a
+/// mock-consuming factory; this one still emits the box-role-only `create`, so a global `@Middleware` whose
+/// factory injects a `@BindType`'d slot either fails to compile under a keyed suite or resolves the real
+/// binding. Whether to support it or diagnose it is undecided — see #165.
 func globalMiddlewareConstructions(
     bootstrap: ControllerDeclaration,
     factoryKeys: Set<String>

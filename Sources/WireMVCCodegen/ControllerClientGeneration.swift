@@ -13,9 +13,13 @@ import SwiftSyntax
 // its generated method is checked against the route: renaming it, changing a `@Path`'s type, or altering the
 // response body becomes a compile error instead of a runtime surprise. The methods return the decoded value
 // and throw `WireMVCRouteError` on a non-2xx (see `WireMVCTesting/TypedRouteClient.swift`), so the happy
-// path carries no status assertion and no decode.
+// path carries no status assertion and no decode. The failure side stays *untyped*: a route's declared
+// `@ErrorResponse` cases are not reflected in the thrown type, so a caller matches on status rather than on
+// the error the route declared. Whether to type them is an open design call — see #171.
 //
-// Every method also takes `headers:`, defaulted empty. A route can depend on a header it does not declare —
+// Every method also takes `headers:`, defaulted empty. The binding-and-merge behaviour below is asserted as
+// generated text but never served by a running fixture — see #172.
+// A route can depend on a header it does not declare —
 // read by a middleware or a scoped binding off the `HTTPRequest` rather than bound with `@Header` — and the
 // typed surface would otherwise be unusable for it. A declared `@Header` binding wins over an extra of the
 // same name.

@@ -353,6 +353,10 @@ extension ServerTransportRouteBuilder {
             // for a response nobody will read — the streaming path is already covered further
             // down (releasing the body releases `HandlerTaskHandle`, whose `deinit` cancels),
             // but before a head exists there is no body to release.
+            //
+            // What remains is that the cancelled request is *reported* as a 500 rather than as a
+            // cancellation. The response is inert — the client that would read it has gone — so this
+            // is an operational cost in the logs rather than a functional one. See #174.
             let start = await withTaskCancellationHandler {
                 await channel.awaitStart()
             } onCancel: {
