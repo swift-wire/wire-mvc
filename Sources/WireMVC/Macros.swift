@@ -134,7 +134,7 @@ public let wireMVCBootstrapAlias = WireAdapterAnnotationV1(
 /// (it makes the type a graph binding, exactly as `@Singleton @Controller` does); the entry point is
 /// generated, not written. A **marker** — it expands to nothing (reuses `RouteMarkerMacro`); the
 /// generated `@main` is emitted into the consumer module. See
-/// [the `@WireMVCBootstrap` design](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Archive/M5_5_PLAN.md).
+/// the `@WireMVCBootstrap` design.
 @attached(peer)
 public macro WireMVCBootstrap() = #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
 
@@ -413,7 +413,7 @@ public macro Middleware(_ key: FactoryKey) =
 /// > type mid-expansion), and a reference to a separate type needs cross-module signature resolution the
 /// > codegen doesn't do. Use an inline closure.
 ///
-/// See [RouteErrorHandling.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/RouteErrorHandling.md).
+/// See [RouteErrorHandling.md](../../Documentation/Notes/RouteErrorHandling.md).
 @attached(peer)
 public macro ErrorResponse<E: Error>(_ type: E.Type, _ status: HTTPResponse.Status) =
     #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")

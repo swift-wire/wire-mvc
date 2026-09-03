@@ -19,7 +19,7 @@
 > registry genuinely escapes. See *Measured*, and note that the brief predicted one allocation, not six.
 >
 > Reached from swift-wire's
-> [`RemainingSurfaceWork.md`](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/RemainingSurfaceWork.md)
+> `RemainingSurfaceWork.md`
 > (its response-header allocation item) and wire-mvc-examples'
 > [`HummingbirdExamplesParity.md`](https://github.com/tachyonics/wire-mvc-examples/blob/main/Documentation/Notes/HummingbirdExamplesParity.md),
 > which carry the measurements this plan is a response to.

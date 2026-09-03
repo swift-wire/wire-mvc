@@ -32,7 +32,7 @@ The `@Controller` macro walks the routes and generates a `TransportContributor` 
 Parameter bindings (`@Path` / `@Query` / `@JSONBody` / `@Header`) are property-wrapper markers
 that host their extraction on a `RequestBound` protocol, so the macro stays a thin dispatcher
 and bindings are user-extensible. See
-[swift-wire's WireMVCDesign.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/WireMVCDesign.md)
+[swift-wire's WireMVCDesign.md](Documentation/Notes/WireMVCDesign.md)
 for the full design and [M5_PLAN.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/M5_PLAN.md)
 for the milestone.
 
@@ -95,7 +95,7 @@ and by [wire-mvc-examples](https://github.com/tachyonics/wire-mvc-examples) on t
   expressed identically across both authoring styles.
 
 Known gaps are tracked as [issues](https://github.com/tachyonics/wire-mvc/issues) and indexed in
-swift-wire's [KnownGaps.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/KnownGaps.md).
+swift-wire's KnownGaps.md.
 
 Validated on macOS and Linux (see CI).
 

@@ -92,7 +92,7 @@ and why; each item was additive and testable through `RouteTrie`/`FrozenRouteTri
    `ServerTransport` ceiling items — connection metadata, protocol upgrade, non-`{name}` path syntax — and
    the argument against is portability. Tracing was measured and is *not* among the arguments for: ambient
    context crosses the bridge intact on the path WireMVC uses (swift-wire's
-   [RemainingSurfaceWork.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/RemainingSurfaceWork.md)).
+   RemainingSurfaceWork.md).
    A 405 that matched the native path would be one more item on the *for* side, not a reason on its own.
 2. ~~**Full precedence.**~~ **Shipped, in two halves.**
 
