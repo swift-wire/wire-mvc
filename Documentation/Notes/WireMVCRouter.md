@@ -87,7 +87,8 @@ and why; each item was additive and testable through `RouteTrie`/`FrozenRouteTri
    rather than owning it, the same position file serving sits in.
 
    That is a statement about the bridge, not about **native per-framework adapters**, which are an open
-   question awaiting a rationale rather than a decision already taken. The arguments for them are the
+   question awaiting a rationale rather than a decision already taken (#188 tracks the connection-metadata
+   ceiling item, which is one of the arguments for them). The arguments for them are the
    `ServerTransport` ceiling items — connection metadata, protocol upgrade, non-`{name}` path syntax — and
    the argument against is portability. Tracing was measured and is *not* among the arguments for: ambient
    context crosses the bridge intact on the path WireMVC uses (swift-wire's
