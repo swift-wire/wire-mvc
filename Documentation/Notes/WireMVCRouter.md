@@ -52,8 +52,10 @@ Empty path segments are omitted, so `/users/` ≡ `/users` (no trailing-slash po
 
 ## Production hardening backlog
 
-The trie port already covers what were items #1 (radix matching) and part of #3 (literal-before-param).
-What remains, roughly by value; each is additive and testable through `RouteTrie`/`FrozenRouteTrie` first:
+The trie port already covered what were items #1 (radix matching) and part of #3 (literal-before-param).
+**Everything below has since shipped except `.redirect` in item 4**, which is deferred with a reason and
+tracked as [#182](https://github.com/tachyonics/wire-mvc/issues/182). Kept as a record of what was decided
+and why; each item was additive and testable through `RouteTrie`/`FrozenRouteTrie` first.
 
 1. ~~**405 vs 404.**~~ **Shipped.** `resolve` returns a three-way `RouteResolution` — `.matched`,
    `.methodNotAllowed(allowed:)`, `.notFound` — and `FrozenTrieRouter` answers `405` with a deduplicated,
@@ -85,13 +87,14 @@ What remains, roughly by value; each is additive and testable through `RouteTrie
    rather than owning it, the same position file serving sits in.
 
    That is a statement about the bridge, not about **native per-framework adapters**, which are an open
-   question awaiting a rationale rather than a decision already taken. The arguments for them are the
+   question awaiting a rationale rather than a decision already taken (#188 tracks the connection-metadata
+   ceiling item, which is one of the arguments for them). The arguments for them are the
    `ServerTransport` ceiling items — connection metadata, protocol upgrade, non-`{name}` path syntax — and
    the argument against is portability. Tracing was measured and is *not* among the arguments for: ambient
    context crosses the bridge intact on the path WireMVC uses (swift-wire's
    [RemainingSurfaceWork.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/RemainingSurfaceWork.md)).
    A 405 that matched the native path would be one more item on the *for* side, not a reason on its own.
-2. **Full precedence** — *order-independence shipped; parameter-beats-catch-all waits on catch-all.*
+2. ~~**Full precedence.**~~ **Shipped, in two halves.**
 
    The half that was separable is done, and it was hiding a silent defect rather than a missing feature.
    A node has one parameter edge, and that edge carried the `{name}`, so the name belonged to whichever
@@ -107,8 +110,11 @@ What remains, roughly by value; each is additive and testable through `RouteTrie
    Literal-beats-parameter was already order-independent, being decided by structure rather than arrival;
    that is now pinned in both registration orders so it stays so.
 
-   **Parameter-beats-catch-all is the remaining half**, and it cannot be built before catch-all exists —
-   see item 3. It is a precedence rule between two things when only one of them is implemented.
+   **Parameter-beats-catch-all was the other half**, and it arrived with catch-all (item 3) rather than
+   after it: the precedence is not coded anywhere. A literal edge is tried first, then the parameter edge,
+   and the catch-all is what is left when neither matches — so `literal > parameter > catch-all` falls out
+   of the order the walk tries edges in. Pinned by `RouteTrieTests.literalAndParameterBothBeatACatchAll()`,
+   with `earlierParametersStillBindAlongsideACatchAll()` covering the mixed case.
 3. ~~**Catch-all / wildcard params.**~~ **Shipped on the native path.** `{name*}` as the final segment
    binds the whole remainder — `/files/{path*}` against `/files/a/b/c.css` binds `path` = `a/b/c.css`.
 

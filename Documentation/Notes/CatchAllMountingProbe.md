@@ -1,6 +1,6 @@
 # Catch-all mounting — a probe brief
 
-> **Status:** proposed spike, not started. Belongs in the out-of-tree spike repository, the way the
+> **Status:** proposed spike, not started; tracked as #183, which owns the status. Belongs in the out-of-tree spike repository, the way the
 > `ServerTransport` bridge and the duplex-route question were both answered before being built here —
 > not in wire-mvc.
 

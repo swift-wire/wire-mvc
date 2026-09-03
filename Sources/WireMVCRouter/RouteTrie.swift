@@ -7,9 +7,10 @@ public import HTTPTypes
 //
 // Build → freeze → serve: `RouteTrie` inserts routes into a mutable trie (flat node array, literal
 // children in a dictionary); `freeze()` compacts it into `FrozenRouteTrie`, whose literal children are
-// segment-sorted for binary search (no per-request hashing). Production hardening — 405-vs-404,
-// static > param > catch-all precedence beyond literal-first, trailing-slash policy, catch-all params,
-// duplicate-route diagnostics — is tracked in [Notes/WireMVCRouter.md].
+// segment-sorted for binary search (no per-request hashing). The production hardening it was ported
+// without — 405-vs-404, `static > param > catch-all` precedence, trailing-slash policy, catch-all
+// params, duplicate-route diagnostics — has since shipped; `Documentation/Notes/WireMVCRouter.md`
+// records what each decided. Only `TrailingSlashPolicy.redirect` is still outstanding.
 
 /// How a request path's **trailing slash** is treated — `/users/` against a route registered `/users`.
 ///

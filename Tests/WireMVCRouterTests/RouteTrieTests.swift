@@ -6,9 +6,10 @@ import Testing
 /// The router's path-segment trie (`RouteTrie` → `FrozenRouteTrie`) tested without the proposal
 /// server's request/response machinery. Pins the matching semantics: `{name}` parameters, query
 /// stripping, segment-exact matching, **literal-before-parameter** precedence, first-registered-wins
-/// per node, and binary-searched literal children after freeze. Further hardening (405-vs-404,
-/// full precedence, trailing-slash policy, catch-all) is tracked in Documentation/Notes/WireMVCRouter.md.
-/// 405-vs-404 has since shipped and is pinned below.
+/// per node, and binary-searched literal children after freeze. The further hardening —
+/// 405-vs-404, full precedence, trailing-slash policy, catch-all params, duplicate-route
+/// diagnostics — has since shipped and is pinned below; `Documentation/Notes/WireMVCRouter.md`
+/// records what each decided.
 /// Case accessors, so a `.matched` assertion reads the way it did when `resolve` returned an optional
 /// tuple. Deliberately not on the production type: the three outcomes are the point of the enum, and
 /// flattening them back into optionals in shipping code would invite exactly the collapse this replaced.
