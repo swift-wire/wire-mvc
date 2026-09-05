@@ -1,5 +1,14 @@
 # Contributing
 
+**The contribution policy — what may go straight to a pull request, what needs a proposal first, and
+where AI assistance sits — is the family-wide one at
+[swift-wire/.github](https://github.com/swift-wire/.github/blob/main/CONTRIBUTING.md).** Read that
+first.
+
+This file covers what is specific to building and testing *this* package. It exists separately
+because GitHub serves a repository's own `CONTRIBUTING.md` instead of the organisation default, not
+because the policy differs here.
+
 ## Building and testing
 
 Two packages, and both need running:
