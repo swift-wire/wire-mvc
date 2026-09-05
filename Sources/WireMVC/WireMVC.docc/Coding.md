@@ -42,10 +42,6 @@ The tiers all select the same *type*, and swift-wire keys the graph by type. So
 resolve to anything different. A `BindingKey` is what swift-wire already offers for binding one
 type several times.
 
-An earlier design invented a protocol so each tier had a distinct type to name, which solved the
-same problem a second way — worth recording, because the shape of the fix is the argument for
-this one.
-
 ## How the settings reach the route
 
 Through the same capability a keyed `@Middleware` uses: the route-contributor proxy gains a field

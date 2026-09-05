@@ -90,7 +90,7 @@ declares swift-wire's `.injectsFromGraph` capability, so a route parameter namin
 what makes the scope entry hand back the worker — one hop out, through that argument. There is
 no second place to keep in step.
 
-**What this buys is not brevity.** A route taking a `Document` cannot skip the authorisation
+A route taking a `Document` cannot skip the authorisation
 check, because the check is how a `Document` comes into existence. The alternative — load, then
 authorise — restates that ordering in every handler, and the route that omits the second line
 compiles, serves, and is unauthorised with nothing but review to catch it.
