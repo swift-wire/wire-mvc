@@ -479,7 +479,7 @@ Synthesis is **consumer-driven** (like a generic `@Provides` factory, the templa
 synthesises nothing on its own): collate every `@Middleware(key)` use-site, dedupe by key, synthesise
 one factory per consumed key, register it as a binding, and inject it into the consuming controllers
 via the capability `@Middleware` declares — **`.injectsFromGraph`** (the input edge; see
-[AdapterModel.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/AdapterModel.md), *The capability axis*). The consumer surface is unchanged across
+[AdapterModel.md](https://github.com/swift-wire/swift-wire/blob/main/Documentation/Notes/AdapterModel.md), *The capability axis*). The consumer surface is unchanged across
 every tier above — a controller always writes just `@Middleware(SessionMiddleware.factory)`; the
 box-role subsetting and the injected axis are entirely absorbed producer-side.
 

@@ -9,7 +9,7 @@ integrations that do, and each is off by default so that a consumer resolves onl
 actually serves.
 
 ```swift
-.package(url: "https://github.com/tachyonics/wire-mvc.git", branch: "main",
+.package(url: "https://github.com/swift-wire/wire-mvc.git", branch: "main",
          traits: ["NIOHTTPServer", "Elementary"]),
 ```
 

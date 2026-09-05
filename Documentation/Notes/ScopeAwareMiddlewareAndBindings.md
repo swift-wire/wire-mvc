@@ -9,7 +9,7 @@
 > box, and authorisation moved into the argument.
 >
 > It also **corrects two claims** made in
-> [wire-mvc-examples' parity note](https://github.com/tachyonics/wire-mvc-examples/blob/main/Documentation/Notes/HummingbirdExamplesParity.md)
+> [wire-mvc-examples' parity note](https://github.com/swift-wire/wire-mvc-examples/blob/main/Documentation/Notes/HummingbirdExamplesParity.md)
 > and in swift-wire's `RemainingSurfaceWork.md` while the `auth-abac` item was being written. See
 > *Two claims to withdraw*.
 >
@@ -74,7 +74,7 @@ live on `create`, not on the struct — so a factory *object* would sit in a sco
 cannot be scoped is the *template as a binding*, which is what the annotation asks for.
 
 swift-wire's guided fix-it for this names a combination that has no spelling; filed as
-[tachyonics/swift-wire#337](https://github.com/tachyonics/swift-wire/issues/337).
+[swift-wire/swift-wire#337](https://github.com/swift-wire/swift-wire/issues/337).
 
 **3. A seeded scope returns exactly one subject, and is pruned to it.** `ScopeEntryEmission.swift:124`
 emits `return (subject, teardown)`, and `:80` prunes with `reachableBindings(from: subjectLocal)`. A
@@ -451,7 +451,7 @@ diagnostics: `@Factory` alongside `@Singleton`/`@Scoped` refused as two lifetime
 cross-scope hint that says what is actually true. **No source migration** — `@Factory(K)` is already
 written correctly everywhere; what changes is what the compiler says when it is combined or when a scoped
 value is asked of it. **Forced by:**
-[tachyonics/swift-wire#337](https://github.com/tachyonics/swift-wire/issues/337),
+[swift-wire/swift-wire#337](https://github.com/swift-wire/swift-wire/issues/337),
 where the shipped fix-it names a fix that cannot be written.
 
 **3 — swift-wire: a seeded scope yields more than its subject.** `ScopeEntryEmission` returns the subject

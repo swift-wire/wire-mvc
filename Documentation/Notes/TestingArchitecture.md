@@ -138,7 +138,7 @@ consumes none. Making the fields optional to fix that turns the per-key `withBin
 so multi-key and the doubles model are one problem. The preferred direction is per-controller bind values
 (`with<Controller>BindValues`, taking exactly what that controller's scope consumes, all required), which
 keeps the compile-time guarantee at the granularity testing happens *and* weakens the case for multi-key.
-Recorded in full as [tachyonics/swift-wire#336](https://github.com/tachyonics/swift-wire/issues/336), and — together with a typed per-route client derived
+Recorded in full as [swift-wire/swift-wire#336](https://github.com/swift-wire/swift-wire/issues/336), and — together with a typed per-route client derived
 from the same controller — in [Notes/ControllerScopedTesting.md](ControllerScopedTesting.md), to
 revisit after Phase 5.
 

@@ -18,7 +18,7 @@ import SwiftSyntax
 // Scope is one `TestingKey` per target — the key drives the harness. A second key is an **error**, not a
 // silent preference for the first: both would generate a variant graph, but only one factory is emitted, so
 // a suite passing the second would quietly be served the first's graph. Serving several variants from one
-// target is deferred (tachyonics/swift-wire#336); rejecting the second keeps the deferral visible
+// target is deferred (swift-wire/swift-wire#336); rejecting the second keeps the deferral visible
 // instead of letting it surface as a mysteriously wrong mock.
 
 /// One `@BindType` substitution on a `TestingKey` — the doubles field it contributes.

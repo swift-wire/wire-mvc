@@ -1,7 +1,7 @@
 # WireMVC testing harness — design note (M6a)
 
 > **Status:** design record for the WireMVC HTTP test harness. It sits **on top of** swift-wire's
-> scope-agnostic testing primitives ([TestingModel.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/TestingModel.md) — `@BindType` / `@Scopable`
+> scope-agnostic testing primitives ([TestingModel.md](https://github.com/swift-wire/swift-wire/blob/main/Documentation/Notes/TestingModel.md) — `@BindType` / `@Scopable`
 > / `TestingKey` / the seed-threaded cascade).
 >
 > **All of it is built.** `withTestServer`, the `@Suite(.wiremvc(…))` trait, the `TestBindStore` +
@@ -20,7 +20,7 @@ Testing a `@WireMVCBootstrap` app: build the wired app without serving, drive it
 
 ## The layering
 
-The **swift-wire primitives** ([TestingModel.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/TestingModel.md)) define *what* the test graph looks like — `@BindType` substitutes a slot's type, `@Scopable` lifts an app-scoped hop into the seeded scope, `TestingKey` names the config, and a `@BindType` binding's instance rides the scope's **seed**. All scope-agnostic.
+The **swift-wire primitives** ([TestingModel.md](https://github.com/swift-wire/swift-wire/blob/main/Documentation/Notes/TestingModel.md)) define *what* the test graph looks like — `@BindType` substitutes a slot's type, `@Scopable` lifts an app-scoped hop into the seeded scope, `TestingKey` names the config, and a `@BindType` binding's instance rides the scope's **seed**. All scope-agnostic.
 
 This harness is *how* a WireMVC app under real HTTP feeds those primitives: it runs the server once per suite, and per request carries the test's double instances across the HTTP boundary and hands them in as the scope's test-double seed.
 
@@ -74,7 +74,7 @@ Default path: the suite trait + `withBindValues` per test; `@Replaces` for a han
 - **Suite trait spelling** — `@Suite(.wiremvc(key))`.
 - **One server API** — the suite trait only; the generated build-and-serve is its mechanism, not a co-equal public `withTestServer`.
 - **Doubles are per-testing-id only** — no suite-wide default layer; every double comes through a per-test `withBindValues`. An integration test that mocks nothing just runs against the real test graph.
-- **Missing double at request time → explicit 500.** A `@BindType`d slot reached with no double in the store for the request's id is an explicit 500 with a clear message (the HTTP surfacing of swift-wire's "missing instance → error" — [TestingModel.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/TestingModel.md)).
+- **Missing double at request time → explicit 500.** A `@BindType`d slot reached with no double in the store for the request's id is an explicit 500 with a clear message (the HTTP surfacing of swift-wire's "missing instance → error" — [TestingModel.md](https://github.com/swift-wire/swift-wire/blob/main/Documentation/Notes/TestingModel.md)).
 
 ## Prior art
 

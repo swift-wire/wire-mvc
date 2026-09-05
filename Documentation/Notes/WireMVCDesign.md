@@ -209,7 +209,7 @@ discipline is JAX-RS/OpenAPI-flavored; `@ResponseStatus` is the Spring name.)
 - **`@Coding` — the settings a route encodes and decodes with** (dates, JSON options), at three scopes
   with the innermost winning, the same tiering `@Middleware` and `@ErrorResponse` use. It arrived during
   M6d and the reasoning is recorded there — see *Middleware, errors, configuration* in
-  [WireOpenAPIAdvanced.md](https://github.com/tachyonics/wire-open-api/blob/main/Documentation/Notes/WireOpenAPIAdvanced.md) — because the question was asked from the OpenAPI
+  [WireOpenAPIAdvanced.md](https://github.com/swift-wire/wire-open-api/blob/main/Documentation/Notes/WireOpenAPIAdvanced.md) — because the question was asked from the OpenAPI
   side and the answer is why it landed **here** instead: a `@Get` route returning a `Date` has exactly
   the same question as a generated operation, and the two were answering it differently. Foundation
   writes seconds since 2001; the OpenAPI runtime writes ISO8601.

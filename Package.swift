@@ -111,7 +111,7 @@ let package = Package(
         .trait(name: "Elementary"),
     ],
     dependencies: [
-        .package(url: "https://github.com/tachyonics/swift-wire.git", branch: "main"),
+        .package(url: "https://github.com/swift-wire/swift-wire.git", branch: "main"),
         .package(url: "https://github.com/apple/swift-http-api-proposal.git", .upToNextMinor(from: "0.2.0")),
         .package(
             url: "https://github.com/apple/swift-async-algorithms.git",
