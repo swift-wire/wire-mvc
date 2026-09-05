@@ -37,6 +37,8 @@ struct UsersController {
 }
 ```
 
+[wire-open-api](https://github.com/tachyonics/wire-open-api) is a similar adaptor for OpenAPI routes.
+
 ## Installation
 
 ```swift
