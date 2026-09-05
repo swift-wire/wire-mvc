@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 the swift-wire project authors
+
 public import SwiftSyntax
 
 /// The pieces of an annotated controller the route codegen needs — normalised across `struct` / `class`

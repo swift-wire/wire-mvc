@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 the swift-wire project authors
+
 package import AsyncStreaming
 import BasicContainers
 package import HTTPTypes

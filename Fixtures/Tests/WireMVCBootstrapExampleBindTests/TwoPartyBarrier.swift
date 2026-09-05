@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 the swift-wire project authors
+
 // A single-use two-party rendezvous: the first `arrive()` suspends until the second arrives, then both
 // proceed. Dropped into two differently-mocked in-flight requests (via `MockNoteBackend.onNote`), it forces
 // them to be provably in their handlers *simultaneously* before either returns — so the interleaving-isolation

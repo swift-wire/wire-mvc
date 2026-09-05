@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 the swift-wire project authors
+
 // `HTTPRequest` names the seed scope; it appears in no public signature here, so a plain import.
 import HTTPTypes
 public import Logging

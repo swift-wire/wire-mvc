@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 the swift-wire project authors
+
 import SwiftSyntax
 
 // The request half's streaming tier: which parameter is handed the reader, and the combinations that cannot

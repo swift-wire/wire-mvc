@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 the swift-wire project authors
+
 #if Elementary
 public import AsyncStreaming
 // Re-exported so a controller writing HTML needs only `import WireMVCElementary` — the same courtesy
