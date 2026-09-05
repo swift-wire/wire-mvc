@@ -73,7 +73,8 @@ public macro ResponseMode(
 /// `WireMVCBodyProducer.contentType` does: **a content type belongs to the codec**. The terminal seeds it
 /// only when the route named none, so a route's own `@ResponseHeader(.contentType, …)` still wins.
 ///
-/// Not required by ``ResponseMode`` — the generated call site is where the compiler checks the signature.
+/// Not required by ``ResponseMode(_:codec:client:)`` — the generated call site is where the compiler
+/// checks the signature.
 /// Conforming is how a codec author finds out at their own declaration that they got it wrong, rather than
 /// in generated code, and is the reason this protocol exists at all.
 public protocol WireMVCResponseEncoding {

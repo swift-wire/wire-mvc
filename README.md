@@ -1,11 +1,12 @@
 # wire-mvc
 
-`WireMVC` — a cross-runtime, declarative-routing [swift-wire](https://github.com/tachyonics/swift-wire)
-adapter. Controllers are written with `@Controller` / HTTP-verb / parameter / response
-annotations, and the `@Controller` macro generates their route registration onto a
-`some ServerTransport` (swift-wire's collation surface). Because the target is
-`ServerTransport` — and the package depends only on `OpenAPIRuntime`, no HTTP framework — the
-same controller mounts on Hummingbird, Vapor, or Lambda unchanged.
+🚧 🚧 🚧 Status: experimental. Expect a lot of rough edges and public API to change without warning. Don't put it anywhere near production until further notice. 🚧 🚧 🚧
+
+wire-mvc is a declarative-routing adapter for [swift-wire](https://github.com/tachyonics/swift-wire),
+built on top of the [swift-http-api-proposal](https://github.com/apple/swift-http-api-proposal).
+Controllers annotated `@Controller` are collated automatically, and each of their methods is either
+*transformed* — request and response annotations decode the parameters and encode the result — or
+marked `@RawRoute`, which exposes the proposal's own server API to the handler directly.
 
 ```swift
 @Singleton
@@ -24,117 +25,207 @@ struct UsersController {
     @Delete("/{id}")
     @ResponseStatus(.noContent)
     func delete(@Path id: String) async throws { try repository.remove(id) }
+
+    @Get("/events")
+    @RawRoute
+    func events<Sender: HTTPResponseSender & ~Copyable & SendableMetatype>(
+        responseSender: consuming sending Sender
+    ) async throws where Sender.Writer: ~Copyable {
+        var body = UniqueArray<UInt8>(copying: Array("data: hello\n\n".utf8))
+        try await responseSender.sendAndFinish(HTTPResponse(status: .ok), buffer: &body)
+    }
 }
 ```
 
-The `@Controller` macro walks the routes and generates a `TransportContributor` witness — one
-`transport.register` per route: decode the parameters, call the handler, encode the response.
-Parameter bindings (`@Path` / `@Query` / `@JSONBody` / `@Header`) are property-wrapper markers
-that host their extraction on a `RequestBound` protocol, so the macro stays a thin dispatcher
-and bindings are user-extensible. See
-[swift-wire's WireMVCDesign.md](Documentation/Notes/WireMVCDesign.md)
-for the full design and [M5_PLAN.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/M5_PLAN.md)
-for the milestone.
+[wire-open-api](https://github.com/tachyonics/wire-open-api) is a similar adaptor for OpenAPI routes.
 
-## What differs by runtime
+## Installation
 
-The controller is unchanged across runtimes; the **router in front of it** is not. On the proposal-native
-path WireMVC's own router serves the routes. On Hummingbird and Vapor it *collates* onto the host's
-router through `ServerTransport`, so the host decides what a miss means.
-
-| | Proposal-native | Hummingbird | Vapor |
-|---|---|---|---|
-| Wrong method on an existing path | `405` + `Allow` | `404` | `404` |
-| Percent-decoded path parameters | yes | **no** | yes |
-| Trailing slash | policy — lenient (default) or strict | lenient | lenient |
-| Duplicate route registration | fatal at startup | fatal at startup | logged, last wins |
-| Catch-all `{name*}` | supported | refused at registration | refused at registration |
-| Ambient (task-local) context in a handler | yes | yes | yes |
-
-Rows 1, 2 and 6 are pinned by tests in all three runtimes of
-[wire-mvc-examples](https://github.com/tachyonics/wire-mvc-examples); rows 3 and 4 are read from each
-host's router source; row 5 is enforced by this package.
-
-**Two kinds of difference, and they are not the same thing.**
-
-*Convention.* Rows 1–4. Each runtime behaves the way its own ecosystem expects, and that is the point of
-collating rather than owning — a Hummingbird app answering Hummingbird's `404` is correct, and imposing
-WireMVC's `405` on it would be the wrong kind of consistency. Nothing here is a defect.
-
-*Capability.* Row 5, and the reason it reads differently. Both hosts have wildcard routing of their own —
-Hummingbird four forms, Vapor `.catchall` — but a WireMVC route template cannot reach it, because the path
-crosses `ServerTransport.register` as an OpenAPI `{name}` template and each adapter interprets a wildcard
-in it differently. So a catch-all controller serves on the native runtime only, and putting one in a
-*shared* module breaks the others at startup. That is a gap on the bridge's side rather than a limit of
-the runtime, and whether it closes is being measured — see
-[CatchAllMountingProbe.md](Documentation/Notes/CatchAllMountingProbe.md).
-
-The same shape applies to the rest of the `ServerTransport` ceiling: connection metadata, protocol upgrade
-and non-`{name}` path syntax are unreachable through the bridge whatever the host supports.
-
-## Status
-
-Built, pre-1.0. The surface below is shipped and exercised by the fixtures in this repository
-and by [wire-mvc-examples](https://github.com/tachyonics/wire-mvc-examples) on three runtimes.
-
-- **Routing.** The member-walking `@Controller` macro, typed parameter/body/response bindings,
-  `@RawRoute` for handlers that own the wire, and a generated route-contributor proxy that
-  composes into the Wire graph through the `@Contributes` alias.
-- **Composition root.** `@WireMVCBootstrap` generates the program entry point — no hand-written
-  `main.swift` — folding in the `@NotFound` fallback, global `@ErrorResponse` tiers, an optional
-  `introspect()` mount and global `@Middleware` as a front layer.
-- **Request scope.** `@Scoped(seed: HTTPRequest.self)` controllers, each a per-request
-  reachability root, with `@Teardown` firing at the end of the request.
-- **Logging.** A per-request logger in two interchangeable targets, `WireMVCLogging` (mints a
-  correlation id) and `WireMVCTaskLocalLogging` (adopts swift-log's task-local, so the
-  framework's own lines share the id).
-- **Testing.** `@Suite(.wiremvc())`, per-`TestingKey` variant app graphs, `@BindType` doubles and
-  a typed client — a mocked suite runs without the real backends.
-- **One routing model.** An `@Operation` from an OpenAPI document contributes to the same
-  collation key as a `@Get`, so middleware, error mapping, request scope and encoding are
-  expressed identically across both authoring styles.
-
-Known gaps are tracked as [issues](https://github.com/tachyonics/wire-mvc/issues) and indexed in
-swift-wire's KnownGaps.md.
-
-Validated on macOS and Linux (see CI).
-
-## Building and testing
-
-Two packages, and both need running:
-
-```sh
-swift test              # the core: codegen, router, testing runtime
-cd Fixtures && swift test   # the runnable examples and their integration suites
+```swift
+dependencies: [
+    .package(url: "https://github.com/tachyonics/wire-mvc.git", branch: "main",
+             traits: ["NIOHTTPServer"]),
+],
+targets: [
+    .executableTarget(
+        name: "MyApp",
+        dependencies: [
+            .product(name: "WireMVC", package: "wire-mvc"),
+            .product(name: "Wire", package: "swift-wire"),
+        ],
+        plugins: [.plugin(name: "WireMVCBuildPlugin", package: "wire-mvc")]
+    ),
+]
 ```
 
-`Fixtures/` is a separate package with a path dependency on the root (`.package(path: "..")`). It exists
-because its targets serve on `NIOHTTPServer`, and it is **the only place `WireMVCBuildPlugin` actually runs** —
-no root target applies it. A change to the plugin, or to what the two codegen tools emit, is unverified until
-the fixtures build. `WireMVCBootstrapExampleBindTests` is the one that exercises the keyed `TestingKey`
-harness end to end.
+`WireMVCBuildPlugin` runs both code generators — swift-wire's `WireGen` for the graph and this
+package's `WireMVCRouteGen` for the route witnesses — so a WireMVC target applies it **instead of**
+swift-wire's `WireBuildPlugin`, not alongside it.
 
-Both packages are tools-version 6.4, so they need a 6.4 toolchain.
+The easiest way to bootstrap an application is to use a `@WireMVCBootstrap` annotated struct,
+which can inject other bindings from the swift-wire graph, can declare global middleware, and provides
+extension points for supplying graph inputs, a configured server, a route builder, where to mount graph
+introspection, and a route-not-found endpoint.
 
-One trap worth knowing: **`swift build --target WireMVCBuildPlugin` does not type-check the plugin.** SwiftPM
-compiles a build-tool plugin only when some target applies it, and the flag no-ops silently rather than
-erroring — a type error in the plugin will pass that command and then fail in CI on the fixtures. To check it
-directly:
+```swift
+@Singleton
+@WireMVCBootstrap
+@Middleware(CORSMiddlewareKeys.factory)  // global: every route and the fallback alike
+@Middleware(GlobalMiddleware.serveStaticFiles)
+package struct AppBootstrap {
+    @Inject let config: ServerConfig
 
-```sh
-xcrun swiftc -typecheck -parse-as-library -swift-version 6 \
-  -I "$(xcrun --show-sdk-platform-path)/../../Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/pm/PluginAPI" \
-  -Xfrontend -disable-availability-checking \
-  Plugins/WireMVCBuildPlugin/WireMVCBuildPlugin.swift
+    package static func prepare() throws -> AppInputs {
+        let config = ConfigReader(providers: [EnvironmentVariablesProvider()])
+        let level = Logger.Level(rawValue: config.string(forKey: "log.level", default: "info")) ?? .info
+        LoggingSystem.bootstrap { label in
+            var handler = StreamLogHandler.standardOutput(label: label)
+            handler.logLevel = level
+            return handler
+        }
+        return AppInputs(config: config)
+    }
+
+    package func createServer() throws -> NIOHTTPServer {
+        NIOHTTPServer(
+            logger: Logger(label: "SwiftHttpServerExample"),
+            configuration: try .init(
+                bindTarget: .hostAndPort(host: config.host, port: config.port),
+                supportedHTTPVersions: [.http1_1],
+                transportSecurity: .plaintext
+            )
+        )
+    }
+
+    package func createRouteBuilder<Server: HTTPServer>(
+        for server: borrowing Server
+    ) -> some FinalizableHTTPServerRouteBuilder<Server.RequestContext, Server.Reader, Server.ResponseSender>
+    where
+        Server.RequestContext: ~Copyable,
+        Server.Reader: ~Copyable,
+        Server.ResponseSender: ~Copyable,
+        Server.ResponseSender.Writer: ~Copyable
+    {
+        TrieRouteBuilder(for: server)
+    }
+
+    package func mountIntrospectionAt() -> String? { "/wiring" }
+
+    @NotFound
+    @RawRoute
+    package func noRoute<Sender: HTTPResponseSender & ~Copyable>(
+        request: HTTPRequest,
+        responseSender: consuming sending Sender
+    ) async throws where Sender.Writer: ~Copyable {
+        try await WireMVCOutcome.json(
+            NoRoute(unmatched: request.path ?? "", method: request.method.rawValue),
+            status: .notFound
+        ).send(on: responseSender)
+    }
+}
 ```
 
-## Related work
+Requires a Swift 6.4 toolchain; targets macOS 26 and Linux.
 
-Vapor 5 has an experimental macro-based `@Controller` router of its own (behind
-`#if MacroRouting`). The two overlap on the routing-annotation surface (controllers,
-HTTP verbs, path params) but differ architecturally: Vapor centres per-request
-context on the `Request` object, while WireMVC centres a DI container — so
-`@Inject`/`@Singleton` dependency injection, request-scoped controllers, and
-cross-runtime mounting are WireMVC concerns without a proposal-level equivalent. See
-[Documentation/Notes/VaporMacroRouting-Overlap.md](Documentation/Notes/VaporMacroRouting-Overlap.md)
-for the full comparison and how each relates to prior art.
+## Features
+
+```swift
+@Scoped(seed: HTTPRequest.self)
+@Controller("/todos")
+@Middleware(ControllerMiddleware.responseDefaults)  // controller-scope: .set + .setIfAbsent
+@Middleware(ControllerMiddleware.logRequests)  // controller-scope: every route
+@Middleware(ControllerMiddleware.audit)  // controller-scope, generic-with-deps, folded by factory key
+@ErrorResponse(TodoNotFound.self, .notFound)  // a handler throw → 404, not the baseline 500
+public struct TodosController<Repository: TodoRepository>: Sendable {
+    @Inject let repository: Repository
+    @Inject let logger: Logger // the logger for the current request
+
+    @Delete("/{id}")
+    @ResponseStatus(.noContent)
+    @Middleware(RouteMiddleware.requireAPIKey)  // route-scope gate — generic-with-deps, factory-lifted by key
+    public func delete(@Path id: String) async throws {
+        try await repository.delete(id: id)
+    }
+}
+
+@Scoped(seed: HTTPRequest.self)
+@Controller("/documents")
+@ErrorResponse(Unauthenticated.self, .unauthorized)  // the scope failed to build — no known principal
+@ErrorResponse(AccessDenied.self, .forbidden, { $0.denial })
+@ErrorResponse(DocumentNotFound.self, .notFound)
+public struct DocumentsController: Sendable {
+    @Get
+    @JSONResponse
+    public func list(@AuthorizedDocuments("read") documents: [Document]) -> [Document] {
+        documents
+    }
+```
+
+### Request-scoped controllers
+
+Alongside singleton-scoped controllers, wire-mvc lets you write request-scoped ones, which can inject
+singleton and request-scoped bindings alike. Where an application has several request-scoped
+controllers, swift-wire's compile-time reachability analysis means entering a request scope
+instantiates only the bindings reachable from the controller that request actually hits.
+
+### Error Handlers
+
+Error handlers can be specified globally, per controller or per route and specify how to transform
+any thrown errors from the handler into a response.
+
+### Middleware and Parameter Bindings
+
+Middleware and parameter bindings both sit between the request and the handler, and they are not
+alternatives — they answer different questions.
+
+**Middleware wraps.** It composes as a function of the request, so one middleware covers every route
+in its scope: global on the composition root, controller-scope on the type, route-scope on the
+method, nesting outside-in. It can transform what the route receives — enriching the request
+context, replacing the reader or sender — and it can end the request before the handler runs. Middleware
+are not part of the request scope itself and cannot inject request-scope bindings, nor can their thrown
+errors be caught by Error Handlers.
+
+Middleware currently uses the swift-http-api-proposal's `Middleware` protocol with a 
+custom `RequestResponseMiddlewareBox`.
+
+**A parameter binding produces a value.** It is consumed at one leaf — a single handler parameter —
+and its result is that parameter's typed value, so the handler cannot run without it. A binding that
+merely decodes (`@Path`, `@Query`, `@Header`, `@JSONBody`) needs nothing from the graph. One that has
+to *resolve* — consulting a store, a policy, the caller the request scope authenticated — names a
+request-scoped worker that does, and the worker is an ordinary binding with its own `@Inject`
+members.
+
+Parameter bindings can currently support both streamed and collated request use cases. Response handlers 
+can currently support collated response use cases. Currently full duplex use cases (a streaming request
+and response) is only possible with a `@RawRoute`.
+
+### Background Services
+
+wire-mvc provides an easy way to declare background services that run alongside the main http server by using the
+`@BackgroundService` annotation. The binding must conform to the `Service` protocol from [swift-service-lifecycle](https://github.com/swift-server/swift-service-lifecycle).
+
+```swift
+@Provides
+@BackgroundService
+func provideValkeyClient(
+    @ConfigProperty(forKey: "valkey.host", default: "localhost") host: String,
+    @ConfigProperty(forKey: "valkey.port", default: 6379) port: Int
+) -> ValkeyClient {
+    ValkeyClient(.hostname(host, port: port), logger: Logger(label: "valkey"))
+}
+```
+
+## Examples
+
+The [wire-mvc-examples](https://github.com/tachyonics/wire-mvc-examples) repo have a range of use cases demonstrating
+wire-mvc's features.
+
+## Documentation
+
+The user-facing documentation is a DocC catalog — build it with
+`swift package generate-documentation --target WireMVC`, or read the articles under
+[`Sources/WireMVC/WireMVC.docc`](Sources/WireMVC/WireMVC.docc):
+
+## Contributing
+
+Building, testing, and the plugin type-check trap are in [CONTRIBUTING.md](CONTRIBUTING.md).

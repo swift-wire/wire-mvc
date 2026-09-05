@@ -16,7 +16,7 @@
 /// front-layer global-middleware wrapper's call to `router.handle`), and inside ``WireMVCContext`` so the
 /// linear ``ResponseHeaderRegistry`` survives the trip across `handle`'s plain-`consuming` context.
 ///
-/// > Note: the type is `public` but ``wrapped`` is not. Generated code has to name it — it is what
+/// > Note: the type is `public` but `wrapped` is not. Generated code has to name it — it is what
 /// > ``WireMVCContextContents`` hands the registry back in — but the safety argument depends on `init(_:)`
 /// > and ``take()`` being the only way in and out, so exposing the storage would give away exactly the
 /// > property that makes this sound.

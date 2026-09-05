@@ -71,7 +71,7 @@ public struct WireMVCContextContents<Base: HTTPServerCapability.RequestContext &
 /// per-request capabilities. So the registry travels inside the context.
 ///
 /// It is a **courier, not a carrier**. Route and controller middleware reach the registry off the
-/// *box* (``RequestResponseMiddlewareBox/responseHeaders``), which is where it has always been; this type
+/// *box* (its `responseHeaders` payload), which is where it has always been; this type
 /// only gets it across `handle`. The generated register closure therefore calls ``takeContents()`` and
 /// builds the route's box over the **unwrapped** context — so nothing below routing
 /// ever meets this type, a context-transforming middleware wraps the app's real context rather than this,

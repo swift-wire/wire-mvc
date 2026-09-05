@@ -13,8 +13,11 @@ public import Wire
 /// `Sendable` because a controller is an app-scoped singleton whose route handlers run
 /// concurrently per request.
 public protocol RouteContributor: Sendable {
-    /// - Parameter coding: the app-wide coding settings, resolved at the composition root and passed
-    ///   inward. A contributor uses them unless its own `@Coding` overrides them.
+    /// - Parameters:
+    ///   - builder: the route builder the contributor registers its routes on, supplied by the
+    ///     generated composition root.
+    ///   - coding: the app-wide coding settings, resolved at the composition root and passed
+    ///     inward. A contributor uses them unless its own `@Coding` overrides them.
     ///
     ///   They are passed rather than injected because they are consumed at *leaf* sites — a
     ///   `RequestBound.bind`, a `WireMVCOutcome.json` — inside each route. Global middleware avoids this

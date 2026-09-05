@@ -124,6 +124,9 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-log.git", from: "1.14.0"),
         .package(url: "https://github.com/apple/swift-openapi-runtime.git", from: "1.7.0"),
         .package(url: "https://github.com/swiftlang/swift-syntax", branch: "release/6.4.x"),
+        // Documentation only — `swift package generate-documentation` builds the `WireMVC.docc`
+        // catalog. A plugin dependency, so it contributes nothing to a consumer's build graph.
+        .package(url: "https://github.com/swiftlang/swift-docc-plugin", from: "1.4.0"),
         // Pinned to a revision until upstream takes the change: it relaxes `HTMLStreamWriter` to
         // `~Copyable, ~Escapable` *and* makes async rendering inherit the caller's isolation. Both are
         // needed before an Elementary body can be streamed into a lifetime-bound response body writer at
