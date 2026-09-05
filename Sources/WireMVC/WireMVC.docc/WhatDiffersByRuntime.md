@@ -18,7 +18,7 @@ means. The table is what falls out of that.
 | Ambient (task-local) context in a handler | yes | yes | yes |
 
 Rows 1, 2 and 6 are pinned by tests in all three runtimes of
-[wire-mvc-examples](https://github.com/tachyonics/wire-mvc-examples); rows 3 and 4 are read from
+[wire-mvc-examples](https://github.com/swift-wire/wire-mvc-examples); rows 3 and 4 are read from
 each host's router source; row 5 is enforced by this package.
 
 ## Two kinds of difference

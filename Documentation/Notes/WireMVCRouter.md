@@ -54,7 +54,7 @@ Empty path segments are omitted, so `/users/` ≡ `/users` (no trailing-slash po
 
 The trie port already covered what were items #1 (radix matching) and part of #3 (literal-before-param).
 **Everything below has since shipped except `.redirect` in item 4**, which is deferred with a reason and
-tracked as [#182](https://github.com/tachyonics/wire-mvc/issues/182). Kept as a record of what was decided
+tracked as [#182](https://github.com/swift-wire/wire-mvc/issues/182). Kept as a record of what was decided
 and why; each item was additive and testable through `RouteTrie`/`FrozenRouteTrie` first.
 
 1. ~~**405 vs 404.**~~ **Shipped.** `resolve` returns a three-way `RouteResolution` — `.matched`,

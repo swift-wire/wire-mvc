@@ -8,7 +8,7 @@
 > HTTP framework moves onto Wire in steps, and where each step stops.
 >
 > The settled surfaces live elsewhere and are authoritative over anything here: Tier 1 in
-> [WireHummingbirdDesign.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/WireHummingbirdDesign.md), Tier 2 in
+> [WireHummingbirdDesign.md](https://github.com/swift-wire/swift-wire/blob/main/Documentation/Notes/WireHummingbirdDesign.md), Tier 2 in
 > [WireMVCDesign.md](WireMVCDesign.md) (with [WireMVCMiddleware.md](WireMVCMiddleware.md) and
 > [RouteErrorHandling.md](RouteErrorHandling.md)). This note describes the *path between them* and
 > does not restate either.
@@ -22,12 +22,12 @@ and they are separate packages rather than settings on one.
 adapter automates the *application-level wiring* — constructing the controller from the graph and
 mounting it — and abstracts nothing about routing. Routes and handler signatures stay
 framework-shaped. Shipped in M2 as the external
-[`wire-hummingbird`](https://github.com/tachyonics/wire-hummingbird).
+[`wire-hummingbird`](https://github.com/tachyonics/wire-hummingbird), since archived.
 
 **Tier 2 — declarative cross-framework routing.** The controller uses Wire-published annotations
 (`@Controller`, verb, parameter and response annotations) and the build plugin generates route
 registration. The controller's source is portable across runtimes. Shipped in M5 as
-[`wire-mvc`](https://github.com/tachyonics/wire-mvc).
+[`wire-mvc`](https://github.com/swift-wire/wire-mvc).
 
 Tier 1 is the on-ramp for an app committed to one framework that wants compile-time-validated DI
 without changing how it writes controllers. Tier 2 is for portability across runtimes, for a
@@ -55,7 +55,7 @@ a macro that overrides it is a worse citizen than one that stays out of the way.
 The exploration's mechanism was a generated `_wireRegister(instance:server:)` static member, plus a
 Wire-published `WireMVCServer` protocol that framework adapters would conform to. **Both are gone.**
 
-What replaced them is the **contribution-alias** contract (M2, [AdapterModel.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/AdapterModel.md)):
+What replaced them is the **contribution-alias** contract (M2, [AdapterModel.md](https://github.com/swift-wire/swift-wire/blob/main/Documentation/Notes/AdapterModel.md)):
 an adapter's annotation *aliases* `@Contributes(to: key)`, so an annotated type becomes an ordinary
 contributor to a collated key, and the adapter's `apply` walks the collection. There is no
 side-effecting registration member, no adapter-specific call the bootstrap has to emit, and nothing
@@ -117,7 +117,7 @@ What this buys is the list-keeping: every `@HummingbirdController` is constructe
 dependencies and mounted, with a compile-time error for a dependency that is not bound. What it does
 not touch is anything about how a route is written.
 
-The survey behind that shape is in [WireHummingbirdDesign.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/WireHummingbirdDesign.md): every
+The survey behind that shape is in [WireHummingbirdDesign.md](https://github.com/swift-wire/swift-wire/blob/main/Documentation/Notes/WireHummingbirdDesign.md): every
 controller in hummingbird-examples already writes `addRoutes(to:)` as a bare convention, and
 `Controller(deps).addRoutes(to: router.group("path"))` is the universal wiring line. The annotation
 maps onto what was already there rather than asking for a new shape, which is why step 1 is two
@@ -199,16 +199,16 @@ The exploration closed with four questions for M5's first sitting. For the recor
    patterns that coexist", which is what shipped in M5 and was superseded in M6d: an OpenAPI
    operation is now a **WireMVC route**, `@OpenAPIController` contributes to
    `WireMVCKeys.routeContributors`, and `TransportKeys.handlers` retired as a collated key. One
-   routing model, not two — see [WireOpenAPIAdvanced.md](https://github.com/tachyonics/wire-open-api/blob/main/Documentation/Notes/WireOpenAPIAdvanced.md).
+   routing model, not two — see [WireOpenAPIAdvanced.md](https://github.com/swift-wire/wire-open-api/blob/main/Documentation/Notes/WireOpenAPIAdvanced.md).
 4. **What does middleware look like by M5 time?** The proposal's `Middleware<Input, NextInput>`,
    composed as a per-route fold — [WireMVCMiddleware.md](WireMVCMiddleware.md).
 
 ## References
 
-- [WireHummingbirdDesign.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/WireHummingbirdDesign.md) — Tier 1's settled model, and the
+- [WireHummingbirdDesign.md](https://github.com/swift-wire/swift-wire/blob/main/Documentation/Notes/WireHummingbirdDesign.md) — Tier 1's settled model, and the
   hummingbird-examples controller survey it was refined against.
 - [WireMVCDesign.md](WireMVCDesign.md) — Tier 2's settled surface.
-- [AdapterModel.md](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/AdapterModel.md) — the contribution-alias contract that replaced `_wireRegister`.
+- [AdapterModel.md](https://github.com/swift-wire/swift-wire/blob/main/Documentation/Notes/AdapterModel.md) — the contribution-alias contract that replaced `_wireRegister`.
 - BootstrapCollation.md — how the apply steps collate, and what a Tier-1 app
   keeps doing by hand.
 - `Wire`'s DocC article *Structuring an app with Wire* — the hexagonal framing these tiers sit in.

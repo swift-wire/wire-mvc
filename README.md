@@ -2,7 +2,7 @@
 
 🚧 🚧 🚧 Status: experimental. Expect a lot of rough edges and public API to change without warning. Don't put it anywhere near production until further notice. 🚧 🚧 🚧
 
-wire-mvc is a declarative-routing adapter for [swift-wire](https://github.com/tachyonics/swift-wire),
+wire-mvc is a declarative-routing adapter for [swift-wire](https://github.com/swift-wire/swift-wire),
 built on top of the [swift-http-api-proposal](https://github.com/apple/swift-http-api-proposal).
 Controllers annotated `@Controller` are collated automatically, and each of their methods is either
 *transformed* — request and response annotations decode the parameters and encode the result — or
@@ -37,13 +37,13 @@ struct UsersController {
 }
 ```
 
-[wire-open-api](https://github.com/tachyonics/wire-open-api) is a similar adaptor for OpenAPI routes.
+[wire-open-api](https://github.com/swift-wire/wire-open-api) is a similar adaptor for OpenAPI routes.
 
 ## Installation
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/tachyonics/wire-mvc.git", branch: "main",
+    .package(url: "https://github.com/swift-wire/wire-mvc.git", branch: "main",
              traits: ["NIOHTTPServer"]),
 ],
 targets: [
@@ -217,7 +217,7 @@ func provideValkeyClient(
 
 ## Examples
 
-The [wire-mvc-examples](https://github.com/tachyonics/wire-mvc-examples) repo have a range of use cases demonstrating
+The [wire-mvc-examples](https://github.com/swift-wire/wire-mvc-examples) repo have a range of use cases demonstrating
 wire-mvc's features.
 
 ## Documentation

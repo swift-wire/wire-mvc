@@ -21,7 +21,7 @@
 > Reached from swift-wire's
 > `RemainingSurfaceWork.md`
 > (its response-header allocation item) and wire-mvc-examples'
-> [`HummingbirdExamplesParity.md`](https://github.com/tachyonics/wire-mvc-examples/blob/main/Documentation/Notes/HummingbirdExamplesParity.md),
+> [`HummingbirdExamplesParity.md`](https://github.com/swift-wire/wire-mvc-examples/blob/main/Documentation/Notes/HummingbirdExamplesParity.md),
 > which carry the measurements this plan is a response to.
 
 ## Where the plan was wrong
@@ -371,7 +371,7 @@ registry was never the expensive part of contributing a header — the README pu
 **Status: shipped.** This brief argued ownership on the grounds that linearity turns "drained exactly once"
 from a convention into a compiler-checked property. It delivered exclusive **ownership** of the registry. It
 did not deliver exactly-once **draining**, and the gap between the two was a live defect for the whole
-interval — recorded as [#176](https://github.com/tachyonics/wire-mvc/issues/176), found by trying to make `drain()` `consuming` and
+interval — recorded as [#176](https://github.com/swift-wire/wire-mvc/issues/176), found by trying to make `drain()` `consuming` and
 being refused.
 
 ### What the gap was

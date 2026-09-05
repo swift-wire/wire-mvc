@@ -238,7 +238,7 @@
     {
       "identity" : "swift-wire",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/tachyonics/swift-wire.git",
+      "location" : "https://github.com/swift-wire/swift-wire.git",
       "state" : {
         "branch" : "main",
         "revision" : "0da5f330e4d56224c0e06cc3f2418ff542baec10"

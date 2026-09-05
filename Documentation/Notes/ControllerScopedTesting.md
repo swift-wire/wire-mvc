@@ -1,13 +1,13 @@
 # Controller-scoped testing — a design note
 
 > **Status:** **both halves are built** — the typed client (2026-07-30, #55–#57) and the per-controller bind
-> values (2026-07-31, tachyonics/swift-wire#240–#241 + #60–#64). What remains is recorded in
-> [#171](https://github.com/tachyonics/wire-mvc/issues/171) (typed failure cases) and
-> [#172](https://github.com/tachyonics/wire-mvc/issues/172) (a `@Header` coverage gap).
+> values (2026-07-31, swift-wire/swift-wire#240–#241 + #60–#64). What remains is recorded in
+> [#171](https://github.com/swift-wire/wire-mvc/issues/171) (typed failure cases) and
+> [#172](https://github.com/swift-wire/wire-mvc/issues/172) (a `@Header` coverage gap).
 >
 > Originally an idea note, written for revisiting after the last phase of the
 > [testing-architecture note](TestingArchitecture.md). Related:
-> [tachyonics/swift-wire#336](https://github.com/tachyonics/swift-wire/issues/336) (one `TestingKey` per target), which this would partly obviate.
+> [swift-wire/swift-wire#336](https://github.com/swift-wire/swift-wire/issues/336) (one `TestingKey` per target), which this would partly obviate.
 >
 > **Corrected 2026-07-31.** The first draft misread how swift-wire carries its doubles sets, and the three
 > claims that followed from it are fixed below: the accumulation it asked to keep un-merged was already
@@ -184,11 +184,11 @@ Either way swift-wire has to expose a per-subject set. What that costs differs b
 
 **The third option stands apart:** don't scope the doubles at all — one union struct with optional fields,
 validated per route at runtime. Simplest to build, but it trades away the compile-time guarantee this idea
-exists to keep. Recorded as option 1 in [tachyonics/swift-wire#336](https://github.com/tachyonics/swift-wire/issues/336).
+exists to keep. Recorded as option 1 in [swift-wire/swift-wire#336](https://github.com/swift-wire/swift-wire/issues/336).
 
 ## Open questions
 
-- **Non-2xx responses.** *Still open — [#171](https://github.com/tachyonics/wire-mvc/issues/171).* A method returning `Note` throws
+- **Non-2xx responses.** *Still open — [#171](https://github.com/swift-wire/wire-mvc/issues/171).* A method returning `Note` throws
   `WireMVCRouteError` for any non-2xx, carrying status, body and the request line. That is one type for every
   route, so a route's **declared** `@ErrorResponse` tiers stay untyped and a test asserting one compares a raw
   status code. The sketch remains: a generated per-route error naming the declared cases, with the untyped
@@ -261,5 +261,5 @@ A common reason to want two `TestingKey`s in one target is "these two suites nee
 Per-controller bind values give that without a second variant graph — each suite supplies only what its
 controller consumes. What genuinely remains for multi-key is different *graph substitutions*: the same slot
 bound to two different concrete mock types where the consumer is generic over it (the opaque-injection lift).
-That is narrow enough that a second test target is a fair answer, which is why [#170](https://github.com/tachyonics/wire-mvc/issues/170) is deferred
+That is narrow enough that a second test target is a fair answer, which is why [#170](https://github.com/swift-wire/wire-mvc/issues/170) is deferred
 rather than scheduled.

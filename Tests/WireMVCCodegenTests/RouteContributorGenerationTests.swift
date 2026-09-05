@@ -1874,7 +1874,7 @@ struct RouteContributorGenerationTests {
     /// One `TestingKey` per target. A second key is an error against its own declaration, naming the one
     /// that won — the harness emits a single `.wiremvc(_ key:, _ mode:)` factory bound to one variant graph,
     /// so a suite passing the second key would silently be served the first's mocks. Serving several
-    /// variants from one target is deferred (tachyonics/swift-wire#336); this keeps the deferral loud.
+    /// variants from one target is deferred (swift-wire/swift-wire#336); this keeps the deferral loud.
     @Test func aSecondTestingKeyIsRejected() {
         let source = keyedHarnessFixture.replacingOccurrences(
             of: "enum Binds {",
@@ -1895,7 +1895,7 @@ struct RouteContributorGenerationTests {
         #expect(messages.count == 1)
         #expect(messages[0].contains("OtherBinds.mock") || messages[0].contains("Binds.mock"))
         #expect(messages[0].contains("one TestingKey per target"))
-        #expect(messages[0].contains("tachyonics/swift-wire#336"))
+        #expect(messages[0].contains("swift-wire/swift-wire#336"))
     }
 
     /// A `TestingKey` in a re-parsed *dependency* is not this target's to serve. It is passed first here, so

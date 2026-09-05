@@ -13,7 +13,7 @@ swift-wire's `WireBuildPlugin`, not alongside it.
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/tachyonics/wire-mvc.git", branch: "main",
+    .package(url: "https://github.com/swift-wire/wire-mvc.git", branch: "main",
              traits: ["NIOHTTPServer"]),
 ],
 targets: [
