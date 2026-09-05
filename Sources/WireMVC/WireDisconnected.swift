@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright (c) 2026 the wire-mvc project authors
+// Copyright (c) 2026 the swift-wire project authors
 
 /// A value held in a disconnected isolation region, so it survives storage as a `sending` value.
 ///

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright (c) 2026 the wire-mvc project authors
+// Copyright (c) 2026 the swift-wire project authors
 
 /// Which route a request matched: the registered path *template* and the parameters the router pulled
 /// out of it. Carried on ``RequestResponseMiddlewareBox`` so a route-scope middleware can tell what it

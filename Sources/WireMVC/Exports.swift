@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright (c) 2026 the wire-mvc project authors
+// Copyright (c) 2026 the swift-wire project authors
 
 // A middleware author conforms to `Middleware` and spells the box over the `AsyncReader`-constrained
 // reader, so a middleware (like a controller) needs only `import WireMVC`.
