@@ -74,7 +74,7 @@ resolver scopes) live outside its scope.
   realised at compile time rather than via a runtime container. It is the capability
   furthest from anything in the Vapor proposal, and a primary reason WireMVC exists as
   a layer rather than staying with framework-native controllers. See swift-wire's
-  [WireMVC design note](https://github.com/tachyonics/swift-wire/blob/main/Documentation/Notes/WireMVCDesign.md).
+  [WireMVC design note](WireMVCDesign.md).
 
 ## Controller registration
 

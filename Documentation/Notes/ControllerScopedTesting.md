@@ -6,7 +6,7 @@
 > [#172](https://github.com/tachyonics/wire-mvc/issues/172) (a `@Header` coverage gap).
 >
 > Originally an idea note, written for revisiting after the last phase of the
-> [testing-architecture plan](../TestingArchitecture.md). Related:
+> [testing-architecture note](TestingArchitecture.md). Related:
 > [tachyonics/swift-wire#336](https://github.com/tachyonics/swift-wire/issues/336) (one `TestingKey` per target), which this would partly obviate.
 >
 > **Corrected 2026-07-31.** The first draft misread how swift-wire carries its doubles sets, and the three
