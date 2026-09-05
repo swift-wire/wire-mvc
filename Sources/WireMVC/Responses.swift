@@ -290,7 +290,8 @@ public enum WireMVCResponseHeaders {
     }
 }
 
-/// Response encoding the generated witness calls. A `.buffered` response mode goes through ``encoded``;
+/// Response encoding the generated witness calls. A `.buffered` response mode goes through
+/// ``encoded(_:status:headerFields:)``;
 /// a `.bodiless` one builds `.status` inline in the witness.
 public enum WireMVCResponse {
     /// Wrap what a codec produced into an outcome — the single buffered emit site, for every mode.
@@ -311,8 +312,9 @@ public enum WireMVCResponse {
 
     /// `@JSONResponse[(status:)]` — encode an `Encodable` return as a JSON body.
     ///
-    /// No longer what the generator emits (it goes through ``encoded`` and `WireMVCJSONCodec` like any other
-    /// mode), and kept because it is the spelling an `@ErrorResponse` mapping and hand-written code use.
+    /// No longer what the generator emits (it goes through ``encoded(_:status:headerFields:)``
+    /// and `WireMVCJSONCodec` like any other mode), and kept because it is the spelling an
+    /// `@ErrorResponse` mapping and hand-written code use.
     public static func json<T: Encodable>(
         _ value: T,
         status: HTTPResponse.Status,

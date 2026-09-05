@@ -179,3 +179,27 @@ jobs:
           chmod +x /usr/local/bin/swiftlint
       - name: SwiftLint
         run: swiftlint lint --quiet
+
+  Documentation:
+    name: Documentation (DocC gate)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Read the pinned toolchain
+        run: echo "SWIFT_SNAPSHOT=$(cat .swift-version)" >> "$GITHUB_ENV"
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libsqlite3-dev libcurl4-openssl-dev
+      - name: Install Swiftly + the pinned toolchain
+        run: |
+          curl -L "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz" | tar zxf -
+          ./swiftly init --assume-yes --skip-install
+          echo "$HOME/.local/share/swiftly/bin" >> "$GITHUB_PATH"
+          # No `--use`: the command below runs through `swiftly run`, which reads `.swift-version`
+          # itself. `--use` would rewrite that file and dirty the tree, which the swift-format job's
+          # `git diff --exit-code` guard then fails on.
+          "$HOME/.local/share/swiftly/bin/swiftly" install "$SWIFT_SNAPSHOT" --assume-yes
+      - name: Build documentation, failing on any warning
+        # The catalog's articles reference symbols by name, and so do the doc comments on the API
+        # itself, so a renamed or removed declaration breaks a link rather than a build — silently,
+        # and only for a reader. `--warnings-as-errors` is what makes them a gate rather than prose.
+        run: swiftly run swift package generate-documentation --target WireMVC --warnings-as-errors

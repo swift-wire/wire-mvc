@@ -1,5 +1,5 @@
 {
-  "originHash" : "ef34683a2f6826c7a143da57ee0d666d754e6a3f87f3fea2aa4236dcfcab439d",
+  "originHash" : "69a04e0b01f518530b62615b067ce4b7f7049f11dbf1461ce2e89fa800af426d",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -8,6 +8,14 @@
       "state" : {
         "revision" : "4603a8036d921ea999fadb742931546c341f4bd7",
         "version" : "1.35.0"
+      }
+    },
+    {
+      "identity" : "elementary",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/tachyonics/elementary.git",
+      "state" : {
+        "revision" : "07eb69492ddf7052616af47518e7f883bd8f2691"
       }
     },
     {
@@ -92,12 +100,39 @@
       }
     },
     {
+      "identity" : "swift-docc-plugin",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-docc-plugin",
+      "state" : {
+        "revision" : "647c708be89f834fa6a6d4945442793a77ddf5b6",
+        "version" : "1.5.0"
+      }
+    },
+    {
+      "identity" : "swift-docc-symbolkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-docc-symbolkit",
+      "state" : {
+        "revision" : "b45d1f2ed151d057b54504d653e0da5552844e34",
+        "version" : "1.0.0"
+      }
+    },
+    {
       "identity" : "swift-http-api-proposal",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-http-api-proposal.git",
       "state" : {
         "revision" : "638af2b908d8109857389689d361e1f45f6617ea",
         "version" : "0.2.0"
+      }
+    },
+    {
+      "identity" : "swift-http-server",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swift-server/swift-http-server.git",
+      "state" : {
+        "branch" : "main",
+        "revision" : "c9ec9f1df46ee5dcbbf0b6a23a0fd8a556b0647c"
       }
     },
     {
@@ -179,6 +214,15 @@
       "state" : {
         "revision" : "0c0290ff6b24942dadb83a929ffaaa1481df04a2",
         "version" : "1.1.1"
+      }
+    },
+    {
+      "identity" : "swift-openapi-runtime",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-openapi-runtime.git",
+      "state" : {
+        "revision" : "9e53df53e043b53046a371b31aaf0a1e26eef946",
+        "version" : "1.12.1"
       }
     },
     {

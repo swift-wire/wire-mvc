@@ -12,7 +12,8 @@ public import HTTPTypes
 /// Notes/WireMVCMiddleware.md, *Short-circuit & the box shape*). By the time an outer middleware resumes,
 /// the bytes are gone.
 ///
-/// So a contribution is **registered on the way in and evaluated on the way out**. ``add(_:)`` is for a
+/// So a contribution is **registered on the way in and evaluated on the way out**.
+/// ``add(_:)-(ResponseHeaderContribution)`` is for a
 /// value the middleware already has; ``onSend(_:)`` is for one it cannot know yet — a session cookie
 /// depends on what the *handler* did to the session, so the closure runs at drain time, after the handler
 /// and before the response head exists. This is ASP.NET Core's `HttpResponse.OnStarting` shape, and it
@@ -39,7 +40,7 @@ public import HTTPTypes
 /// that the stored value is never aliased — true of a linear value by construction, false of a class
 /// reference. So linearity is what makes the disconnection sound rather than merely quiet.
 ///
-/// Being a struct also keeps it off the heap: a request that registers at most ``inlineCapacity``
+/// Being a struct also keeps it off the heap: a request that registers at most `inlineCapacity`
 /// contributions now allocates nothing at all for them.
 ///
 /// Deliberately **not** `Sendable`, exactly as the box isn't: one request's registry is written by that

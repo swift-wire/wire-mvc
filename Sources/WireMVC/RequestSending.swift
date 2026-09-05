@@ -17,7 +17,8 @@ import Foundation
 /// A request under construction, as a client assembles it.
 ///
 /// The server side is handed a finished `HTTPRequest`; this is its counterpart on the way out. It carries
-/// **no body slot** — deliberately. A body is supplied by returning it from ``RequestBodySendable/sendBody``,
+/// **no body slot** — deliberately. A body is supplied by returning it from
+/// ``RequestBodySendable/sendBody(name:value:into:coding:)``,
 /// and the generated client asks exactly one binding for one, so "at most one binding supplies the body" is
 /// structurally impossible to violate rather than a rule needing a runtime check.
 public struct WireMVCOutgoingRequest: Sendable {
