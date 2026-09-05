@@ -198,8 +198,16 @@ jobs:
           # itself. `--use` would rewrite that file and dirty the tree, which the swift-format job's
           # `git diff --exit-code` guard then fails on.
           "$HOME/.local/share/swiftly/bin/swiftly" install "$SWIFT_SNAPSHOT" --assume-yes
-      - name: Build documentation, failing on any warning
+      - name: Build documentation, failing on any diagnostic in this package's own sources
         # The catalog's articles reference symbols by name, and so do the doc comments on the API
         # itself, so a renamed or removed declaration breaks a link rather than a build — silently,
-        # and only for a reader. `--warnings-as-errors` is what makes them a gate rather than prose.
-        run: swiftly run swift package generate-documentation --target WireMVC --warnings-as-errors
+        # and only for a reader. This is what makes them a gate rather than prose.
+        #
+        # `--warnings-as-errors` cannot be used directly: `WireMVC` re-exports `AsyncStreaming`
+        # through a `public import`, and on Linux the symbol graph carries those types into
+        # `/WireMVC/…`, so DocC reports unresolved links in *their* doc comments. `Scripts/docc-gate.py`
+        # filters the structured diagnostics down to files in this repository instead.
+        run: |
+          swiftly run swift package generate-documentation --target WireMVC \
+            --diagnostics-file "$RUNNER_TEMP/docc.json"
+          python3 Scripts/docc-gate.py "$RUNNER_TEMP/docc.json"

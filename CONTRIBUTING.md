@@ -40,12 +40,25 @@ xcrun swiftc -typecheck -parse-as-library -swift-version 6 \
 User-facing documentation is the DocC catalog at `Sources/WireMVC/WireMVC.docc`. Build it with:
 
 ```sh
-swift package generate-documentation --target WireMVC --warnings-as-errors
+swift package generate-documentation --target WireMVC --diagnostics-file /tmp/docc.json
+python3 Scripts/docc-gate.py /tmp/docc.json
 ```
 
-CI runs exactly that. `--warnings-as-errors` is the point of it: the articles reference symbols by
-name, so a renamed or removed macro breaks a link rather than a build — silently, and only for a
-reader. A doc comment that names a symbol which no longer exists fails the same way.
+CI runs exactly that, and the gate is the point of it: the articles reference symbols by name, so a
+renamed or removed macro breaks a link rather than a build — silently, and only for a reader. A doc
+comment that names a symbol which no longer exists fails the same way.
+
+> **Building the documentation rewrites `Package.resolved`.** The DocC plugin resolves the graph
+> with every trait enabled, so `swift-http-server` and `elementary` are pinned back into the
+> lockfile — which is exactly what the *Verify the core graph resolves no concrete server* job
+> exists to catch. Run `swift package resolve` and commit that result, not the one a docs build
+> left behind.
+
+It is two commands rather than `--warnings-as-errors` because `WireMVC` re-exports `AsyncStreaming`
+through a `public import`. On Linux the symbol graph carries those types into `/WireMVC/…`, so DocC
+reports unresolved links in a dependency's doc comments — diagnostics this package cannot fix, and
+which do not appear on macOS at all. The script filters the structured diagnostics down to files in
+this repository.
 
 Design notes under `Documentation/Notes/` are a different thing: they record *why* a design is
 what it is, and are not part of the published documentation.

@@ -11,14 +11,6 @@
       }
     },
     {
-      "identity" : "elementary",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/tachyonics/elementary.git",
-      "state" : {
-        "revision" : "07eb69492ddf7052616af47518e7f883bd8f2691"
-      }
-    },
-    {
       "identity" : "swift-algorithms",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-algorithms.git",
@@ -127,15 +119,6 @@
       }
     },
     {
-      "identity" : "swift-http-server",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/swift-server/swift-http-server.git",
-      "state" : {
-        "branch" : "main",
-        "revision" : "c9ec9f1df46ee5dcbbf0b6a23a0fd8a556b0647c"
-      }
-    },
-    {
       "identity" : "swift-http-structured-headers",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-http-structured-headers.git",
@@ -214,15 +197,6 @@
       "state" : {
         "revision" : "0c0290ff6b24942dadb83a929ffaaa1481df04a2",
         "version" : "1.1.1"
-      }
-    },
-    {
-      "identity" : "swift-openapi-runtime",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-openapi-runtime.git",
-      "state" : {
-        "revision" : "9e53df53e043b53046a371b31aaf0a1e26eef946",
-        "version" : "1.12.1"
       }
     },
     {
