@@ -229,3 +229,12 @@ The user-facing documentation is a DocC catalog — build it with
 ## Contributing
 
 Building, testing, and the plugin type-check trap are in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Licence
+
+Apache-2.0. See [LICENSE](LICENSE).
+
+**Generated output is yours.** Code that this package generates into your build — whatever its build
+plugin writes, and the expansion of its macros — is not a derivative work of this package and carries
+no licence obligation to it. Use it as you would code you wrote yourself. Nothing this package emits
+carries a licence header for that reason.
