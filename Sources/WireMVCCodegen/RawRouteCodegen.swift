@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 the wire-mvc project authors
+
 import SwiftSyntax
 
 // The raw-route half of the route codegen: `@RawRoute` parameter binding (type-inferred and by explicit

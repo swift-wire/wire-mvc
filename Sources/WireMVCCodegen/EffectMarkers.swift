@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 the wire-mvc project authors
+
 import SwiftSyntax
 
 /// The `try `/`await ` prefix a call to `function` needs — both, one, or neither, read off the

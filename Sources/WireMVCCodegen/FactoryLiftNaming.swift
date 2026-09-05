@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 the wire-mvc project authors
+
 /// The names the structural and domain halves of a `@Controller` must derive identically.
 ///
 /// swift-wire's plugin emits the contributor proxy — its stored factory properties, its by-type and keyed

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 the wire-mvc project authors
+
 /// A value held in a disconnected isolation region, so it survives storage as a `sending` value.
 ///
 /// This is the stable-feature subset of the standard library's `Disconnected<Value>`

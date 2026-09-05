@@ -1,4 +1,7 @@
 // swift-tools-version: 6.4
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 the wire-mvc project authors
+
 import PackageDescription
 
 // wire-mvc's runnable fixtures — the two example executables and the integration suites that drive them

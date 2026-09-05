@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 the wire-mvc project authors
+
 import Synchronization
 
 // The `prepare()` pre-step runs once per *process*, which is free in a program (the generated `@main`

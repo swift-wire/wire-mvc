@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 the wire-mvc project authors
+
 import SwiftSyntax
 
 // Route-template validation that is knowable from the template text alone, kept out of `RouteCodegen` so

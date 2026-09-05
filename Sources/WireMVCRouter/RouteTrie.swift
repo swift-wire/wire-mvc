@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 the wire-mvc project authors
+
 public import HTTPTypes
 
 // The router's path-segment trie — the routing algorithm, factored out of the generic

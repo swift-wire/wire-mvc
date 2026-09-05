@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 the wire-mvc project authors
+
 import SwiftSyntax
 
 // The response half of the route codegen: what a route says about its status and header fields, and how

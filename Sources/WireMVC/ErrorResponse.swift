@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 the wire-mvc project authors
+
 // The runtime the generated terminal `catch` folds an `@ErrorResponse` chain onto. Each entry is one
 // `wireMVCRespond` call — a typed mapping consulted in order, returning `nil` to fall through to the
 // next — with `wireMVCRespondAny` as the `Swift.Error` catch-all (always matches, non-optional). Both

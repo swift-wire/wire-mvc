@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 the wire-mvc project authors
+
 public import SwiftSyntax
 
 // Reading `@ResponseMode(…)` off a response mode's *macro declaration*, wherever it lives — the mirror of

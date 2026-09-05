@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 the wire-mvc project authors
+
 import SwiftSyntax
 
 // The `builder.register` emission — the shape every route's registration closure has, and the one place
