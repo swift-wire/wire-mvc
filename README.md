@@ -171,7 +171,7 @@ instantiates only the bindings reachable from the controller that request actual
 Error handlers can be specified globally, per controller or per route and specify how to transform
 any thrown errors from the handler into a response.
 
-## Middleware and Parameter Bindings
+### Middleware and Parameter Bindings
 
 Middleware and parameter bindings both sit between the request and the handler, and they are not
 alternatives — they answer different questions.
