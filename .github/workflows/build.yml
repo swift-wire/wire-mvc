@@ -7,10 +7,10 @@ on:
     branches: [ main ]
 
 # wire-mvc is proposal-native and swift-tools-version 6.4: it depends on the swift-http-api-proposal
-# stack and swift-syntax's pre-release 604 line, so it builds only on a Swift 6.4 toolchain — the build/format jobs run on the nightly 6.4 container, since
-# SwiftyLab/setup-swift installs released toolchains only. swift-syntax 604 is pinned via its
-# release/6.4.x branch in Package.swift (SPM version ranges don't resolve pre-release tags; the
-# branch pin also overrides swift-wire's transitive 603 requirement).
+# stack and swift-syntax's 604 line, so it builds only on a Swift 6.4 toolchain. Every job that needs a
+# toolchain installs the one named in `.swift-version` through swift-wire/setup-swift — a release today,
+# but the same mechanism carries a pre-release snapshot when the package moves ahead of the released
+# Swift again.
 jobs:
   # Two packages: the framework (this directory) and its runnable fixtures (Fixtures/). The split exists so
   # the framework's manifest names no concrete HTTP server — see the resolution guard below.
@@ -19,47 +19,29 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
-      - name: Read the pinned toolchain
-        # `.swift-version` is the single source of truth: local `swiftly` and CI resolve the same snapshot,
-        # so a green CI and a broken working copy cannot disagree about which compiler they meant. Bump the
-        # file, not the workflow.
-        run: echo "SWIFT_SNAPSHOT=$(cat .swift-version)" >> "$GITHUB_ENV"
-      - name: Install system dependencies
-        # libcurl4-openssl-dev is required by the toolchain itself (Foundation networking on Linux) and must
-        # precede the install, or Swiftly's post-install check fails. curl also probes the
-        # @WireMVCBootstrap example's server.
-        run: sudo apt-get update && sudo apt-get install -y libssl-dev libsqlite3-dev libcurl4-openssl-dev curl
-      - name: Install Swiftly + the pinned toolchain
-        run: |
-          curl -L "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz" | tar zxf -
-          ./swiftly init --assume-yes --skip-install
-          echo "$HOME/.local/share/swiftly/bin" >> "$GITHUB_PATH"
-          # No `--use`: every command below runs through `swiftly run`, which reads `.swift-version` itself.
-          # `--use` would *rewrite* that file (dropping its trailing newline) and dirty the tree, which
-          # the swift-format job's `git diff --exit-code` guard then fails on.
-          "$HOME/.local/share/swiftly/bin/swiftly" install "$SWIFT_SNAPSHOT" --assume-yes
+      - uses: swift-wire/setup-swift@v1
       - name: Build
-        run: swiftly run swift build
+        run: swift build
       - name: Verify the core graph resolves no concrete server
         # The point of the `NIOHTTPServer` trait: with it off, every `swift-http-server` product dependency
         # is gated, so SwiftPM prunes the package outright and a framework-agnostic consumer of `WireMVC`
         # resolves no server. This is a regression guard on that — an ungated reference anywhere in the
         # manifest would silently put the NIO server back into every downstream `Package.resolved`.
         run: |
-          swiftly run swift package resolve
+          swift package resolve
           if grep -q '"identity" : "swift-http-server"' Package.resolved; then
             echo "swift-http-server is back in the core graph — a swift-http-server product dependency is not trait-gated"
             exit 1
           fi
       - name: Test
-        run: swiftly run swift test
+        run: swift test
       - name: Test ServerTransport adapter (trait)
         # The opt-in WireMVCServerTransport adapter is behind the `ServerTransport` trait (which pulls
         # in OpenAPIRuntime); enable it to build the adapter + run its test. The steps above leave the
         # trait off, so the core never resolves OpenAPIRuntime.
         run: |
           set -o pipefail
-          swiftly run swift test --traits ServerTransport 2>&1 | tee /tmp/servertransport.log
+          swift test --traits ServerTransport 2>&1 | tee /tmp/servertransport.log
           # `AdapterTests.swift` is *entirely* `#if ServerTransport`, so if that gate ever stops matching
           # — trait renamed, define not reaching the target — the file compiles to zero tests and this
           # step still passes: "Test run with 0 tests in 0 suites passed" is a pass, not a failure. The
@@ -74,16 +56,16 @@ jobs:
         # they serve on NIOHTTPServer: anything naming swift-http-server unconditionally in wire-mvc's
         # manifest would defeat the trait. They enable it on their path dependency.
         working-directory: Fixtures
-        run: swiftly run swift build
+        run: swift build
       - name: Test fixtures
         working-directory: Fixtures
-        run: swiftly run swift test
+        run: swift test
       - name: Run end-to-end example
         # @Controller generates the RouteContributor witnesses; Wire collates them; WireMVC.router
         # turns them into NIOHTTPServer's request handler and the example drives every route over
         # real HTTP on an ephemeral loopback port. Prints "wire-mvc example OK" or exits non-zero.
         working-directory: Fixtures
-        run: swiftly run swift run WireMVCExample
+        run: swift run WireMVCExample
       - name: Run @WireMVCBootstrap example (boot, probe, stop)
         # The generated @main serves indefinitely, so — unlike WireMVCExample — it can't run to
         # completion. Boot it, poll until it binds, assert one route's response, then stop it. Validates
@@ -134,29 +116,11 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
-      - name: Read the pinned toolchain
-        # `.swift-version` is the single source of truth: local `swiftly` and CI resolve the same snapshot,
-        # so a green CI and a broken working copy cannot disagree about which compiler they meant. Bump the
-        # file, not the workflow.
-        run: echo "SWIFT_SNAPSHOT=$(cat .swift-version)" >> "$GITHUB_ENV"
-      - name: Install system dependencies
-        # libcurl4-openssl-dev is required by the toolchain itself (Foundation networking on Linux) and must
-        # precede the install, or Swiftly's post-install check fails. curl also probes the
-        # @WireMVCBootstrap example's server.
-        run: sudo apt-get update && sudo apt-get install -y libssl-dev libsqlite3-dev libcurl4-openssl-dev curl
-      - name: Install Swiftly + the pinned toolchain
-        run: |
-          curl -L "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz" | tar zxf -
-          ./swiftly init --assume-yes --skip-install
-          echo "$HOME/.local/share/swiftly/bin" >> "$GITHUB_PATH"
-          # No `--use`: every command below runs through `swiftly run`, which reads `.swift-version` itself.
-          # `--use` would *rewrite* that file (dropping its trailing newline) and dirty the tree, which
-          # the swift-format job's `git diff --exit-code` guard then fails on.
-          "$HOME/.local/share/swiftly/bin/swiftly" install "$SWIFT_SNAPSHOT" --assume-yes
+      - uses: swift-wire/setup-swift@v1
       - name: Run swift-format
         # From the 6.4 toolchain so it parses the proposal's ~Copyable / consuming sending syntax
         # (a released swift-format can't).
-        run: swiftly run swift-format format --recursive --in-place .
+        run: swift-format format --recursive --in-place .
       - name: Check for formatting differences
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -185,19 +149,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
-      - name: Read the pinned toolchain
-        run: echo "SWIFT_SNAPSHOT=$(cat .swift-version)" >> "$GITHUB_ENV"
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libssl-dev libsqlite3-dev libcurl4-openssl-dev
-      - name: Install Swiftly + the pinned toolchain
-        run: |
-          curl -L "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz" | tar zxf -
-          ./swiftly init --assume-yes --skip-install
-          echo "$HOME/.local/share/swiftly/bin" >> "$GITHUB_PATH"
-          # No `--use`: the command below runs through `swiftly run`, which reads `.swift-version`
-          # itself. `--use` would rewrite that file and dirty the tree, which the swift-format job's
-          # `git diff --exit-code` guard then fails on.
-          "$HOME/.local/share/swiftly/bin/swiftly" install "$SWIFT_SNAPSHOT" --assume-yes
+      - uses: swift-wire/setup-swift@v1
       - name: Build documentation, failing on any diagnostic in this package's own sources
         # The catalog's articles reference symbols by name, and so do the doc comments on the API
         # itself, so a renamed or removed declaration breaks a link rather than a build — silently,
@@ -208,9 +160,113 @@ jobs:
         # `/WireMVC/…`, so DocC reports unresolved links in *their* doc comments. `Scripts/docc-gate.py`
         # filters the structured diagnostics down to files in this repository instead.
         run: |
-          swiftly run swift package generate-documentation --target WireMVC \
+          swift package generate-documentation --target WireMVC \
             --diagnostics-file "$RUNNER_TEMP/docc.json"
           python3 Scripts/docc-gate.py "$RUNNER_TEMP/docc.json"
+
+  SwiftSyntaxMatrix:
+    name: swift-syntax ${{ matrix.swift-syntax-major }}.x / Swift (pinned)
+    # The declared range admits one major today (604..<605), so this coincides with the build above;
+    # it is the job that grows an entry when the range does, and until then it is the one place the
+    # range string is asserted rather than assumed.
+    strategy:
+      fail-fast: false
+      matrix:
+        swift-syntax-major: ["604"]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: swift-wire/setup-swift@v1
+      - name: Pin swift-syntax to ${{ matrix.swift-syntax-major }}.x
+        # Narrow the declared range to a single major so SPM resolves to the matrix's swift-syntax
+        # version. Targets the exact range string in Package.swift; if that string changes the sed
+        # needs to follow — and `grep` fails the step if it no longer matched anything.
+        run: |
+          next=$((${{ matrix.swift-syntax-major }} + 1))
+          sed -i 's|"604.0.0"..<"605.0.0"|"${{ matrix.swift-syntax-major }}.0.0"..<"'${next}'.0.0"|' Package.swift
+          grep -q '"${{ matrix.swift-syntax-major }}.0.0"..<"'${next}'.0.0"' Package.swift
+          grep swift-syntax Package.swift
+      - name: Resolve dependencies
+        run: swift package update
+      - name: Build
+        run: swift build
+      - name: Run tests
+        run: swift test
+
+  StaticLinuxSDK:
+    name: Static Linux SDK (cross-compile to aarch64-musl)
+    runs-on: ubuntu-24.04
+    # The image and the SDK bundle must be the same Swift release: an SDK only installs against the
+    # toolchain it was built for, so these two literals move together — and together with
+    # `.swift-version`, since the cross-compile should check the toolchain the package is developed on.
+    container:
+      image: swift:6.4.0-noble
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Static Linux SDK
+        run: swift sdk install https://download.swift.org/swift-6.4.0-release/static-sdk/swift-6.4.0-RELEASE/swift-6.4.0-RELEASE_static-linux-0.1.0.artifactbundle.tar.gz --checksum 47d2fd89eebfdf9eb4d536b6710414297f755c17926cdebc4742c08982b40a9e
+      - name: Cross-compile the shipping products for ARM64 Linux
+        # Product by product rather than a whole-package `swift build`, because the package also holds
+        # `WireMVCTesting`, which imports swift-testing — and the static SDK ships no `Testing` module,
+        # so a whole-package build dies there with "no such module 'Testing'" whatever the rest does.
+        # These five are the default-trait libraries a consumer links; the trait-gated adapters
+        # (`WireMVCServerTransport`, `WireMVCElementary`) are not cross-compiled here.
+        #
+        # The fixtures are not cross-compiled either: they serve on NIOHTTPServer, and swift-http-server
+        # (at the revision `Fixtures/Package.resolved` pins) does not compile for the musl target on
+        # 6.4.0 — `NIOHTTPServer+HTTP1_1.swift` fails region isolation ("sending 'iterator' risks
+        # causing data races") for aarch64-swift-linux-musl while building for glibc and macOS. That is
+        # upstream's to fix; when it is, `Fixtures/` is the deployable shape to add back.
+        run: |
+          for product in WireMVC WireMVCRouter WireMVCMiddleware WireMVCLogging WireMVCTaskLocalLogging; do
+            swift build -c release --swift-sdk aarch64-swift-linux-musl --product "$product"
+          done
+
+  Coverage:
+    name: Coverage / Swift (pinned)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: swift-wire/setup-swift@v1
+      - name: Run tests with coverage
+        # The framework package's own suite. The fixtures' integration suites serve on NIOHTTPServer and
+        # exercise generated code, not the framework's sources, so they add noise to a coverage figure
+        # rather than signal.
+        run: swift test --enable-code-coverage --xunit-output test-results.xml
+      - name: Convert to LCOV
+        # 6.4's build system emits one `<Target>-test-runner` executable and a `<Target>.so` per test
+        # module rather than the single `.xctest` binary earlier toolchains linked. Every one of them
+        # carries instrumented code, so llvm-cov is handed all of them; the `.xctest` glob keeps the
+        # older layout working should a job ever run on one.
+        run: |
+          BIN_PATH=$(swift build --show-bin-path)
+          PROFDATA=$(find .build -name 'default.profdata' -path '*/codecov/*' | head -1)
+          objects=()
+          for f in "$BIN_PATH"/*-test-runner "$BIN_PATH"/*.so "$BIN_PATH"/*.xctest; do
+            [ -f "$f" ] && objects+=(-object "$f")
+          done
+          llvm-cov export \
+            -format=lcov \
+            -instr-profile="$PROFDATA" \
+            "${objects[@]}" \
+            -ignore-filename-regex=".build|Tests" \
+            > coverage.lcov
+      - name: Upload coverage
+        uses: codecov/codecov-action@v6
+        with:
+          files: coverage.lcov
+          fail_ci_if_error: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      - name: Upload test results
+        uses: codecov/codecov-action@v6
+        if: always()
+        with:
+          files: test-results.xml
+          report_type: test_results
+          fail_ci_if_error: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   LicenceHeaders:
     name: Licence headers

@@ -25,7 +25,7 @@ what the two codegen tools emit, is unverified until the fixtures build.
 `WireMVCBootstrapExampleBindTests` is the one that exercises the keyed `TestingKey` harness end to
 end.
 
-Both packages are tools-version 6.4, so they need a 6.4 toolchain. The pinned snapshot is in
+Both packages are tools-version 6.4, so they need a 6.4 toolchain. The pinned toolchain is in
 `.swift-version`, and CI installs exactly that one.
 
 ## The plugin type-check trap
