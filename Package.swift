@@ -126,7 +126,9 @@ let package = Package(
         // WireMVCTaskLocalLogging requires outright rather than by accident of resolution.
         .package(url: "https://github.com/apple/swift-log.git", from: "1.14.0"),
         .package(url: "https://github.com/apple/swift-openapi-runtime.git", from: "1.7.0"),
-        .package(url: "https://github.com/swiftlang/swift-syntax", branch: "release/6.4.x"),
+        // The 604 line, released with Swift 6.4. swift-wire admits it too (603..<605), so SPM resolves one
+        // swift-syntax for the whole graph.
+        .package(url: "https://github.com/swiftlang/swift-syntax", "604.0.0"..<"605.0.0"),
         // Documentation only — `swift package generate-documentation` builds the `WireMVC.docc`
         // catalog. A plugin dependency, so it contributes nothing to a consumer's build graph.
         .package(url: "https://github.com/swiftlang/swift-docc-plugin", from: "1.4.0"),
