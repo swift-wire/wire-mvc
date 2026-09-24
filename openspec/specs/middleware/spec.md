@@ -4,8 +4,8 @@
 
 How WireMVC folds `Middleware` around a request. It covers the box every chain carries
 (`RequestResponseMiddlewareBox`), the rule that a middleware answers a request by writing rather than
-by skipping `next`, the `@Middleware` annotation at global, controller and route scope, the three
-forms it takes (by type, by binding key, by `@Factory` key), the `@MiddlewareFactory` role mapping,
+by skipping `next`, the `@Middleware` annotation at global, controller and route scope, the two
+forms it takes (by type, by `@Factory` key), the `@MiddlewareFactory` role mapping,
 and the global front layer (`GlobalMiddlewareHandler`) that wraps the finalized router.
 
 Rationale: [WireMVCMiddleware](../../../Documentation/Notes/WireMVCMiddleware.md), [ScopeAwareMiddlewareAndBindings](../../../Documentation/Notes/ScopeAwareMiddlewareAndBindings.md), [LinearSenderErrorModel](../../../Documentation/Notes/LinearSenderErrorModel.md).
@@ -72,7 +72,7 @@ box without writing.
 - **WHEN** the same route receives `x-admin: true`
 - **THEN** the handler runs and the response is `204`
 
-Pinned by: `Fixtures/Sources/WireMVCExample/main.swift` (the `DELETE /users/42` and `DELETE /users/99` checks, run by the `Run end-to-end example` step of the `BuildAndRun` job in `.github/workflows/build.yml`), `Tests/WireMVCResponsesTests/RouteContextTests.swift` (`aRawResponseKeepsTheRoute`).
+Pinned by: `Fixtures/Sources/WireMVCExample/main.swift` (the `DELETE /users/42` and `DELETE /users/99` checks, run by the `Run end-to-end example` step of the `BuildAndRun` job in `.github/workflows/build.yml`), `Tests/WireMVCResponsesTests/RouteContextTests.swift` (`aRawResponseKeepsTheRoute`). Returning a `responded` box without writing when the box is already `responded` is pinned by nothing yet.
 
 ### Requirement: `respondingWith` drains contributed header fields; `responding` does not
 `respondingWith(_ outcome: WireMVCOutcome)` SHALL drain the box's `ResponseHeaderRegistry` into the
@@ -99,18 +99,19 @@ unchanged.
 - **WHEN** a global middleware contributes `x-stamp` and a controller-scope middleware contributes `x-controller` on `GET /ping`
 - **THEN** the response carries both fields
 
-Pinned by: `Tests/WireMVCResponsesTests/RouteContextTests.swift` (`contributingCarriesTheRouteIntoTheRebuiltBox`), `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`globalAndControllerContributionsBothArrive`). The `responded` branch is pinned by nothing yet.
+Pinned by: `Tests/WireMVCResponsesTests/RouteContextTests.swift` (`contributingCarriesTheRouteIntoTheRebuiltBox`), `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`globalAndControllerContributionsBothArrive`). The `responded` branch is pinned by `Tests/WireMVCServerTransportTests/AdapterTests.swift` (`aContributionAfterAGateRespondsDoesNotReachTheResponse`), which shows that a contribution made on a `responded` box does not reach the response; that the first closure is not called at all is pinned by nothing yet.
 
 ### Requirement: The terminal runs through `withPendingContents` and no-ops on `responded`
 `withPendingContents(_:)` SHALL call its handler with the request, context, route, reader, sender and
-registry of a `pending` box, and SHALL do nothing for a `responded` box. The generated route terminal
-SHALL be reached only through `withPendingContents` on the chain's final box.
+registry of a `pending` box, and SHALL do nothing for a `responded` box. For a route with at least one
+`@Middleware`, the generated route terminal SHALL be reached only through `withPendingContents` on the
+chain's final box.
 
 #### Scenario: the generated terminal
 - **WHEN** a route carries one `@Middleware`
 - **THEN** the register closure calls `try await wireMVCChain.intercept(input: wireMVCBaseBox) { wireMVCFinalBox in return try await wireMVCFinalBox.withPendingContents { … } }` and the handler call sits inside that closure
 
-#### Scenario: the terminal reads the final box's route
+#### Scenario: `withPendingContents` yields the final box's route
 - **WHEN** `withPendingContents` is called on a pending box for `/documents/{id}`
 - **THEN** its handler receives that `RouteContext` as the third argument
 
@@ -126,7 +127,11 @@ middleware SHALL register without a box, a chain or `withPendingContents`.
 - **WHEN** `@Controller("/x") @Middleware(Keys.session) struct C` declares `@Get("/y")` and `Keys.session` is a factory key
 - **THEN** the witness binds `let wireMVCChain = wireCompose {` with the single entry `self._wireFactory_Keys_session.create(Builder.RequestContext.Base.self, Builder.Reader.self, Builder.ResponseSender.self)`
 
-Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`middlewareFactoryKeyFold`).
+#### Scenario: a route with no middleware
+- **WHEN** `@Controller("/todos") struct Todos` declares `@Get("/{id}") @JSONResponse func get(@Path id: String)` and carries no `@Middleware`
+- **THEN** the witness registers the route with no `RequestResponseMiddlewareBox`, no `wireCompose` and no `withPendingContents`
+
+Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`middlewareFactoryKeyFold`, `plainJSONRouteWithPathBinding`).
 
 ### Requirement: Controller-scope middleware wraps route-scope middleware
 The generated fold for a route SHALL list the controller's `@Middleware` entries, in written order,
@@ -151,12 +156,14 @@ inline.
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`controllerAndRouteByTypeMiddlewareOrder`).
 
-### Requirement: The binding-key form reads a keyed graph binding
-On a controller or route, `@Middleware(key)` where `key` names no `@Factory` template SHALL fold
-`self._wire<key>`, with every character of the key's text outside `[A-Za-z0-9_]` replaced by `_`, and
-SHALL NOT call a factory's `create`.
+### Requirement: A `@Middleware` key WireGen does not know as a factory folds a `_wire<key>` field
+When the argument of a controller or route `@Middleware` is neither `T.self` nor a key WireGen knows as
+a `@Factory` template, WireGen SHALL fold `self._wire<key>` and SHALL NOT call a factory's `create`.
+`@Middleware` accepts only `T.Type` or `FactoryKey`, so this path is reached only by a `FactoryKey` that
+names no `@Factory` template, and the folded field does not exist on the proxy, so the source fails to
+compile.
 
-#### Scenario: a dotted binding key
+#### Scenario: a key WireGen does not see as a factory
 - **WHEN** `@Controller("/x") @Middleware(Gates.primary) struct C` is rendered with no factory keys
 - **THEN** the witness contains `self._wireGates_primary` and contains neither `_wireFactory_` nor `.create(`
 
@@ -165,7 +172,11 @@ Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`m
 ### Requirement: The factory-key form creates the middleware at the builder's box types
 On a controller or route, `@Middleware(key)` where `key` names a `@Factory` template SHALL fold
 `self._wireFactory_<key>.create(Builder.RequestContext.Base.self, Builder.Reader.self,
-Builder.ResponseSender.self)`, with the key text sanitised as for the binding-key form.
+Builder.ResponseSender.self)`, with every character of the key's text that is not a letter, a number
+(Swift `Character.isLetter` or `isNumber`) or `_` replaced by `_`. The exception is a keyed-harness
+variant witness whose factory `@Inject`s a `@BindType`'d slot: there the entry SHALL be
+`create(doubles: wireMVCDoubles, Builder.RequestContext.Base.self, Builder.Reader.self, Builder.ResponseSender.self)`,
+with `wireMVCDoubles` bound above the fold.
 
 #### Scenario: `Keys.session`
 - **WHEN** a controller carries `@Middleware(Keys.session)` and `Keys.session` is a factory key
@@ -175,7 +186,11 @@ Builder.ResponseSender.self)`, with the key text sanitised as for the binding-ke
 - **WHEN** `UsersController` carries `@Middleware(RequestLogMiddlewareKeys.factory)`, `@Middleware(SessionMiddlewareKeys.factory)` and `@Middleware(AuditMiddlewareKeys.factory)`
 - **THEN** the request-log and audit probes each count at least one request after the example has driven its routes
 
-Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`middlewareFactoryKeyFold`), `Fixtures/Sources/WireMVCExample/main.swift` (run by the `BuildAndRun` job in `.github/workflows/build.yml`).
+#### Scenario: a mock-consuming factory under a keyed harness
+- **WHEN** `Audit`, the `@Factory` behind `AuditKeys.factory`, declares `@Inject var backend: any NoteBackend` and a `TestingKey` carries `@BindType(NoteBackend.self, MockNoteBackend.self)`
+- **THEN** the variant witness folds `self._wireFactory_AuditKeys_factory.create(doubles: wireMVCDoubles, Builder.RequestContext.Base.self, Builder.Reader.self, Builder.ResponseSender.self)` after `let wireMVCDoubles =`, and the production witness folds the box-role-only `create`
+
+Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`middlewareFactoryKeyFold`, `mockConsumingFactoryFoldThreadsDoublesToCreate`), `Fixtures/Sources/WireMVCExample/main.swift` (run by the `BuildAndRun` job in `.github/workflows/build.yml`).
 
 ### Requirement: `@MiddlewareFactory` requires `@Factory` on the same type
 `@MiddlewareFactory` SHALL be an attached peer macro implemented by `MiddlewareFactoryMacro` that
@@ -192,11 +207,12 @@ error `middlewareFactoryRequiresFactory`.
 
 Pinned by: `Tests/WireMVCMacrosTests/MiddlewareFactoryMacroTests.swift` (`testNoOpWhenFactoryPresent`, `testDiagnosesWithoutFactory`).
 
-### Requirement: `@MiddlewareFactory` maps assisted generic parameters to box roles
-`MiddlewareRole` SHALL have the cases `requestContext`, `reader` and `responseSender`. Bare
-`@MiddlewareFactory` SHALL map a factory template's assisted generic parameters positionally to
-request context, reader and response sender, and `@MiddlewareFactory(.role, …)` SHALL map them to the
-listed roles in order.
+### Requirement: `@MiddlewareFactory` declares the box roles for swift-wire's factory role mapping
+`MiddlewareRole` SHALL have the cases `requestContext`, `reader` and `responseSender`, and WireMVC SHALL
+declare `@MiddlewareFactory` through `wireMVCMiddlewareFactoryRolesAlias` as a `.mapsFactoryRoles`
+annotation over the roles `RequestContext`, `Reader` and `ResponseSender`, in that order. swift-wire's
+factory synthesis, not WireMVC, then maps a bare use positionally and a `(.role, …)` use by the listed
+roles, as the [swift-wire adapter-annotations](https://github.com/swift-wire/swift-wire/blob/main/openspec/specs/adapter-annotations/spec.md) specification states.
 
 #### Scenario: a reordered middleware
 - **WHEN** `AuditMiddleware<Sender, Reader, Ctx>` is declared `@MiddlewareFactory(.responseSender, .reader, .requestContext)` and folded on `UsersController`
@@ -235,7 +251,7 @@ generated entry SHALL call it once, on the result of `builder.finalize()`.
 - **WHEN** WireMVCRouteGen renders the `@main` for `AppBootstrap`
 - **THEN** it contains `let wireMVCServed = graph._WireGlobalMiddleware_AppBootstrap.wrapGlobalMiddleware(handler)`
 
-Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`globalMiddlewareProxyWrapsRouterWithFactories`, `globalMiddlewareProxyIdentityWhenEmpty`, `bootstrapEntryGeneratesMain`).
+Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`globalMiddlewareProxyWrapsRouterWithFactories`, `globalMiddlewareProxyIdentityWhenEmpty`, `bootstrapEntryGeneratesMain`). The written order of the factory entries is pinned by nothing yet.
 
 ### Requirement: Global middleware is non-transforming
 `GlobalMiddlewareHandler<Inner, Chain>` SHALL require `Chain.Input ==
@@ -259,11 +275,15 @@ fallback, and for a 405 answered by `registerMethodNotAllowed`.
 - **WHEN** CI boots `WireMVCBootstrapExample` and requests `/hello/ci` and `/nope`
 - **THEN** the server log contains `access: GET /hello/ci` and `access: GET /nope`
 
+#### Scenario: an authored `@NotFound` carries the global contribution
+- **WHEN** the `WireMVCBootstrapExample` test server, whose root carries `@Middleware(AccessLogKeys.factory)` and a `@NotFound` handler, receives `GET /no/such/route`
+- **THEN** the response is `404` carrying `x-served-by: wire-mvc`
+
 #### Scenario: synthesised 404 and 405
 - **WHEN** the fallback fixture receives `GET /no/such/route` and `DELETE /ping`
 - **THEN** the responses are `404` and `405` (with `Allow: GET`), each carrying `x-stamp: global`
 
-Pinned by: `.github/workflows/build.yml` (`BuildAndRun`, step `Run @WireMVCBootstrap example (boot, probe, stop)`), `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`matchedRouteCarriesTheGlobalHeader`, `synthesisedNotFoundCarriesTheGlobalHeader`, `aMethodNotAllowedCarriesTheGlobalHeader`).
+Pinned by: `.github/workflows/build.yml` (`BuildAndRun`, step `Run @WireMVCBootstrap example (boot, probe, stop)`), `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`matchedRouteCarriesTheGlobalHeader`, `synthesisedNotFoundCarriesTheGlobalHeader`, `aMethodNotAllowedCarriesTheGlobalHeader`), `Fixtures/Tests/WireMVCBootstrapExampleTests/WithTestServerTests.swift` (`globalContributionReachesTheNotFoundFallback`).
 
 ### Requirement: `@Middleware` on `mountIntrospectionAt` guards only the introspection route
 A `@Middleware` factory on the root's `mountIntrospectionAt()` SHALL be folded only around the
