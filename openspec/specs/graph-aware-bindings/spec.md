@@ -7,7 +7,9 @@ static method. The binding is two declarations: a property wrapper carrying
 `@RequestBinding(Worker.self, …)`, and a `@Scoped(seed:)` worker conforming to `ScopedRequestBound` whose
 instance `bind` produces the handler's value. swift-wire reads the same attribute through the
 `.injectsFromGraph` capability and yields the worker on the controller's scope entry; WireMVCRouteGen
-binds the parameter off that entry, and refuses the pairings where no such entry exists. The typed
+binds the parameter off that entry, and refuses the pairings where no such entry exists when it can
+resolve the worker's seed; a worker whose seed it cannot resolve is not checked, which is tracked as a
+defect in https://github.com/swift-wire/wire-mvc/issues/232. The typed
 client omits such a route, as specified in [testing-harness](../testing-harness/spec.md).
 
 Rationale: [ScopeAwareMiddlewareAndBindings](../../../Documentation/Notes/ScopeAwareMiddlewareAndBindings.md).
@@ -26,11 +28,11 @@ declaration in any parsed file, recording `S` without `.self`.
 - **WHEN** `AuthorizedNoteBinding.swift` declares `@RequestBinding(NoteAuthorizer.self) struct AuthorizedNote` and `@Scoped(seed: HTTPRequest.self) struct NoteAuthorizer: ScopedRequestBound`, and `NotesController` declares `authorizedNote(@AuthorizedNote("read") note: Note)`
 - **THEN** the fixtures package builds, with the route bound through `NoteAuthorizer`
 
-#### Scenario: the worker declared beside the wrapper, read through the scan
-- **WHEN** `generateRouteContributors` is given `@RequestBinding(DocumentAuthorizer.self) struct AuthorizedDocument` and `@Scoped(seed: HTTPRequest.self) struct DocumentAuthorizer` alongside a scoped controller using it
-- **THEN** no scoped-binding error is reported
+#### Scenario: the worker read through the scan
+- **WHEN** `generateRouteContributors` is given `@RequestBinding(DocumentAuthorizer.self) struct AuthorizedDocument`, which conforms to neither send protocol, beside `@Scoped(seed: HTTPRequest.self) struct DocumentAuthorizer` and a scoped controller using it
+- **THEN** the binding is recorded with worker `DocumentAuthorizer`, and no diagnostic contains `does not conform to RequestSendable`
 
-Pinned by: `Fixtures/Sources/WireMVCBootstrapExample/AuthorizedNoteBinding.swift` and `Fixtures/Sources/WireMVCBootstrapExample/NotesController.swift` (built by the `Build fixtures` step of the `BuildAndRun` job in `.github/workflows/build.yml`), `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`theOmittedRouteIsNotAlsoNaggedAboutRequestSendable`).
+Pinned by: `Fixtures/Sources/WireMVCBootstrapExample/AuthorizedNoteBinding.swift` and `Fixtures/Sources/WireMVCBootstrapExample/NotesController.swift` (built by the `Build fixtures` step of the `BuildAndRun` job in `.github/workflows/build.yml`), `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`theOmittedRouteIsNotAlsoNaggedAboutRequestSendable`). Resolving the worker's seed through the scan is pinned by nothing yet.
 
 ### Requirement: `@RequestBinding` declares the `.injectsFromGraph` capability
 The package SHALL declare `wireMVCRequestBindingAlias` as a `WireAdapterAnnotationV1` for annotation
@@ -54,10 +56,11 @@ throws `missingPathParameter`, `missingQueryParameter` or `missingHeader`.
 - **WHEN** `package struct NoteAuthorizer: ScopedRequestBound` declares `typealias Value = Note`, an `@Inject var backend: any NoteBackend` and the four-argument instance `bind`
 - **THEN** it conforms without implementing the coding-aware overload
 
-Pinned by: `Fixtures/Sources/WireMVCBootstrapExample/AuthorizedNoteBinding.swift` (built by the `Build fixtures` step of the `BuildAndRun` job in `.github/workflows/build.yml`).
+Pinned by: `Fixtures/Sources/WireMVCBootstrapExample/AuthorizedNoteBinding.swift` (built by the `Build fixtures` step of the `BuildAndRun` job in `.github/workflows/build.yml`). The `nil`-on-absence behaviour of `bindOptional` is pinned by nothing yet.
 
 ### Requirement: The parameter is bound off the scope entry's worker field
-For a parameter whose binding names a worker, the terminal SHALL emit `let <parameter> = try await
+For a parameter that is neither optional nor defaulted, whose binding names a worker and declares
+neither `.readerBody` nor `.bodyStream`, the terminal SHALL emit `let <parameter> = try await
 wireMVCScopeEntry.<field>.bind(name: …, request: request, pathParameters: pathParameters, body: …,
 coding: …)`, where `<field>` is `scopeYieldFieldName(forType:)` of the worker's type. It SHALL NOT
 spell `<Wrapper><<Type>>` and SHALL NOT read a field named after the wrapper. Ordinary bindings on the
@@ -73,6 +76,18 @@ same route SHALL keep the static form.
 
 Pinned by: `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`theBindingIsReadOffTheScopeEntryRatherThanConstructed`, `anOrdinaryBindingIsUnchanged`).
 
+### Requirement: A worker-backed binding with a streamed body is bound through the wrapper
+For a parameter whose binding names a worker and also declares `.readerBody` or `.bodyStream`,
+WireMVCRouteGen SHALL emit the wrapper's static `<Wrapper><<Type>>.bindReader(…)` or lent-stream form
+without reading the worker off the scope entry, and SHALL report no diagnostic for the combination. This
+is tracked as a defect in https://github.com/swift-wire/wire-mvc/issues/231.
+
+#### Scenario: a worker with a reader body
+- **WHEN** a scoped route takes `@AuthorizedDocument("read") document: Document` and `AuthorizedDocument` is declared `@RequestBinding(DocumentAuthorizer.self, .readerBody)`
+- **THEN** the source contains `let document = try await AuthorizedDocument<Document>.bindReader(` and does not contain `wireMVCScopeEntry.documentAuthorizer`
+
+Pinned by: nothing yet.
+
 ### Requirement: An optional worker-backed parameter uses the instance's `bindOptional`
 For a worker-backed parameter whose type ends in `?`, the terminal SHALL call
 `wireMVCScopeEntry.<field>.bindOptional(…)`, and for one with a default value it SHALL call
@@ -85,14 +100,15 @@ For a worker-backed parameter whose type ends in `?`, the terminal SHALL call
 Pinned by: `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`anOptionalParameterUsesTheInstancesOptionalForm`). The defaulted form is pinned by nothing yet.
 
 ### Requirement: The worker's bind runs after the scope entry that produces it
-WireMVCRouteGen SHALL emit a worker-backed bind after `let wireMVCScopeEntry = try await
-self._wireEnterScope(request)` in the same route.
+WireMVCRouteGen SHALL emit a worker-backed bind after the `let wireMVCScopeEntry = try await
+self._wireEnterScope(…)` line in the same route, whose argument is `request` in a production witness and
+`request, wireMVCDoubles` in a keyed variant witness.
 
 #### Scenario: statement order
 - **WHEN** the `Documents` witness is rendered
 - **THEN** the scope-entry line ends before `wireMVCScopeEntry.documentAuthorizer.bind(` begins
 
-Pinned by: `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`theBindComesAfterTheScopeEntryThatProducesIt`).
+Pinned by: `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`theBindComesAfterTheScopeEntryThatProducesIt`, production witness only). The keyed variant witness is pinned by nothing yet.
 
 ### Requirement: A worker-backed binding on an unscoped controller is an error
 When the worker's seed is known and the controller carries no `@Scoped(seed:)`, WireMVCRouteGen SHALL
@@ -102,21 +118,25 @@ report `scopedBindingOnUnscopedController` as an error at the parameter and not 
 - **WHEN** an unscoped `@Controller("/documents")` declares `read(@AuthorizedDocument("read") document: Document)` and `DocumentAuthorizer` is bound in `@Scoped(seed: HTTPRequest.self)`
 - **THEN** the error is `'@AuthorizedDocument document' resolves through 'DocumentAuthorizer', which is bound in @Scoped(seed: HTTPRequest.self) — but this controller is not scoped, so its routes hold the controller directly and enter no scope, and there is nothing to construct 'DocumentAuthorizer' in. Mark the controller @Scoped(seed: HTTPRequest.self)`
 
-Pinned by: `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`aScopedBindingOnAnUnscopedControllerIsRefused`).
+Pinned by: `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`aScopedBindingOnAnUnscopedControllerIsRefused`, which asserts the fragments `resolves through 'DocumentAuthorizer'`, `this controller is not scoped` and `Mark the controller @Scoped(seed: HTTPRequest.self)` of the message). The error severity, the parameter location and the route's omission are pinned by nothing yet.
 
 ### Requirement: A worker bound in a sibling seed's scope is an error
-When the worker's seed differs from the controller's `@Scoped(seed:)` type, WireMVCRouteGen SHALL report
-`scopedBindingSeedMismatch` as an error at the parameter and not emit the route.
+When the worker's `@Scoped(seed:)` argument is spelled differently from the controller's, compared as
+text with `.self` removed, WireMVCRouteGen SHALL report `scopedBindingSeedMismatch` as an error at the
+parameter and not emit the route. Two spellings of one type, such as `HTTPTypes.HTTPRequest` and
+`HTTPRequest`, count as different seeds. That matches swift-wire, which also identifies a seed scope
+by the seed's spelling, so the two spellings really are sibling scopes.
 
 #### Scenario: a worker in another seeded scope
 - **WHEN** a `@Scoped(seed: HTTPRequest.self)` controller uses `@AuthorizedDocument` and `DocumentAuthorizer` is bound in `@Scoped(seed: OtherSeed.self)`
 - **THEN** the error is `'@AuthorizedDocument' resolves through 'DocumentAuthorizer', which is bound in @Scoped(seed: OtherSeed.self), but this controller is in @Scoped(seed: HTTPRequest.self) — sibling seeded scopes are isolated by design, so the controller's scope entry constructs only its own. Bind 'DocumentAuthorizer' in @Scoped(seed: HTTPRequest.self)`
 
-Pinned by: `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`aBindingFromASiblingSeedIsRefused`).
+Pinned by: `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`aBindingFromASiblingSeedIsRefused`, which asserts the fragments `resolves through 'DocumentAuthorizer'` and `sibling seeded scopes are isolated by design` of the message). The seed names in the message, the `Bind 'DocumentAuthorizer' in` advice, the error severity, the parameter location and the route's omission are pinned by nothing yet.
 
 ### Requirement: A worker-backed binding is exempt from the send-conformance warning
 `bindingMissingSendConformance` SHALL NOT be reported for a binding that names a worker, while a binding
-without a worker and without `RequestSendable` SHALL still be warned about in the same build.
+that names no worker, declares none of `.body`, `.readerBody` or `.bodyStream`, and does not conform to
+`RequestSendable` SHALL still be warned about in the same build.
 
 #### Scenario: the graph-aware wrapper
 - **WHEN** `@RequestBinding(DocumentAuthorizer.self) struct AuthorizedDocument` conforms to neither send protocol and a scoped route uses it
