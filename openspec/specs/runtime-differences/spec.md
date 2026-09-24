@@ -15,13 +15,18 @@ Documentation: [WhatDiffersByRuntime](../../../Sources/WireMVC/WireMVC.docc/What
 ## Requirements
 
 ### Requirement: A wrong method is a 405 natively and a 404 on the bridged runtimes
-On the proposal-native runtime, a request whose path reaches a registered route under a different
-method SHALL be answered `405` with an `Allow` header. On Hummingbird and on Vapor, the same request
-SHALL be answered `404` with no `Allow` header.
+On the proposal-native runtime, a request whose path reaches a registered literal or `{name}` route
+under a different method SHALL be answered `405` with an `Allow` header; a path matched only by a
+trailing `{name*}` catch-all under a different method is answered `404`. On Hummingbird and on Vapor,
+a wrong-method request SHALL be answered `404` with no `Allow` header.
 
 #### Scenario: proposal-native
 - **WHEN** `/todos` is registered for `GET` and `POST` and a client sends `DELETE /todos`
 - **THEN** the response is `405` with `Allow: GET, POST`
+
+#### Scenario: proposal-native, catch-all
+- **WHEN** only `GET /files/{path*}` is registered and a client sends `DELETE /files/a`
+- **THEN** the router resolves `.notFound` and the response is `404` with no `Allow` header
 
 #### Scenario: Hummingbird
 - **WHEN** `/only-get` is registered for `GET` on a Hummingbird router through `ServerTransport` and a client sends `DELETE /only-get`
@@ -31,15 +36,22 @@ SHALL be answered `404` with no `Allow` header.
 - **WHEN** the same registration is made on Vapor and the same request is sent
 - **THEN** the response is `404` with no `Allow` header
 
-Pinned by: `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`aWrongMethodOnARealRouteIsMethodNotAllowed`), [SwiftHttpServerExample MethodMismatchTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/SwiftHttpServerExample/Tests/SwiftHttpServerExampleMockedTests/MethodMismatchTests.swift) (`aWrongMethodOnARegisteredPathIs405WithAllow`), [HummingbirdExample MethodMismatchTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/HummingbirdExample/Tests/HummingbirdExampleTests/MethodMismatchTests.swift) (`aWrongMethodOnARegisteredPathIs404NotAllowed`), [VaporExample MethodMismatchTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/VaporExample/Tests/VaporExampleTests/MethodMismatchTests.swift) (`aWrongMethodOnARegisteredPathIs404NotAllowed`).
+Pinned by: `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`aWrongMethodOnARealRouteIsMethodNotAllowed`), [SwiftHttpServerExample MethodMismatchTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/SwiftHttpServerExample/Tests/SwiftHttpServerExampleMockedTests/MethodMismatchTests.swift) (`aWrongMethodOnARegisteredPathIs405WithAllow`), [HummingbirdExample MethodMismatchTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/HummingbirdExample/Tests/HummingbirdExampleTests/MethodMismatchTests.swift) (`aWrongMethodOnARegisteredPathIs404NotAllowed`), [VaporExample MethodMismatchTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/VaporExample/Tests/VaporExampleTests/MethodMismatchTests.swift) (`aWrongMethodOnARegisteredPathIs404NotAllowed`). The native catch-all `404` is pinned by nothing yet.
 
 ### Requirement: Path parameters are percent-decoded natively and on Vapor, not on Hummingbird
-On the proposal-native runtime and on Vapor, a bound path parameter SHALL reach the handler
-percent-decoded. On Hummingbird it SHALL reach the handler exactly as it appeared in the request path.
+On the proposal-native runtime and on Vapor, a bound `{name}` path parameter SHALL reach the handler
+percent-decoded; on the proposal-native runtime a malformed escape or a sequence that does not decode to
+UTF-8 is left as it arrived. On the proposal-native runtime, the remainder bound by a trailing `{name*}`
+catch-all SHALL reach the handler undecoded. On Hummingbird a bound path parameter SHALL reach the
+handler exactly as it appeared in the request path.
 
 #### Scenario: proposal-native
 - **WHEN** the typed client requests a todo whose id is `does not exist`, `a%zz` or `a/b`
 - **THEN** the repository behind the handler is asked for exactly that id
+
+#### Scenario: proposal-native, catch-all remainder
+- **WHEN** `GET /files/{path*}` is registered and `GET /files/a%2Fb/c` is requested
+- **THEN** the handler receives `a%2Fb/c` for `path`
 
 #### Scenario: Hummingbird
 - **WHEN** a route with a `{name}` parameter is requested with `a%20b` in that segment
@@ -49,7 +61,7 @@ percent-decoded. On Hummingbird it SHALL reach the handler exactly as it appeare
 - **WHEN** the same route is requested on Vapor
 - **THEN** the handler receives `a b`
 
-Pinned by: `Tests/WireMVCRouterTests/RouteTrieTests.swift` (`aPercentEscapeInAParameterIsDecoded`), [SwiftHttpServerExample PathParameterDecodingTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/SwiftHttpServerExample/Tests/SwiftHttpServerExampleMockedTests/PathParameterDecodingTests.swift) (`anIdWithSpacesRoundTrips`, `anIdWithALiteralPercentRoundTrips`, `anIdWithASlashStaysOneParameter`), [HummingbirdExample PathParameterDecodingTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/HummingbirdExample/Tests/HummingbirdExampleTests/PathParameterDecodingTests.swift) (`aPercentEscapedParameterArrivesUndecoded`), [VaporExample PathParameterDecodingTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/VaporExample/Tests/VaporExampleTests/PathParameterDecodingTests.swift) (`aPercentEscapedParameterArrivesDecoded`).
+Pinned by: `Tests/WireMVCRouterTests/RouteTrieTests.swift` (`aPercentEscapeInAParameterIsDecoded`, `malformedEscapesAreLeftAlone`, `bytesThatAreNotUTF8LeaveTheSegmentRaw`, `aCatchAllRemainderIsNotDecoded`), [SwiftHttpServerExample PathParameterDecodingTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/SwiftHttpServerExample/Tests/SwiftHttpServerExampleMockedTests/PathParameterDecodingTests.swift) (`anIdWithSpacesRoundTrips`, `anIdWithALiteralPercentRoundTrips`, `anIdWithASlashStaysOneParameter`), [HummingbirdExample PathParameterDecodingTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/HummingbirdExample/Tests/HummingbirdExampleTests/PathParameterDecodingTests.swift) (`aPercentEscapedParameterArrivesUndecoded`), [VaporExample PathParameterDecodingTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/VaporExample/Tests/VaporExampleTests/PathParameterDecodingTests.swift) (`aPercentEscapedParameterArrivesDecoded`).
 
 ### Requirement: The trailing slash is a policy natively and lenient on the bridged runtimes
 On the proposal-native runtime, a trailing slash on a request path SHALL be governed by the
@@ -99,23 +111,19 @@ Pinned by: `Tests/WireMVCRouterTests/RouteTrieTests.swift` (`aCatchAllBindsTheRe
 
 ### Requirement: Ambient task-local context reaches a handler on every runtime
 A task-local value bound by the host around request dispatch SHALL be readable inside a WireMVC route
-handler on all three runtimes. On Hummingbird and on Vapor it SHALL also be readable in a response body
-the handler produces itself, and SHALL NOT be readable in a body sequence the host pulls lazily after the
-handler returns.
+handler on all three runtimes. On Hummingbird and on Vapor it SHALL also be readable while the handler
+writes a streamed response body, which `WireMVCServerTransport` produces from inside the unstructured
+`Task` it creates in the closure it registers with the host.
 
 #### Scenario: host middleware on Hummingbird or Vapor
-- **WHEN** a host middleware binds `TracingProbe.$traceID` to `abc-123` and a `ServerTransport`-registered handler returns it
+- **WHEN** a host middleware binds `TracingProbe.$traceID` to `abc-123` and a raw `ServerTransport` closure registered on the host returns it
 - **THEN** the response body is `abc-123`
-
-#### Scenario: a lazily pulled body on Hummingbird or Vapor
-- **WHEN** the handler instead returns a body sequence that reads the task-local in `next()`
-- **THEN** the body is `1:<none>\n2:<none>\n3:<none>\n`
 
 #### Scenario: the bridge itself
 - **WHEN** a transport call runs inside `TracingProbe.$traceID.withValue("abc-123")` and the WireMVC handler streams three lines reading it
 - **THEN** the body is `1:abc-123\n2:abc-123\n3:abc-123\n`
 
-Pinned by: `Tests/WireMVCServerTransportTests/AdapterTests.swift` (`taskLocalContextReachesTheHandlerThroughTheBridge`, `taskLocalContextSurvivesIntoAStreamedBody`), [HummingbirdExample AmbientContextTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/HummingbirdExample/Tests/HummingbirdExampleTests/AmbientContextTests.swift) (`taskLocalContextSetByHostMiddlewareReachesTheHandler`, `taskLocalContextIsLostWhenTheFrameworkPullsTheBody`, `taskLocalContextSurvivesWhenTheHandlerProducesTheBytes`), [VaporExample AmbientContextTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/VaporExample/Tests/VaporExampleTests/AmbientContextTests.swift) (`taskLocalContextSetByHostMiddlewareReachesTheHandler`, `taskLocalContextIsLostWhenTheFrameworkPullsTheBody`, `taskLocalContextSurvivesWhenTheHandlerProducesTheBytes`). The proposal-native runtime is pinned by nothing yet: `Fixtures/Sources/WireMVCTaskLocalExample/main.swift` exercises it when run, and CI builds it without running it.
+Pinned by: the bridged runtimes are pinned in two halves, and no single test runs a WireMVC handler behind real host middleware. The bridge half, a `ServerTransport` closure calling a WireMVC handler over a mock transport with no host, is pinned by `Tests/WireMVCServerTransportTests/AdapterTests.swift` (`taskLocalContextReachesTheHandlerThroughTheBridge`, `taskLocalContextSurvivesIntoAStreamedBody`). The host half, real host middleware dispatching to a raw `ServerTransport` closure with no WireMVC graph, is pinned by [HummingbirdExample AmbientContextTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/HummingbirdExample/Tests/HummingbirdExampleTests/AmbientContextTests.swift) (`taskLocalContextSetByHostMiddlewareReachesTheHandler`, `taskLocalContextSurvivesWhenTheHandlerProducesTheBytes`) and [VaporExample AmbientContextTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/VaporExample/Tests/VaporExampleTests/AmbientContextTests.swift) (`taskLocalContextSetByHostMiddlewareReachesTheHandler`, `taskLocalContextSurvivesWhenTheHandlerProducesTheBytes`). The proposal-native runtime is pinned by nothing yet: `Fixtures/Sources/WireMVCTaskLocalExample/main.swift` exercises it when run, and CI builds it without running it.
 
 ## Related specifications
 
