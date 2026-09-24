@@ -22,8 +22,10 @@ WireMVCResponseClientBody = .decoded)` SHALL be an attached peer macro placed on
 declaration. `scanResponseModes(in:)` SHALL walk every parsed file, nested declarations included, and
 record a `DeclaredResponseMode` keyed by the annotated macro's bare name, reading the unlabelled
 argument's trailing member name as the terminal, the `codec:` string literal's value as the codec
-spelling, and `client:`'s trailing member name as the client body. A macro without `@ResponseMode`, or
-one whose terminal is not `buffered`, `streaming` or `bodiless`, SHALL yield no entry.
+spelling, and `client:`'s trailing member name as the client body. A macro without `@ResponseMode`
+SHALL yield no entry. The scan SHALL also yield no entry for a declaration whose terminal does not read
+as `buffered`, `streaming` or `bodiless`; that rule only matters for source that already fails to
+type-check, since `WireMVCResponseTerminal` has only those three cases.
 
 #### Scenario: a mode declared in another file
 - **WHEN** one file declares `@ResponseMode(.buffered, codec: "YAMLCodec") public macro YAMLResponse()` and another file's route uses `@YAMLResponse`
@@ -32,10 +34,6 @@ one whose terminal is not `buffered`, `streaming` or `bodiless`, SHALL yield no 
 #### Scenario: a qualified terminal
 - **WHEN** a declaration is written `@ResponseMode(WireMVCResponseTerminal.streaming, codec: "P", client: WireMVCResponseClientBody.text)`
 - **THEN** the scan records terminal `.streaming`, codec `P` and client body `.text`
-
-#### Scenario: an unknown terminal
-- **WHEN** a declaration is written `@ResponseMode(.trailered, codec: "C")`
-- **THEN** the scan records nothing for it
 
 Pinned by: `Tests/WireMVCCodegenTests/ResponseModeScanTests.swift` (`acrossFiles`, `readsEachField`, `overloadsAgree`, `codecIsUnquoted`, `qualifiedTerminal`, `unannotatedMacroIgnored`, `unknownTerminalIgnored`).
 
@@ -97,19 +95,23 @@ annotation and whose return type is not a bodiless `(status:headers:)` tuple.
 Pinned by: nothing yet.
 
 ### Requirement: A body-carrying mode requires a returned value
-WireMVCRouteGen SHALL report `responseModeOnVoid` for a `.buffered` or `.streaming` mode on a route
-whose return shape has no body.
+WireMVCRouteGen SHALL report `responseModeOnVoid` for a `.buffered` or `.streaming` mode that names a
+codec on a Void handler, and for a `.streaming` mode that names a codec on a `(status:headers:)` tuple.
+A `.buffered` mode on a `(status:headers:)` tuple is reported as
+`responseAnnotationOnSelfDescribingReturn` instead, and a mode with no codec as
+`responseModeMissingCodec`.
 
 #### Scenario: `@HTMLResponse` on a Void handler
 - **WHEN** `@Get("/ping") @HTMLResponse func ping() async throws {}` is generated
 - **THEN** the diagnostic is "@HTMLResponse on 'ping' requires a returned value; use @ResponseStatus for a Void handler"
 
-Pinned by: `Tests/WireMVCCodegenTests/HTMLResponseGenerationTests.swift` (`htmlOnVoid`).
+Pinned by: `Tests/WireMVCCodegenTests/HTMLResponseGenerationTests.swift` (`htmlOnVoid`). A `.streaming` mode on a `(status:headers:)` tuple is pinned by nothing yet.
 
 ### Requirement: A bodiless mode requires a Void handler and a status
 For a `.bodiless` mode WireMVCRouteGen SHALL read the status from a `status:` argument or, failing
 that, an unlabelled first argument, and SHALL report `bodilessModeNeedsStatus` when neither is present.
-It SHALL report `responseStatusOnValue` when the route's return shape carries a body. A valid route
+When the annotation does name a status, it SHALL report `responseStatusOnValue` if the route's return
+shape carries a body; that message names `@ResponseStatus` whatever the annotation is. A valid route
 SHALL return `.status(<status>)` from `building`.
 
 #### Scenario: a bodiless mode with no status
@@ -170,8 +172,9 @@ Pinned by: `Tests/WireMVCCodegenTests/ResponseHeaderGenerationTests.swift` (`ful
 
 ### Requirement: A bodiless `(status:headers:)` tuple takes no response annotation
 A route returning `(status:headers:)` SHALL be generated with no response annotation as
-`return .status(wireMVCReturn.status, headerFields: …)`. Writing any response annotation on it SHALL
-be reported as `responseAnnotationOnSelfDescribingReturn`.
+`return .status(wireMVCReturn.status, headerFields: …)`. Writing a `.buffered` or `.bodiless` response
+annotation on it SHALL be reported as `responseAnnotationOnSelfDescribingReturn`; a `.streaming`
+annotation is handled by the body-carrying mode requirement instead.
 
 #### Scenario: a computed redirect
 - **WHEN** `@Get("/moved") func moved() async throws -> (status: HTTPResponse.Status, headers: HTTPFields)` is generated
@@ -181,7 +184,7 @@ be reported as `responseAnnotationOnSelfDescribingReturn`.
 - **WHEN** the same route also carries `@ResponseStatus(.found)`
 - **THEN** the diagnostic is "@ResponseStatus on 'moved' declares nothing the return type does not already say — a (status:headers:) tuple carries no body and computes its own status, so the annotation would be read by nobody and could only go out of date. Remove it. (A route that returns a body still needs @JSONResponse: that names the codec.)"
 
-Pinned by: `Tests/WireMVCCodegenTests/ResponseHeaderGenerationTests.swift` (`bodilessTupleEmitsAStatusOutcomeWithNoAnnotation`, `annotatingASelfDescribingReturnIsDiagnosed`, `clientStillGeneratesForABodilessTuple`), `Fixtures/Tests/WireMVCBootstrapExampleTests/WithTestServerTests.swift` (`bodilessTupleRedirectsToTheComputedLocation`).
+Pinned by: `Tests/WireMVCCodegenTests/ResponseHeaderGenerationTests.swift` (`bodilessTupleEmitsAStatusOutcomeWithNoAnnotation`, `annotatingASelfDescribingReturnIsDiagnosed`, `clientStillGeneratesForABodilessTuple`), `Fixtures/Tests/WireMVCBootstrapExampleTests/WithTestServerTests.swift` (`bodilessTupleRedirectsToTheComputedLocation`). A `.buffered` annotation on the tuple is pinned by nothing yet.
 
 ### Requirement: A returned status makes an explicit `status:` argument an error
 When the response tuple includes `status`, WireMVCRouteGen SHALL report `deadResponseStatusArgument`
@@ -273,11 +276,12 @@ bodiless tuples) or `wireMVCStreamingTerminal` (for `.streaming` modes) with `re
 one whose `building` takes no argument, a `collectingBodyFrom:` one that collects the request body and
 passes it to `building` as `[UInt8]`, and a `lendingBodyFrom:` one that passes the reader to
 `building` as a consuming parameter. The generator SHALL choose `collectingBodyFrom: reader` for a
-collected body, `lendingBodyFrom: reader` for a reader-body binding, and the plain overload otherwise.
+collected body, `lendingBodyFrom: reader` for a `.readerBody` binding or for a `.bodyStream` binding on
+a `.buffered` or `.bodiless` route, and the plain overload otherwise.
 
 #### Scenario: a streaming route with a JSON body
 - **WHEN** `@Post("/preview") @HTMLResponse func preview(@JSONBody input: Draft) async throws -> some HTML` is generated
-- **THEN** the witness passes `collectingBodyFrom: reader`, opens `building: { requestBody in`, and emits no inline `WireMVCRequest.collectBody(`
+- **THEN** the witness passes `collectingBodyFrom: reader`, opens `building: { requestBody in`, and emits no `WireMVCRequest.collectBody(` inside `building`
 
 #### Scenario: a reader-body binding on a streaming route
 - **WHEN** a streaming route binds a `@RequestBinding(.readerBody)` parameter
@@ -345,8 +349,8 @@ Pinned by: `Fixtures/Tests/StreamingTierTests/TierTests.swift` (`nonSendableProd
 ### Requirement: A bare `@RawRoute` binds its parameters by type
 A route carrying `@RawRoute` or `@RawRoute()` SHALL call its handler with the register closure's
 primitives, matching `HTTPRequest` to the request, `[String: Substring]` to the path parameters, and a
-generic parameter constrained by `AsyncReader`, `HTTPResponseSender` or `RequestContext` to the reader,
-sender or context. Any other parameter SHALL be reported as `unsupportedRawParameter`. A `@RawRoute`
+generic parameter whose inline constraint in the generic parameter clause, not a `where` clause, names
+`AsyncReader`, `HTTPResponseSender` or `RequestContext` to the reader, sender or context. Any other parameter SHALL be reported as `unsupportedRawParameter`. A `@RawRoute`
 needs no response annotation.
 
 #### Scenario: a sender-only raw route
