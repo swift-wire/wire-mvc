@@ -26,7 +26,7 @@ proxyScope: .singleton)`, and `@WireMVCBootstrap()` SHALL be an attached peer ma
 - **WHEN** `@Singleton @WireMVCBootstrap struct AppBootstrap` is rendered
 - **THEN** the entry contains `let wireMVCServed = graph._WireGlobalMiddleware_AppBootstrap.wrapGlobalMiddleware(handler)`
 
-Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`bootstrapEntryGeneratesMain`).
+Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`bootstrapEntryGeneratesMain`) for the `graph._WireGlobalMiddleware_<Root>` line. The `wireMVCBootstrapAlias` declaration and the `@WireMVCBootstrap()` macro declaration are pinned only by `Fixtures/Sources/WireMVCBootstrapExample/Bootstrap.swift`, built by the `Build fixtures` step of the `BuildAndRun` job in `.github/workflows/build.yml`, whose generated entry names `graph._WireGlobalMiddleware_AppBootstrap` and so compiles only when the alias lifts the proxy.
 
 ### Requirement: The root is read off the graph by its binding name
 The generated entry SHALL bind `let bootstrap = graph.<name>`, where `<name>` is the root's type name
@@ -84,11 +84,11 @@ with the effect markers the declaration states, and SHALL call `Wire.bootstrap(i
 - **WHEN** the root declares `static func prepare() async throws -> AppInputs`
 - **THEN** the entry contains `let wireMVCInputs = try await AppBootstrap.prepare()` followed by `let graph = try await Wire.bootstrap(inputs: wireMVCInputs)`
 
-#### Scenario: the fixture's inputs reach the graph
-- **WHEN** `WireMVCBootstrapExample`'s `prepare()` returns `AppInputs(serverConfig: ServerConfig(host: "127.0.0.1", port: 8080), releaseChannel: "stable")`
+#### Scenario: the fixture's inputs reach the graph under the test entry
+- **WHEN** a `.wiremvc(.swiftHttpServer)` suite runs against `WireMVCBootstrapExample`, whose generated test entry routes the call as `let wireMVCInputs = try await WireMVCTesting.preparedOnce { try await AppBootstrap.prepare() }` rather than the bare `@main` call, and `prepare()` returns `AppInputs(serverConfig: ServerConfig(host: "127.0.0.1", port: 8080), releaseChannel: "stable")`
 - **THEN** a binding constructed from those inputs reports `127.0.0.1:8080|stable`, and `prepare()` ran before any binding was constructed
 
-Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`preparePreStepSuppliesTheGraphsInputs`), `Fixtures/Tests/WireMVCBootstrapExampleTests/WithTestServerTests.swift` (`inputsFromPrepareReachedTheGraph`, `prepareRanBeforeAnyBindingWasConstructed`).
+Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`preparePreStepSuppliesTheGraphsInputs`), `Fixtures/Tests/WireMVCBootstrapExampleTests/WithTestServerTests.swift` (`inputsFromPrepareReachedTheGraph`, `prepareRanBeforeAnyBindingWasConstructed`) for the test entry. The `@main` path is pinned end to end only by `.github/workflows/build.yml` (`BuildAndRun`, step `Run @WireMVCBootstrap example (boot, probe, stop)`), where the binary binds `127.0.0.1:8080` from the `ServerConfig` that `prepare()` supplies.
 
 ### Requirement: A `Void` `prepare()` runs first and supplies nothing
 When the root's `prepare()` declares no return type, `Void` or `()`, the generated entry SHALL call it
@@ -114,8 +114,8 @@ builder = bootstrap.createRouteBuilder(for: server)`; `let wireMVCServices = try
 `let wireMVCServed = graph._WireGlobalMiddleware_<Root>.wrapGlobalMiddleware(handler)`; and `try await
 WireMVC.serve(on: server, handler: wireMVCServed, services: wireMVCServices)`.
 
-#### Scenario: the minimal root
-- **WHEN** `@Singleton @WireMVCBootstrap struct AppBootstrap` declares only `@Inject let config: ServerConfig` and `func createServer() throws -> NIOHTTPServer`
+#### Scenario: a root with no optional members
+- **WHEN** the entry is rendered for `@Singleton @WireMVCBootstrap struct AppBootstrap` declaring `@Inject let config: ServerConfig` and `func createServer() throws -> NIOHTTPServer`, with no `prepare()`, `mountIntrospectionAt()` or `@NotFound` method (the renderer emits the `createRouteBuilder(for:)` call by name without reading its declaration, so the rendering fixture omits it; a root that compiles declares it)
 - **THEN** the rendered `struct _WireMVCBootstrapEntry` body is exactly the bootstrap, root, server, builder and `apply` lines, the synthesised `registerNotFound` and `registerMethodNotAllowed` blocks, `finalize()`, `wrapGlobalMiddleware` and `WireMVC.serve`, in that order
 
 #### Scenario: the generated program serves
@@ -127,11 +127,15 @@ Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`b
 ### Requirement: `mountIntrospectionAt()` optionally mounts the wiring model
 When the root declares `mountIntrospectionAt() -> String?`, the generated entry SHALL mount
 introspection only inside `if let wireMVCIntrospectionPath = bootstrap.mountIntrospectionAt() { … }`.
-Without a `@Middleware` on the method it SHALL call `try WireMVC.mountIntrospection(for: graph, into:
-&builder, at: wireMVCIntrospectionPath)`; with one it SHALL precompute `let
+When the method carries no `@Middleware` whose argument is a `@Factory` key, it SHALL call `try
+WireMVC.mountIntrospection(for: graph, into: &builder, at: wireMVCIntrospectionPath)`; when it carries
+at least one, it SHALL precompute `let
 wireMVCIntrospectionResponse = try WireMVCResponse.json(graph.introspect(), status: .ok)` and call
 `graph._WireGlobalMiddleware_<Root>.registerIntrospection(into: &builder, at: wireMVCIntrospectionPath,
-response: wireMVCIntrospectionResponse)`. Without the method, the entry SHALL mount nothing.
+response: wireMVCIntrospectionResponse)`. A `@Middleware` on the method whose argument is not a factory
+key (a by-type `T.self` or a keyed graph binding) is diagnosed `globalMiddlewareUnsupportedArgument` and
+contributes nothing, so on its own it leaves the mount unguarded. Without the method, the entry SHALL
+mount nothing.
 
 #### Scenario: an unguarded mount
 - **WHEN** the root declares `func mountIntrospectionAt() -> String? { "/wiring" }` with no `@Middleware`
@@ -173,7 +177,7 @@ response sender.`
 - **WHEN** the root declares `@NotFound @JSONResponse func handleNotFound() -> Greeting`
 - **THEN** the diagnostics contain `notFoundNotRaw`
 
-Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`notFoundHandlerMustBeRaw`).
+Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`notFoundHandlerMustBeRaw`) for the `notFoundNotRaw` case only. The location at the method's name and the message text are pinned by nothing yet.
 
 ### Requirement: Without `@NotFound` a 404 is synthesised that drains the registry
 When the root declares no `@NotFound` method, the generated entry SHALL register a fallback that takes
