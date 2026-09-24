@@ -31,7 +31,7 @@ parameters from an `HTTPServer`.
 - **WHEN** `WireMVCExample` builds `TrieRouteBuilder(for: server)`, applies its graph and calls `finalize()`
 - **THEN** every route it drives over HTTP is answered by the frozen router
 
-Pinned by: `Tests/WireMVCRouterTests/SynthesisedMissFramingTests.swift` (`synthesisedMethodNotAllowedStatesZeroLengthBesideAllow`), `Fixtures/Sources/WireMVCExample/main.swift` (the `Run end-to-end example` step of the `BuildAndRun` job in `.github/workflows/build.yml`).
+Pinned by: `Fixtures/Sources/WireMVCExample/main.swift` (the `Run end-to-end example` step of the `BuildAndRun` job in `.github/workflows/build.yml`), `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`matchedRouteCarriesTheGlobalHeader`). The first scenario, a unit test dispatching a matched request through `FrozenTrieRouter`, is pinned by nothing yet.
 
 ### Requirement: Matching is by whole segment
 The router SHALL split a request path on `/` and match it segment by segment against the registered
@@ -53,8 +53,11 @@ Pinned by: `Tests/WireMVCRouterTests/RouteTrieTests.swift` (`literalMatchBindsNo
 
 ### Requirement: Precedence is literal, then parameter, then catch-all, whatever the registration order
 At each node the router SHALL try the literal child first and the `{param}` edge second, and SHALL
-fall back to a `{name*}` catch-all remembered on the way only when the walk cannot advance. The
-outcome SHALL NOT depend on the order the routes were registered in.
+fall back to the `{name*}` catch-all at the deepest node passed that carries one, when the walk cannot
+advance or when the node it ends on has no route for the request's method. Only that deepest catch-all
+node SHALL be consulted: if it has no catch-all for the method, the resolution is `.notFound`, even when
+a shallower catch-all would match, which is tracked in https://github.com/swift-wire/wire-mvc/issues/243.
+The outcome SHALL NOT depend on the order the routes were registered in.
 
 #### Scenario: all three under one prefix
 - **WHEN** `/files/{path*}`, `/files/{name}` and `/files/readme` are registered for `GET` in that order
@@ -64,7 +67,11 @@ outcome SHALL NOT depend on the order the routes were registered in.
 - **WHEN** `/users/{id}` is registered before `/users/me`
 - **THEN** `GET /users/me` still resolves to the `/users/me` route
 
-Pinned by: `Tests/WireMVCRouterTests/RouteTrieTests.swift` (`literalBeatsParameter`, `literalBeatsParameterWhicheverRegistersFirst`, `literalAndParameterBothBeatACatchAll`).
+#### Scenario: a shallower catch-all is not consulted
+- **WHEN** `GET /{all*}` and `POST /files/{path*}` are registered and `GET /files/a/b` is resolved
+- **THEN** the resolution is `.notFound`, while `GET /other/a` resolves to the `/{all*}` route
+
+Pinned by: `Tests/WireMVCRouterTests/RouteTrieTests.swift` (`literalBeatsParameter`, `literalBeatsParameterWhicheverRegistersFirst`, `literalAndParameterBothBeatACatchAll`). Consulting only the deepest catch-all is pinned by nothing yet.
 
 ### Requirement: Each route names its own parameters
 The router SHALL collect matched parameter values positionally and name them from the chosen route's
@@ -167,9 +174,12 @@ and `duplicate route: <METHOD> '<path>' collides with '<existing>' — they diff
 Pinned by: `Tests/WireMVCRouterTests/RouteTrieTests.swift` (`registeringTheSameMethodAndPathTwiceIsADuplicate`, `parameterNamesThatDifferOnlyInSpellingStillCollide`, `twoCatchAllsAtOneNodeAreADuplicate`, `aDuplicateConsumesNoRouteIndex`, `aRejectedDuplicateLeavesTheFirstRouteServing`, `differentMethodsOnOnePathAreNotDuplicates`, `distinctPathsSharingAPrefixAreNotDuplicates`). The builder's `preconditionFailure` is pinned by nothing yet.
 
 ### Requirement: A wrong method on a route-carrying node is a 405 with a sorted `Allow`
-When the walk reaches a node that carries routes but none for the request's method, the router SHALL
-resolve `.methodNotAllowed(allowed:)` with the node's distinct methods sorted by raw value. The allowed
-set SHALL be that of the node the greedy walk reached, not a union with nodes it passed over.
+When the walk reaches a node that carries exact (non-catch-all) routes but none for the request's
+method, and no catch-all passed on the way has a route for that method, the router SHALL resolve
+`.methodNotAllowed(allowed:)` with the node's distinct methods sorted by raw value. The allowed set
+SHALL be that of the node the greedy walk reached, not a union with nodes it passed over. A method
+mismatch against a catch-all route SHALL resolve `.notFound`, not `.methodNotAllowed`, which is tracked
+in https://github.com/swift-wire/wire-mvc/issues/244.
 
 #### Scenario: three methods registered out of order
 - **WHEN** `POST`, `GET` and `DELETE` are registered on `/users` and `PUT /users` is resolved
@@ -183,16 +193,30 @@ set SHALL be that of the node the greedy walk reached, not a union with nodes it
 - **WHEN** the `WireMVCFallbackExample` app serves `GET /ping` and a client sends `DELETE /ping`
 - **THEN** the response is `405` with `Allow: GET`
 
-Pinned by: `Tests/WireMVCRouterTests/RouteTrieTests.swift` (`methodMismatchIsMethodNotAllowed`, `allowedMethodsAreDeduplicatedAndSorted`, `methodNotAllowedIsReportedForTheNodeActuallyReached`), `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`aWrongMethodOnARealRouteIsMethodNotAllowed`).
+#### Scenario: a catch-all for the method pre-empts the 405
+- **WHEN** `GET /files/{path*}` and `POST /files/upload` are registered and `GET /files/upload` is resolved
+- **THEN** the resolution matches the catch-all route with `path` bound to `upload`
+
+#### Scenario: a wrong method on a catch-all
+- **WHEN** only `GET /files/{path*}` is registered and `DELETE /files/x` is resolved
+- **THEN** the resolution is `.notFound`
+
+Pinned by: `Tests/WireMVCRouterTests/RouteTrieTests.swift` (`methodMismatchIsMethodNotAllowed`, `allowedMethodsAreDeduplicatedAndSorted`, `methodNotAllowedIsReportedForTheNodeActuallyReached`), `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`aWrongMethodOnARealRouteIsMethodNotAllowed`). The two catch-all conditions are pinned by nothing yet.
 
 ### Requirement: An interior node is a 404
-A node the walk reaches that carries no routes SHALL resolve `.notFound`, whatever the method.
+A node the walk reaches that carries no routes SHALL resolve `.notFound`, unless a catch-all passed on
+the way has a route for the request's method, in which case that catch-all SHALL match with the
+remainder from its node.
 
 #### Scenario: a waypoint to a parameter route
 - **WHEN** only `GET /users/{id}` is registered and `POST /users` is resolved
 - **THEN** the resolution is `.notFound`
 
-Pinned by: `Tests/WireMVCRouterTests/RouteTrieTests.swift` (`anInteriorNodeIsNotFoundRatherThanMethodNotAllowed`, `prefixWithoutRouteReturnsNil`).
+#### Scenario: an interior node under a catch-all
+- **WHEN** `GET /files/{path*}` and `GET /files/a/b` are registered and `GET /files/a` is resolved
+- **THEN** the resolution matches the catch-all route with `path` bound to `a`
+
+Pinned by: `Tests/WireMVCRouterTests/RouteTrieTests.swift` (`anInteriorNodeIsNotFoundRatherThanMethodNotAllowed`, `prefixWithoutRouteReturnsNil`). The catch-all exception is pinned by nothing yet.
 
 ### Requirement: The query is stripped before matching
 The router SHALL match only the part of the request path before the first `?`.
@@ -205,10 +229,11 @@ Pinned by: `Tests/WireMVCRouterTests/RouteTrieTests.swift` (`queryStringIsIgnore
 
 ### Requirement: Runs of separators collapse
 The router SHALL treat a run of `/` in a request path as one separator, and templates SHALL be split
-the same way at registration.
+the same way at registration. A trailing run of `/` is subject to the `TrailingSlashPolicy`: under
+`.strict` it resolves `.notFound`.
 
 #### Scenario: doubled separators
-- **WHEN** `GET /a/b` is registered and `//a/b`, `/a//b` and `/a/b//` are resolved
+- **WHEN** `GET /a/b` is registered, the trie is frozen `.lenient`, and `//a/b`, `/a//b` and `/a/b//` are resolved
 - **THEN** each resolves to that route
 
 #### Scenario: a parameter after doubled separators
@@ -245,8 +270,9 @@ Pinned by: `Tests/WireMVCRouterTests/RouteTrieTests.swift` (`lenientTreatsATrail
 
 ### Requirement: Parameters are percent-decoded after splitting
 The router SHALL percent-decode each bound `{name}` value after the path is split, accepting upper- and
-lower-case hex, and SHALL leave `+` unchanged. A segment with a malformed escape, or whose decoded bytes
-are not valid UTF-8, SHALL bind exactly as it arrived.
+lower-case hex, and SHALL leave `+` unchanged. A malformed escape (a `%` not followed by two hex digits)
+SHALL be kept verbatim while the segment's other escapes are still decoded, and a segment whose decoded
+bytes are not valid UTF-8 SHALL bind exactly as it arrived.
 
 #### Scenario: an escaped space
 - **WHEN** `GET /users/{name}` is registered and `GET /users/a%20b` is resolved
@@ -264,11 +290,15 @@ are not valid UTF-8, SHALL bind exactly as it arrived.
 - **WHEN** `GET /x/{v}` is registered and `/x/a%`, `/x/a%2`, `/x/a%zz` and `/x/%FF` are resolved
 - **THEN** `v` binds `a%`, `a%2`, `a%zz` and `%FF`
 
+#### Scenario: a malformed escape beside a valid one
+- **WHEN** `GET /x/{v}` is registered and `GET /x/a%zz%20b` is resolved
+- **THEN** `v` binds `a%zz b`
+
 #### Scenario: a plus sign
 - **WHEN** `GET /users/{name}` is registered and `GET /users/a+b` is resolved
 - **THEN** `name` binds `a+b`
 
-Pinned by: `Tests/WireMVCRouterTests/RouteTrieTests.swift` (`aPercentEscapeInAParameterIsDecoded`, `anEncodedSlashStaysInsideOneParameter`, `multiByteUTF8Decodes`, `lowerAndUpperCaseHexBothDecode`, `plusIsNotASpaceInAPath`, `malformedEscapesAreLeftAlone`, `bytesThatAreNotUTF8LeaveTheSegmentRaw`, `aSegmentWithoutEscapesIsUntouched`).
+Pinned by: `Tests/WireMVCRouterTests/RouteTrieTests.swift` (`aPercentEscapeInAParameterIsDecoded`, `anEncodedSlashStaysInsideOneParameter`, `multiByteUTF8Decodes`, `lowerAndUpperCaseHexBothDecode`, `plusIsNotASpaceInAPath`, `malformedEscapesAreLeftAlone`, `bytesThatAreNotUTF8LeaveTheSegmentRaw`, `aSegmentWithoutEscapesIsUntouched`). Decoding the other escapes beside a malformed one is pinned by nothing yet.
 
 ### Requirement: Literal segments are matched encoded
 The router SHALL compare a request segment against literal children as it arrived, without
