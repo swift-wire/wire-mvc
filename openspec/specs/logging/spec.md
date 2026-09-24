@@ -22,7 +22,7 @@ Documentation: [Logging](../../../Sources/WireMVC/WireMVC.docc/Logging.md), [The
 - **WHEN** `WireMVCLogging` and `WireMVCTaskLocalLogging` each declare `@Provides(WireMVCApplication.logger)`
 - **THEN** both reference the one key declared in `WireMVC`, and a target depending on neither has no `WireMVCApplication.logger` binding
 
-Pinned by: `Fixtures/Sources/WireMVCExample/WhoAmIController.swift` and `Fixtures/Sources/WireMVCTaskLocalExample/Controller.swift` (built by the `Build fixtures` step of the `BuildAndRun` job in `.github/workflows/build.yml`).
+Pinned by: `Sources/WireMVCLogging/RequestLogging.swift` and `Sources/WireMVCTaskLocalLogging/TaskLocalRequestLogging.swift`, compiled against the keys in `WireMVC` by the `Build` step of the `BuildAndRun` job in `.github/workflows/build.yml`. That the `WireMVC` target provides none of the three bindings is pinned by nothing yet.
 
 ### Requirement: The request id is logged under `request-id`
 `WireMVCLogMetadata.requestID` SHALL be the string `"request-id"`.
@@ -31,7 +31,7 @@ Pinned by: `Fixtures/Sources/WireMVCExample/WhoAmIController.swift` and `Fixture
 - **WHEN** `WhoAmIController` reads `logger[metadataKey: WireMVCLogMetadata.requestID]` under `WireMVCLogging`
 - **THEN** the value equals the request's injected `WireMVCRequest.id`
 
-Pinned by: `Fixtures/Sources/WireMVCExample/main.swift` (the `WireMVCLogging` check, run by the `BuildAndRun` job in `.github/workflows/build.yml`).
+Pinned by: `Fixtures/Sources/WireMVCExample/main.swift` (the `WireMVCLogging` check, run by the `BuildAndRun` job in `.github/workflows/build.yml`) pins the scenario, reading the key through the constant. That the constant is the literal `"request-id"` is pinned by nothing yet.
 
 ### Requirement: `WireMVCLogMetadata.applying` folds entries as string metadata
 `WireMVCLogMetadata.applying(_ entries: [String: String], to logger: Logger) -> Logger` SHALL return a
@@ -55,12 +55,17 @@ Pinned by: nothing yet.
 
 ### Requirement: Without `X-Request-Id` the `traceparent` trace-id is the correlation id
 When no non-empty `x-request-id` field is present and a `traceparent` field is, `correlationID(from:)`
-SHALL split its value on `-` and return the second field when there are at least two fields and the
-second is non-empty.
+SHALL split its value on `-`, discarding empty fields, and return the second remaining field when at
+least two remain. Because empty fields are discarded, a `traceparent` with an empty trace-id yields its
+parent-id, which is tracked as a possible defect in https://github.com/swift-wire/wire-mvc/issues/227.
 
 #### Scenario: a W3C trace context
 - **WHEN** a request carries `traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01` and no `X-Request-Id`
 - **THEN** `correlationID(from:)` returns `"4bf92f3577b34da6a3ce929d0e0e4736"`
+
+#### Scenario: an empty trace-id field
+- **WHEN** a request carries `traceparent: 00--00f067aa0ba902b7-01` and no `X-Request-Id`
+- **THEN** `correlationID(from:)` returns `"00f067aa0ba902b7"`, not a fresh UUID
 
 Pinned by: nothing yet.
 
@@ -117,7 +122,7 @@ constructs the binding.
 - **WHEN** `WireMVCTaskLocalExample` builds the graph inside `withLogger(probeLogger(marker: "bootstrap"))`
 - **THEN** the app-scoped binding holds the `bootstrap` logger, which the request logger does not show
 
-Pinned by: nothing yet. `Fixtures/Sources/WireMVCTaskLocalExample/main.swift` asserts it when run, but CI builds that executable in the `Build fixtures` step and does not run it.
+Pinned by: nothing yet. `Fixtures/Sources/WireMVCTaskLocalExample/main.swift` checks only that the request logger shows the serve-time marker, and nothing in the fixture reads `WireMVCApplication.logger`, which is tracked in https://github.com/swift-wire/wire-mvc/issues/228.
 
 ### Requirement: `WireMVCTaskLocalLogging`'s request logger is `Logger.current` during the request
 `WireMVCTaskLocalLogging` SHALL declare `@Scoped(seed: HTTPRequest.self) public enum
@@ -137,20 +142,24 @@ Pinned by: nothing yet. `Fixtures/Sources/WireMVCTaskLocalExample/main.swift` as
 `WireMVCLogMetadata.stringEntries`, so the request logger carries only the task-local logger's
 metadata and whatever the app contributes.
 
+#### Scenario: no minted id on the logger
+- **WHEN** the app provides `WireMVCRequest.id` from `Logger.current[metadataKey: "runtime.request.id"]` and a client sends `GET /probe` with no `X-Request-Id`
+- **THEN** the logger's metadata keys are exactly `probe-marker` and `runtime.request.id`
+
 #### Scenario: an inbound `X-Request-Id` under the task-local target
-- **WHEN** the app provides `WireMVCRequest.id` from `Logger.current[metadataKey: "runtime.request.id"]` and a client sends `GET /probe` with `X-Request-Id: abc-123`
-- **THEN** the injected id is `runtime-42`, and the logger's metadata keys are exactly `probe-marker` and `runtime.request.id`
+- **WHEN** the same app receives `GET /probe` with `X-Request-Id: abc-123`
+- **THEN** the injected id is still `runtime-42`
 
-Pinned by: nothing yet. `Fixtures/Sources/WireMVCTaskLocalExample/main.swift` asserts it when run, but CI builds that executable in the `Build fixtures` step and does not run it.
+Pinned by: nothing yet. `Fixtures/Sources/WireMVCTaskLocalExample/main.swift` asserts both scenarios when run, but CI builds that executable in the `Build fixtures` step and does not run it, which is tracked in https://github.com/swift-wire/wire-mvc/issues/203. The fixture does not check the metadata keys on the `X-Request-Id` request, which is tracked in https://github.com/swift-wire/wire-mvc/issues/228.
 
-### Requirement: The two targets provide the same two bindings
+### Requirement: The two targets are mutually exclusive
 `WireMVCLogging` and `WireMVCTaskLocalLogging` SHALL each provide `WireMVCApplication.logger` at app
-scope and an unkeyed `Logger` in the `HTTPRequest` scope, so a target depending on both products
-declares each of those bindings twice.
+scope and an unkeyed `Logger` in the `HTTPRequest` scope, so a target that depends on both products
+fails to build with a WireGen duplicate-binding error.
 
 #### Scenario: an app takes both
 - **WHEN** one executable target depends on both the `WireMVCLogging` and the `WireMVCTaskLocalLogging` products
-- **THEN** its graph has two providers for `WireMVCApplication.logger` and two for the request-scoped `Logger`
+- **THEN** WireGen reports a duplicate-binding error for those bindings naming both modules, and the build fails
 
 Pinned by: nothing yet.
 
@@ -159,9 +168,13 @@ Every producer in `WireMVCLogging` and `WireMVCTaskLocalLogging` SHALL be `publi
 declare `@Provides(<same key>) @Replaces` to supersede it, and a replacement of
 `WireMVCRequestLogging.requestID(request:)` carries its contribution.
 
-#### Scenario: replacing the app logger
-- **WHEN** an app declares `@Provides(WireMVCApplication.logger) @Replaces func appLogger() -> Logger { Logger(label: "my-app") }`
+#### Scenario: replacing the app logger under `WireMVCLogging`
+- **WHEN** an app that depends on `WireMVCLogging` declares `@Provides(WireMVCApplication.logger) @Replaces func appLogger() -> Logger { Logger(label: "my-app") }`
 - **THEN** the request logger's base is the `my-app` logger
+
+#### Scenario: replacing the app logger under `WireMVCTaskLocalLogging`
+- **WHEN** an app that depends on `WireMVCTaskLocalLogging` declares the same replacement
+- **THEN** `@Inject(WireMVCApplication.logger)` resolves to the `my-app` logger, and the request logger still takes its base from `Logger.current`
 
 Pinned by: nothing yet.
 
