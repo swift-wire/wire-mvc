@@ -187,7 +187,11 @@ jobs:
           grep -q '"${{ matrix.swift-syntax-major }}.0.0"..<"'${next}'.0.0"' Package.swift
           grep swift-syntax Package.swift
       - name: Resolve dependencies
-        run: swift package update
+        # Only swift-syntax moves: the narrowed range can exclude the committed pin, so it has to be
+        # re-resolved, but every other dependency stays at its Package.resolved pin. A bare
+        # `swift package update` re-resolves the whole graph, which made this the one job building
+        # against unpinned upstreams, so an upstream release broke it on changes that touched no Swift.
+        run: swift package update swift-syntax
       - name: Build
         run: swift build
       - name: Run tests
