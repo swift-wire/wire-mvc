@@ -19,9 +19,9 @@ The root `Package.swift` SHALL declare exactly three traits, `ServerTransport`, 
 
 #### Scenario: a consumer names no traits
 - **WHEN** a package depends on wire-mvc without a `traits:` argument
-- **THEN** none of `ServerTransport`, `NIOHTTPServer` or `Elementary` is enabled, and `swift build` at the repository root builds every target
+- **THEN** none of `ServerTransport`, `NIOHTTPServer` or `Elementary` is enabled, `swift build` at the repository root builds every non-test target, and `swift test` builds and runs the test targets
 
-Pinned by: `Package.swift`, `.github/workflows/build.yml` (`BuildAndRun`, step `Build`).
+Pinned by: `Package.swift`, `.github/workflows/build.yml` (`BuildAndRun`, steps `Build` and `Test`).
 
 ### Requirement: With every trait off the graph resolves no concrete server
 Every product dependency on the `swift-http-server` package SHALL be conditional on the
@@ -45,13 +45,15 @@ The committed root `Package.resolved` SHALL contain no pin for `swift-http-serve
 
 Pinned by: `Package.resolved`, `.github/workflows/build.yml` (`BuildAndRun`, step `Verify the core graph resolves no concrete server`, which re-resolves and checks `swift-http-server` only). The `elementary` and `swift-openapi-runtime` absence is pinned by nothing yet.
 
-### Requirement: Each trait gates one module's contents and one dependency
+### Requirement: Each trait gates one module's contents and its product dependencies
 The `ServerTransport` trait SHALL gate the `OpenAPIRuntime` product dependency of
 `WireMVCServerTransport` and the `#if ServerTransport` body of its source. The `NIOHTTPServer` trait
 SHALL gate the `NIOHTTPServer` and `Logging` product dependencies of `WireMVCTesting` and the `#if
 NIOHTTPServer` bodies of `NIOHTTPServerTestServer.swift` and `SwiftHttpServerMode.swift`. The
 `Elementary` trait SHALL gate the `Elementary` product dependency of `WireMVCElementary` and the `#if
-Elementary` body of `WireMVCHTMLProducer.swift`. No other target SHALL reference a trait.
+Elementary` body of `WireMVCHTMLProducer.swift`. The only other trait reference SHALL be the test
+target `WireMVCServerTransportTests`, whose `AdapterTests.swift` is entirely `#if ServerTransport` and
+so holds no tests with the trait off. No other target SHALL reference a trait.
 
 #### Scenario: the ServerTransport trait build
 - **WHEN** CI runs `swift test --traits ServerTransport` at the repository root
@@ -68,14 +70,19 @@ The root `Package.swift` SHALL declare the library products `WireMVC`, `WireMVCR
 `WireMVCMiddleware`, `WireMVCServerTransport`, `WireMVCLogging`, `WireMVCTaskLocalLogging`,
 `WireMVCElementary`, `WireMVCMacrosPlugin` (over the `WireMVCMacros` target) and `WireMVCTesting`; the
 plugin products `WireMVCBuildPlugin` and `WireMVCRouteGenPlugin`; and the executable product
-`WireMVCRouteGen`. No product declaration SHALL depend on a trait, so a trait-gated product exists with
-the trait off and vends an empty module.
+`WireMVCRouteGen`. No product declaration SHALL depend on a trait, so `WireMVCServerTransport` and
+`WireMVCElementary` exist with their trait off and vend an empty module, and `WireMVCTesting` with
+`NIOHTTPServer` off vends everything except the `NIOHTTPServer` conformance and the `.swiftHttpServer`
+mode.
 
 #### Scenario: a trait-gated product with the trait off
 - **WHEN** a target depends on the `WireMVCServerTransport` product and the `ServerTransport` trait is off
 - **THEN** the product resolves and the module it links declares nothing
 
-Pinned by: `Package.swift`, `.github/workflows/build.yml` (`BuildAndRun`, step `Build`).
+Pinned by: `Package.swift`, `.github/workflows/build.yml` (`BuildAndRun`, step `Build`, which shows only
+that the product resolves and compiles with the trait off). That the module declares nothing follows
+from the file-wide `#if ServerTransport` in `Sources/WireMVCServerTransport/WireMVCServerTransport.swift`
+and is pinned by nothing yet.
 
 ### Requirement: The default-trait libraries cross-compile for static Linux
 The products `WireMVC`, `WireMVCRouter`, `WireMVCMiddleware`, `WireMVCLogging` and
