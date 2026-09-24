@@ -28,9 +28,9 @@ in `extension SuiteTrait where Self == WireMVCSuiteTrait`, together with `import
 
 #### Scenario: a program consumer
 - **WHEN** `generateRouteContributors` runs with `testEntry: false` over the same sources
-- **THEN** the output contains `static func main() async throws` and no `wiremvc` factory
+- **THEN** the output contains `struct _WireMVCBootstrapEntry {` and neither `import WireMVCTesting` nor `import Testing`
 
-Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`generateEmitsTestServerEntryUnderTestEntryGate`, `bootstrapEntryGeneratesMain`). The plugin's `--test-entry` pass is pinned by `Fixtures/Tests/WireMVCBootstrapExampleTests/WithTestServerTests.swift` compiling against the generated factory.
+Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`generateEmitsTestServerEntryUnderTestEntryGate`, `generateEmitsBootstrapEntryAndWireImport`, `bootstrapEntryGeneratesMain`). The absence of the `wiremvc` factory without `--test-entry` is pinned by nothing yet: `generateEmitsBootstrapEntryAndWireImport` checks for `static func wiremvc()`, a spelling no output contains (https://github.com/swift-wire/wire-mvc/issues/250). The plugin's `--test-entry` pass is pinned by `Fixtures/Tests/WireMVCBootstrapExampleTests/WithTestServerTests.swift` compiling against the generated factory.
 
 ### Requirement: The app's `createServer()` is never called under test
 The generated suite factory SHALL create the app's route builder over `mode.makeTestServer()`, wrapped in
@@ -58,13 +58,14 @@ default services to `.run`.
 - **WHEN** a suite is declared `@Suite(.wiremvc(.server(SomeServer())))` with `SomeServer: WireMVCTestServer`
 - **THEN** the client is built from `wireMVCBoundPort` once the server is serving, and the graph's services start unless the suite passes `services: .skip`
 
-Pinned by: `Tests/WireMVCTestingTests/ServicePolicyTests.swift` (`explicitSkipOverridesALiveModeDefault`). `.server(_:)` is exercised through `.swiftHttpServer` by `Fixtures/Tests/WireMVCBootstrapExampleTests/WithTestServerTests.swift` (`servesHelloRouteOverEphemeralPort`). `.server(_:on:)` is pinned by nothing yet.
+Pinned by: `Tests/WireMVCTestingTests/ServicePolicyTests.swift` (`explicitSkipOverridesALiveModeDefault`) for the in-process default only. The `.run` default of the live modes and a `services: .skip` override of it are pinned by nothing yet (https://github.com/swift-wire/wire-mvc/issues/250). `.server(_:)` is exercised through `.swiftHttpServer` by `Fixtures/Tests/WireMVCBootstrapExampleTests/WithTestServerTests.swift` (`servesHelloRouteOverEphemeralPort`). `.server(_:on:)` is pinned by nothing yet.
 
 ### Requirement: `.swiftHttpServer` is a harness-owned plaintext HTTP/1.1 loopback server behind the `NIOHTTPServer` trait
-Under `#if NIOHTTPServer`, `WireMVCTestMode` where `Server == NIOHTTPServer` SHALL offer `swiftHttpServer`
-and `swiftHttpServer(on:)`, each `.server(_:)` over an `NIOHTTPServer` the harness constructs with
+Under `#if NIOHTTPServer`, `WireMVCTestMode` where `Server == NIOHTTPServer` SHALL offer `swiftHttpServer`,
+which is `.server(_:)` over a harness-built `NIOHTTPServer` bound to port `0`, and `swiftHttpServer(on:)`,
+which is `.server(_:on:)` over one bound to the given port. Both SHALL construct the server with
 `bindTarget: .hostAndPort(host: "127.0.0.1", port:)`, `supportedHTTPVersions: [.http1_1]` and
-`transportSecurity: .plaintext`; `swiftHttpServer` SHALL bind port `0`. With the trait off, neither
+`transportSecurity: .plaintext`. With the trait off, neither
 factory nor the `NIOHTTPServer: WireMVCTestServer` conformance SHALL exist.
 
 #### Scenario: an ephemeral loopback suite
@@ -150,7 +151,7 @@ released in a `defer`, so overlapping suites each keep it and a throwing body st
 - **WHEN** one hold ends while another is still open
 - **THEN** the mark stays active until the second ends
 
-Pinned by: `Tests/WireMVCTestingTests/TestBindStoreTests.swift` (`inactiveUntilABodyIsHeld`, `activeOnlyForTheDurationOfTheBody`, `overlappingHoldsEachKeepTheMark`, `aThrowingBodyStillClearsItsHold`, `theGlobalMarkIsHeldInsideWithActiveHarness`).
+Pinned by: `Tests/WireMVCTestingTests/TestBindStoreTests.swift` (`inactiveUntilABodyIsHeld`, `activeOnlyForTheDurationOfTheBody`, `overlappingHoldsEachKeepTheMark`, `aThrowingBodyStillClearsItsHold`, `theGlobalMarkIsHeldInsideWithActiveHarness`) for the count, the `defer` and the global mark's wiring to `withActiveHarness`. That `runSuite` takes the hold is pinned by nothing yet (https://github.com/swift-wire/wire-mvc/issues/250).
 
 ### Requirement: A typed client is generated per controller with one method per typed route
 For each `@Controller` in a test consumer, `WireMVCRouteGen` SHALL emit `struct <Name>Client { let client: TestClient }`
@@ -220,7 +221,10 @@ Pinned by: `Tests/WireMVCCodegenTests/ControllerClientGenerationTests.swift` (`a
 ### Requirement: A declared `@Header` beats the `headers:` bag
 A typed method SHALL build its header set as `headers.merging(wireMVCRequest.headers) { _, declared in declared }`,
 so a header the route binds with `@Header` is sent from the typed parameter when the caller also names
-it in `headers:`, and headers the route does not declare travel from the bag unchanged.
+it in `headers:` with the same spelling, and headers the route does not declare travel from the bag unchanged.
+The merge is case-sensitive: a bag key differing from the `@Header` name only in case survives beside the
+declared one, and which value is sent then depends on dictionary order, which is tracked as a defect in
+https://github.com/swift-wire/wire-mvc/issues/248.
 
 #### Scenario: a collision
 - **WHEN** `pages.tenant(tenant: "declared", headers: ["x-tenant": "caller"])` drives a route binding `@Header("x-tenant")`
@@ -230,7 +234,7 @@ it in `headers:`, and headers the route does not declare travel from the bag unc
 - **WHEN** `pages.tenant(tenant: "acme", headers: ["x-trace": "abc123"])` is called
 - **THEN** the request carries `x-trace: abc123`
 
-Pinned by: `Fixtures/Tests/WireMVCBootstrapExampleTests/HTMLResponseOverTheWireTests.swift` (`aDeclaredHeaderBeatsTheCallersBag`, `theBagStillCarriesUndeclaredHeaders`).
+Pinned by: `Fixtures/Tests/WireMVCBootstrapExampleTests/HTMLResponseOverTheWireTests.swift` (`aDeclaredHeaderBeatsTheCallersBag`). The undeclared-header scenario is pinned by nothing yet: `theBagStillCarriesUndeclaredHeaders` asserts only the declared header's effect (https://github.com/swift-wire/wire-mvc/issues/250).
 
 ### Requirement: A route with a graph-aware binding is omitted from the client with a warning
 When a route parameter's binding is declared `isScopeResolved`, the client SHALL omit that route and
@@ -243,7 +247,7 @@ obligation SHALL be omitted without a diagnostic.
 - **WHEN** `DocumentsController`'s one route takes a `@Document`-style graph-aware parameter
 - **THEN** no client is emitted and the diagnostics contain one `routeOmittedFromClient`
 
-Pinned by: `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`theRouteIsOmittedFromTheClientAndSaidSo`, `theControllersOtherRoutesStillGetAClient`), `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`lentStreamRouteOmitted`).
+Pinned by: `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`theRouteIsOmittedFromTheClientAndSaidSo`, `theControllersOtherRoutesStillGetAClient`), `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`lentStreamRouteOmitted`) for the lent-stream route's omission. That it is omitted without a diagnostic is pinned by nothing yet (https://github.com/swift-wire/wire-mvc/issues/250).
 
 ### Requirement: Typed sending goes through `RequestSendable` and `RequestBodySendable`
 A typed method SHALL build a `WireMVCOutgoingRequest` and, per binding, call
@@ -269,6 +273,9 @@ Pinned by: `Tests/WireMVCTestingTests/RequestSendingTests.swift` (`builtInsPlace
 `TestClient.resolve(template:pathParameters:query:)` SHALL substitute each `{name}` with the
 percent-encoded value and append `?name=value&…` in declaration order, encoding every character outside
 RFC 3986's unreserved set (`A-Z a-z 0-9 - . _ ~`). No query items SHALL leave the path without a `?`.
+A trailing catch-all `{name*}` is not substituted: the typed client keys a catch-all binding's value under
+the bare `name`, so `resolve` finds no `{name}` and the template text is sent as written, which is tracked
+as a defect in https://github.com/swift-wire/wire-mvc/issues/247.
 
 #### Scenario: a path value containing a slash and a space
 - **WHEN** `resolve(template: "/notes/{id}", pathParameters: ["id": "a/b c"], query: [])` is called
@@ -284,7 +291,9 @@ Pinned by: `Tests/WireMVCTestingTests/TypedRouteClientTests.swift` (`placeholder
 `TestClient` SHALL offer `get(_:headers:)`, `post(_:json:headers:)`, `patch(_:json:headers:)`,
 `delete(_:headers:)` and `send(_ method:_ path:body:headers:)`. `post` and `patch` SHALL encode `json`
 with `JSONEncoder` and set `Content-Type: application/json`. Every verb SHALL return a `TestResponse`
-carrying the whole `HTTPResponse` head, the body `Data`, `bodyText` and `json(_:)`.
+carrying the response head, the body `Data`, `bodyText` and `json(_:)`. In process the head is the
+handler's own `HTTPResponse`; on the loopback transport it is rebuilt from `HTTPURLResponse.allHeaderFields`,
+so header field order and repeated fields are not preserved.
 
 #### Scenario: a CORS preflight
 - **WHEN** `client.send("OPTIONS", "/ping", headers: ["Origin": …, "Access-Control-Request-Method": "POST"])` is called
@@ -294,13 +303,14 @@ carrying the whole `HTTPResponse` head, the body `Data`, `bodyText` and `json(_:
 - **WHEN** `client.post("/notes", json: Payload(note: "hi"), headers: ["X-Echo": "seen"])` is driven in process
 - **THEN** the handler receives `POST /notes`, the body `{"note":"hi"}` and the `X-Echo` header
 
-Pinned by: `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`aPreflightIsAnsweredWithBothFieldSets`), `Tests/WireMVCTestingTests/InProcessTransportTests.swift` (`driverBindsClientAndRoutesMethodAndPath`, `requestBodyAndHeadersReachTheHandler`).
+Pinned by: `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`aPreflightIsAnsweredWithBothFieldSets`), `Tests/WireMVCTestingTests/InProcessTransportTests.swift` (`driverBindsClientAndRoutesMethodAndPath`, `requestBodyAndHeadersReachTheHandler`). The `Content-Type: application/json` header and the `patch` verb are pinned by nothing yet (https://github.com/swift-wire/wire-mvc/issues/250).
 
-### Requirement: An unanswered route is distinguishable from any status
-When a handler returns without sending a response, the untyped verbs SHALL return a `TestResponse` whose
+### Requirement: An unanswered route is distinguishable from any status in process
+On the in-process transport, when a handler returns without sending a response, the untyped verbs SHALL return a `TestResponse` whose
 `head` is `nil` and whose `status` is `TestResponse.unanswered`, which is `-1`. The typed paths
 (`routeResponse` and `performRawRoute`) SHALL throw `WireMVCTestingError.routeDidNotRespond("<METHOD> <path>")`
-instead.
+instead. The loopback transport makes no such distinction: the outcome is whatever `URLSession.data(for:)`
+produces for the connection.
 
 #### Scenario: a silent handler driven in process
 - **WHEN** `TestClient.forSuite.get("/anything")` drives a handler that returns without responding
@@ -309,10 +319,11 @@ instead.
 Pinned by: `Tests/WireMVCTestingTests/InProcessTransportTests.swift` (`handlerThatNeverRespondsIsDistinguishable`). The `routeDidNotRespond` throw is pinned by nothing yet.
 
 ### Requirement: A client is reached only through `withClient`
-For every test consumer, `WireMVCRouteGen` SHALL emit a module-scope `withClient<R>(_ body: (TestClient) async throws -> R)`
+For every test consumer whose composed sources declare a `@WireMVCBootstrap`, `WireMVCRouteGen` SHALL emit a module-scope `withClient<R>(_ body: (TestClient) async throws -> R)`
 and, per controller with a client, `withClient<R>(for _: <Name>Client.Type, _ body: (<Name>Client) async throws -> R)`,
 both `@discardableResult` and both handing out a client carrying no doubles. No ambient accessor SHALL be
-emitted. `TestClient.forSuite` SHALL be non-public and SHALL trap outside a suite the trait scopes with
+emitted. A test consumer without a `@WireMVCBootstrap` still gets its `<Name>Client` types but no
+`withClient`, which is tracked in https://github.com/swift-wire/wire-mvc/issues/249. `TestClient.forSuite` SHALL be non-public and SHALL trap outside a suite the trait scopes with
 `A WireMVC test client is only available inside an @Suite(.wiremvc(…)) suite — reach it through withClient(supplying:) or withClient(for:)`.
 
 #### Scenario: a keyless test consumer
@@ -359,7 +370,7 @@ error.
 - **WHEN** a test consumer declares only a `@WireMVCBootstrap`
 - **THEN** no diagnostic is reported and the keyless factory alone is emitted
 
-Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`aSecondTestingKeyIsRejected`, `aDependencysTestingKeyIsNotServed`, `withoutModuleAttributionEveryKeyIsStillEligible`, `noTestingKeyIsNotAnError`, `testingKeyDiscoveryDerivesNames`, `testingKeyDiscoveryReadsKeyedBindTypeForm`, `testingKeyDiscoveryResolvesBindingKeyOnExtension`). Multi-key is tracked at https://github.com/swift-wire/wire-mvc/issues/170 and https://github.com/swift-wire/swift-wire/issues/336.
+Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`aSecondTestingKeyIsRejected`, `aDependencysTestingKeyIsNotServed`, `withoutModuleAttributionEveryKeyIsStillEligible`, `noTestingKeyIsNotAnError`, `testingKeyDiscoveryDerivesNames`, `testingKeyDiscoveryReadsKeyedBindTypeForm`, `testingKeyDiscoveryResolvesBindingKeyOnExtension`). In the no-key scenario, `noTestingKeyIsNotAnError` pins only the absence of a diagnostic; `generateEmitsTestServerEntryUnderTestEntryGate` pins the keyless factory, and `keyedHarnessImportsWireTestingAndKeylessDoesNot` pins that keyless output names no `TestingKey`. Multi-key is tracked at https://github.com/swift-wire/wire-mvc/issues/170 and https://github.com/swift-wire/swift-wire/issues/336.
 
 ### Requirement: The keyed factory bootstraps the variant graph and registers each subject's variant proxy
 When a test consumer declares a `TestingKey` with at least one variant subject, `WireMVCRouteGen` SHALL emit
@@ -504,7 +515,7 @@ channel whole; `performRawRoute` SHALL read it chunk by chunk.
 - **WHEN** `client.get` drives the same streaming handler
 - **THEN** the response body is `onetwothree`
 
-Pinned by: `Tests/WireMVCTestingTests/TypedRouteClientTests.swift` (`inProcessAppliesBackpressurePerChunk`), `Tests/WireMVCTestingTests/InProcessTransportTests.swift` (`streamedWritesAccumulateIntoOneBody`).
+Pinned by: `Tests/WireMVCTestingTests/TypedRouteClientTests.swift` (`inProcessAppliesBackpressurePerChunk`) for the per-read bound, `Tests/WireMVCTestingTests/InProcessTransportTests.swift` (`streamedWritesAccumulateIntoOneBody`). The head being available before the first write completes is pinned by nothing yet (https://github.com/swift-wire/wire-mvc/issues/250).
 
 ### Requirement: `WireMVCTestServer` reports the bound port or throws `noListeningPort`
 `WireMVCTestServer` SHALL require `var wireMVCBoundPort: Int { get async throws }`. Under the
