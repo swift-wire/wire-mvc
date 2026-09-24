@@ -26,10 +26,10 @@ and `bodyStream`.
 - **THEN** the scan records `FormBody` as `.body`, `Slug` as `.path`, `Odd` as both and `Plain` as none
 
 #### Scenario: a qualified obligation
-- **WHEN** a binding is declared `@RequestBinding(BindingObligations.body)`
+- **WHEN** a binding is declared `@RequestBinding(WireMVCBindingObligation.body)`
 - **THEN** it is recorded as `.body`, the same as the shorthand
 
-Pinned by: `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`readsEachObligation`, `qualifiedArgument`).
+Pinned by: `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`readsEachObligation`). The qualified `WireMVCBindingObligation.body` spelling is pinned by nothing yet.
 
 ### Requirement: A binding is found by its declaration anywhere in the parsed sources
 `scanRequestBindings(in:)` SHALL record every struct, enum, class or actor carrying `@RequestBinding`, at
@@ -38,10 +38,10 @@ use site in one file SHALL be matched to a declaration in another.
 
 #### Scenario: a declaration in a dependency's file
 - **WHEN** one file declares `@RequestBinding(.body) public struct FormBody` and another uses `@FormBody input: Login`
-- **THEN** the route binds `FormBody<Login>.bind(` with no diagnostic
+- **THEN** the route binds `FormBody<Login>.bind(` with no error diagnostic
 
 #### Scenario: nested, class and actor declarations
-- **WHEN** `@RequestBinding(.body)` is on a struct inside `enum Bindings`, on a `final class` and on an `actor`
+- **WHEN** `@RequestBinding(.body)` is on a struct inside `enum Bindings` and on a `final class`, and a bare `@RequestBinding` is on an `actor`
 - **THEN** all three are recorded
 
 #### Scenario: an attribute on an extension
@@ -61,11 +61,15 @@ Reader, coding:) async throws -> Value` where `Reader.ReadElement == UInt8` and 
 HTTPFields?`. For a `.readerBody` parameter the terminal SHALL emit
 `try await <Wrapper><<Type>>.bindReader(name: …, request: request, pathParameters: pathParameters, reader:
 reader, coding: …)`, SHALL call its terminal with `lendingBodyFrom: reader` and a `building` closure
-taking `reader`, and SHALL NOT call `collectBody`.
+taking `reader`, and SHALL NOT use the collecting terminal overload (`collectingBodyFrom:`).
 
 #### Scenario: the emitted bind
 - **WHEN** `@RequestBinding(.readerBody) struct Upload` is used as `@Upload file: Receipt` on a `@JSONResponse` route
-- **THEN** the source contains `Upload<Receipt>.bindReader(` and `reader: reader`, the register closure names its `reader`, and no `collectBody` appears
+- **THEN** the source contains `Upload<Receipt>.bindReader(` and `reader: reader`, and the register closure names its `reader`
+
+#### Scenario: the lending overload on a buffered route
+- **WHEN** the same `@Upload file: Receipt` route is `@JSONResponse`
+- **THEN** the source contains `lendingBodyFrom: reader,` and `building: { reader in`, and no `collectingBodyFrom:`
 
 #### Scenario: a streamed digest over HTTP
 - **WHEN** `POST /pages/digest` carries a 4000-byte body to the fixture's `@DigestBody` route
@@ -75,7 +79,7 @@ taking `reader`, and SHALL NOT call `collectBody`.
 - **WHEN** `POST /pages/digest` carries no body
 - **THEN** the response is `200` with `byteCount == 0`
 
-Pinned by: `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`handsOverTheReader`), `Fixtures/Tests/WireMVCBootstrapExampleTests/StreamingRequestTests.swift` (`reducesTheBody`, `multiChunkBody`, `emptyBody`).
+Pinned by: `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`handsOverTheReader`), `Fixtures/Tests/WireMVCBootstrapExampleTests/StreamingRequestTests.swift` (`reducesTheBody`, `multiChunkBody`, `emptyBody`). The lending overload on a buffered route is pinned by nothing yet.
 
 ### Requirement: A `.readerBody` binding combines with a streaming response through the lending terminal
 On a route whose response mode uses the streaming terminal, a `.readerBody` binding SHALL be emitted
@@ -124,13 +128,18 @@ Pinned by: `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`streamBes
 ### Requirement: A `.bodyStream` binding's stream is constructed from its declared `stream:` type
 For a `.bodyStream` parameter the terminal SHALL emit `let <name> = <Stream>(request: request, reader:
 reader)`, where `<Stream>` is the `stream:` string on the binding's declaration spelled with no type
-argument, SHALL pass the value to the handler by value, and SHALL NOT collect the body.
+argument, SHALL pass the value to the handler by value, and SHALL call its terminal with
+`lendingBodyFrom: reader` rather than the collecting overload (`collectingBodyFrom:`).
 
 #### Scenario: a multipart stream
 - **WHEN** `@RequestBinding(.bodyStream, stream: "MultipartParts") struct Upload` is used as `@Upload parts: consuming S`
-- **THEN** the source contains `let parts = MultipartParts(request: request, reader: reader)` and `receive(parts: parts)`, and contains neither `MultipartParts<` nor `collectBody`
+- **THEN** the source contains `let parts = MultipartParts(request: request, reader: reader)` and `receive(parts: parts)`, and contains no `MultipartParts<`
 
-Pinned by: `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`consumingStream`).
+#### Scenario: the lending overload for a lent stream
+- **WHEN** the same route is generated
+- **THEN** the source contains `lendingBodyFrom: reader,` and no `collectingBodyFrom:`
+
+Pinned by: `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`consumingStream`). The lending overload for a lent stream is pinned by nothing yet.
 
 ### Requirement: A `.bodyStream` binding must name its stream type
 When a parameter's binding declares `.bodyStream` with no `stream:` argument, WireMVCRouteGen SHALL report
@@ -193,7 +202,7 @@ final element, and return when a non-`nil` final element is read. `maximumSize` 
 - **WHEN** a 4000-byte body is folded by `@DigestBody` through `streamBody`
 - **THEN** the digest counts every byte exactly once, final chunk included
 
-Pinned by: `Fixtures/Tests/WireMVCBootstrapExampleTests/StreamingRequestTests.swift` (`multiChunkBody`, `emptyBody`). The `maximumSize` default is pinned by nothing yet.
+Pinned by: `Fixtures/Tests/WireMVCBootstrapExampleTests/StreamingRequestTests.swift` (`multiChunkBody`, `emptyBody`), `Tests/WireMVCServerTransportTests/AdapterTests.swift` (`acceptsRequestBodyLargerThanTheOldCollectCeiling`). The exact `maximumSize` default is pinned by nothing yet; the adapter test pins only that it exceeds 2 MiB. The `malformedBody` throw past the cap is pinned by nothing yet.
 
 ### Requirement: `streamBody` rethrows the binding's own error unwrapped
 When the reader's `read` throws, `streamBody` SHALL rethrow through `EitherError.unwrap()`, so an error
@@ -224,7 +233,7 @@ NOT make `WireMVCRouteGen` exit non-zero.
 - **WHEN** `@RequestBinding(.bodyStream, stream: "MultipartParts") struct Upload` has no send conformance
 - **THEN** no `does not conform to RequestSendable` warning is reported
 
-Pinned by: `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`missingSendConformanceIsWarned`, `conformingBindingIsQuiet`, `lentStreamNotWarnedAbout`), `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`anOrdinaryBindingIsStillNaggedAboutRequestSendable`).
+Pinned by: `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`missingSendConformanceIsWarned`, `conformingBindingIsQuiet`, `lentStreamNotWarnedAbout`), `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`theOmittedRouteIsNotAlsoNaggedAboutRequestSendable`, `anOrdinaryBindingIsStillNaggedAboutRequestSendable`).
 
 ### Requirement: The send protocols declare their own `Value`
 `RequestSendable` and `RequestBodySendable` SHALL each declare their own associated type `Value` rather
