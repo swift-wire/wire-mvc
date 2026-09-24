@@ -282,3 +282,26 @@ jobs:
       # build error: nothing else in the toolchain looks, so without this the omission is silent.
       - name: Check SPDX headers
         run: ./Scripts/check-license-headers.sh
+
+  Specifications:
+    name: Specifications
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      # `openspec/specs/` states what the code does, one requirement at a time, each ending with the
+      # test that measures it; `openspec/changes/` holds the spec deltas of proposals not yet
+      # implemented. Three checks keep that honest, and none needs a toolchain. The OpenSpec
+      # validator checks the format of both; the version is pinned so a CLI release cannot change
+      # what passes. `spec-pins-gate.py` checks that every pinned path exists and every pinned test,
+      # golden case or job name occurs in the file named, because a renamed test otherwise leaves a
+      # requirement claiming a measurement nobody takes. `spec-deltas-gate.py` applies every active
+      # change to a scratch copy, because the validator passes a MODIFIED heading that names no
+      # requirement and only applying the delta finds it.
+      - name: Validate the specifications and proposed changes
+        run: npx -y @fission-ai/openspec@1.13.2 validate --all --strict --no-interactive
+        env:
+          OPENSPEC_TELEMETRY: "0"
+      - name: Check every pinned test exists
+        run: python3 Scripts/spec-pins-gate.py
+      - name: Check every proposed change applies
+        run: python3 Scripts/spec-deltas-gate.py
