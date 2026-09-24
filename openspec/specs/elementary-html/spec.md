@@ -27,7 +27,7 @@ unconditionally.
 - **WHEN** the root package is resolved with its default traits
 - **THEN** the committed root `Package.resolved` contains no `elementary` pin
 
-Pinned by: `Fixtures/Package.swift` (built by the `Build fixtures` step of the `BuildAndRun` job in `.github/workflows/build.yml`), `Package.resolved`. No CI step asserts that `elementary` stays out of the root graph; that is pinned by nothing yet.
+Pinned by: `Fixtures/Package.swift` (built by the `Build fixtures` step of the `BuildAndRun` job in `.github/workflows/build.yml`), `Fixtures/Tests/WireMVCBootstrapExampleTests/HTMLResponseOverTheWireTests.swift` (`servesAStreamedPage`, run by the `Test fixtures` step of the same job), `Package.resolved`. No CI step asserts that `elementary` stays out of the root graph; that is pinned by nothing yet.
 
 ### Requirement: With the trait off the module is empty
 Every declaration in `Sources/WireMVCElementary/WireMVCHTMLProducer.swift` SHALL sit inside `#if
@@ -37,7 +37,7 @@ Elementary`, so that `WireMVCElementary` compiles to an empty module when the tr
 - **WHEN** `swift build` runs at the repository root with no traits enabled
 - **THEN** the `WireMVCElementary` target builds with no Elementary product and declares nothing
 
-Pinned by: the `Build` step of the `BuildAndRun` job in `.github/workflows/build.yml`.
+Pinned by: the `Build` step of the `BuildAndRun` job in `.github/workflows/build.yml`, which fails if anything outside the gate names an Elementary symbol. That no Elementary-independent declaration sits outside the gate is pinned by nothing yet.
 
 ### Requirement: The Elementary dependency is a pinned fork
 The root `Package.swift` SHALL depend on `https://github.com/tachyonics/elementary.git` at revision
