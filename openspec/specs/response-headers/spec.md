@@ -7,8 +7,10 @@ controller `@ResponseHeader` constants, then route constants, then the fields a 
 response tuple, then middleware contributions, with the outermost middleware applied last. All four
 use the same three verbs. Middleware contributions are collected in a linear `ResponseHeaderRegistry`,
 carried from the top of the handler stack to each route by the `WireMVCContext` courier, and drained
-exactly once by whatever writes the response: the typed terminal, or the `ResponseHeaderApplyingSender`
-wrapped around a raw route's sender.
+exactly once by whatever writes the response: the typed terminal, a gate's `respondingWith(_:)`, the
+synthesised 404 and 405 handlers, or the `ResponseHeaderApplyingSender` wrapped around a raw route's
+untransformed sender. A gate's raw `responding(_:)` and a raw route whose sender slot is a transformed type
+discard the contributions without draining them.
 
 Rationale: [LinearResponseHeaderRegistry](../../../Documentation/Notes/LinearResponseHeaderRegistry.md), [WireMVCDesign](../../../Documentation/Notes/WireMVCDesign.md).
 Documentation: [ResponsesAndHeaders](../../../Sources/WireMVC/WireMVC.docc/ResponsesAndHeaders.md).
@@ -34,7 +36,17 @@ the value for `.setIfAbsent` only when the field is absent.
 - **WHEN** the statics are `.set(.cacheControl, "no-store")` then `.setIfAbsent(.cacheControl, "public")`
 - **THEN** `Cache-Control` is `no-store`
 
-Pinned by: `Tests/WireMVCResponsesTests/ResponsesTests.swift` (`appendKeepsSeparateFieldLines`, `setIfAbsentDefersToWhatIsAlreadySet`, `resolvingNeverFolds`, `setReplacesEveryExistingValue`, `setOnCookieSplitsOnItsSeparator`).
+Pinned by: `Tests/WireMVCResponsesTests/ResponsesTests.swift` (`appendKeepsSeparateFieldLines`, `setIfAbsentDefersToWhatIsAlreadySet`, `resolvingNeverFolds`, `setReplacesEveryExistingValue`).
+
+### Requirement: `.set` splits a `Cookie` value on its separator
+`WireMVCResponseHeaders.apply(_:to:)` SHALL write `.set` and `.setIfAbsent` through the scalar `HTTPFields`
+subscript, so a `Cookie` value is split on `"; "` into separate field lines rather than kept as written.
+
+#### Scenario: a set of Cookie
+- **WHEN** `resolved(statics: [.set(.cookie, "a=1; b=2")])` is evaluated
+- **THEN** `fields[values: .cookie]` is `["a=1", "b=2"]`
+
+Pinned by: `Tests/WireMVCResponsesTests/ResponsesTests.swift` (`setOnCookieSplitsOnItsSeparator`). The `.setIfAbsent` case is pinned by nothing yet.
 
 ### Requirement: `resolved` applies statics, then returned fields, then middleware
 `WireMVCResponseHeaders.resolved(statics:returned:middleware:)` SHALL apply each static contribution in
@@ -58,7 +70,7 @@ Pinned by: `Tests/WireMVCResponsesTests/ResponsesTests.swift` (`returnedFieldsBe
 
 ### Requirement: `@ResponseHeader` constants are emitted in tier order
 `@ResponseHeader(_ name: HTTPField.Name, _ value: String)` and `@ResponseHeader(_:_:_ verb:
-ResponseHeaderVerb)` SHALL be attached peer macros accepted on a controller and on a route, the verb
+ResponseHeaderVerb)` SHALL be attached peer macros accepted on a controller and on a typed route, the verb
 defaulting to `.set`. WireMVCRouteGen SHALL emit a route's constants as the `statics:` literal of a
 `WireMVCResponseHeaders.resolved` call, controller entries first and route entries after, each in
 source order, with the verb as the contribution's case name.
@@ -85,7 +97,21 @@ entries for the same field that are both `.set`, and SHALL accept a second entry
 - **WHEN** a route carries `@ResponseHeader(.setCookie, "a=1")` and `@ResponseHeader(.setCookie, "b=2", .append)`
 - **THEN** there are no diagnostics and the statics are `[.set(.setCookie, "a=1"), .append(.setCookie, "b=2")]`
 
-Pinned by: `Tests/WireMVCCodegenTests/ResponseHeaderGenerationTests.swift` (`twoSetsOfOneFieldAreDiagnosed`, `appendingASecondValueIsNotADuplicate`).
+Pinned by: `Tests/WireMVCCodegenTests/ResponseHeaderGenerationTests.swift` (`twoSetsOfOneFieldAreDiagnosed`, `appendingASecondValueIsNotADuplicate`). `twoSetsOfOneFieldAreDiagnosed` asserts only that `responseHeaderDuplicateField` is reported; the message text and its field and scope arguments are pinned by nothing yet, tracked in https://github.com/swift-wire/wire-mvc/issues/240.
+
+### Requirement: `@ResponseHeader` on a raw route is diagnosed
+WireMVCRouteGen SHALL report `responseHeaderOnRawRoute` for a `@RawRoute` that carries `@ResponseHeader`,
+or whose controller carries one.
+
+#### Scenario: a constant on a raw route
+- **WHEN** `@Get("/stream") @RawRoute @ResponseHeader(.cacheControl, "no-store") func stream(responseSender:)` is generated
+- **THEN** the diagnostic is "@ResponseHeader does not apply to the @RawRoute handler 'stream' — a raw handler writes its own response head, so nothing here could set the field for it. Set it on the HTTPResponse the handler sends."
+
+#### Scenario: a controller constant over a raw route
+- **WHEN** a controller carries `@ResponseHeader(.cacheControl, "no-store")` and contains a `@RawRoute` with no `@ResponseHeader` of its own
+- **THEN** `responseHeaderOnRawRoute` is reported for that raw route
+
+Pinned by: `Tests/WireMVCCodegenTests/ResponseHeaderGenerationTests.swift` (`responseHeaderOnARawRouteIsDiagnosed`), which asserts only that the route-scope case is reported. The message text and the controller-scope case are pinned by nothing yet, tracked in https://github.com/swift-wire/wire-mvc/issues/240; whether the controller-scope case should fail the build is open in https://github.com/swift-wire/wire-mvc/issues/241.
 
 ### Requirement: A route names `headerFields:` only for what it states itself
 The generated outcome SHALL pass `headerFields: WireMVCResponseHeaders.resolved(…)` naming `statics:`
@@ -130,17 +156,29 @@ held inline.
 - **WHEN** two registries each receive six `add` calls and one `onSend` returning `.set(x-deferred, "late")`, and one is drained with `drain(into:)` while the other's `drain()` result is applied in order
 - **THEN** the two field sets are equal and `x-deferred` is `late`
 
-Pinned by: `Tests/WireMVCResponsesTests/ResponsesTests.swift` (`everyRegistrationSurvivesRegardlessOfCount`, `theFirstRegistrationWinsAcrossTheOverflowBoundary`, `bothDrainSpellingsAgree`).
+Pinned by: `Tests/WireMVCResponsesTests/ResponsesTests.swift` (`everyRegistrationSurvivesRegardlessOfCount`, `theFirstRegistrationWinsAcrossTheOverflowBoundary`, `bothDrainSpellingsAgree`). Preserving order within one registration is pinned by nothing yet, tracked in https://github.com/swift-wire/wire-mvc/issues/240.
 
-### Requirement: A deferred contribution runs at drain, after the handler
-An `onSend` closure SHALL NOT run at registration, and SHALL run exactly once when the registry is
-drained, after the handler has returned or thrown and before the response head is written.
+### Requirement: On a typed route, a deferred contribution runs in the terminal, after the handler
+An `onSend` closure SHALL NOT run at registration. When a typed route's terminal drains the registry, each
+closure SHALL run exactly once, after `building` has returned or thrown and before the response head is
+written.
 
 #### Scenario: a session cookie read from what the handler did
 - **WHEN** `StampMiddleware` registers an `onSend` that reads the name the handler recorded, and `GET /hello/stamped/Ada` is served
 - **THEN** the response carries `Set-Cookie: greeted=Ada; Path=/`
 
 Pinned by: `Fixtures/Tests/WireMVCBootstrapExampleTests/WithTestServerTests.swift` (`middlewareContributionsBeatRouteConstantsAndSeeTheHandler`), `Tests/WireMVCResponsesTests/ResponsesTests.swift` (`aSucceedingDrainRunsOnceAndReachesTheResponse`).
+
+### Requirement: On a raw route, a deferred contribution runs when the handler writes its head
+On a `@RawRoute` whose sender is wrapped in `ResponseHeaderApplyingSender`, an `onSend` closure SHALL run
+when the handler calls `send(_:)` or `sendAndFinish(_:buffer:trailer:)` on the wrapper, while the handler is
+still running, and SHALL NOT run if the handler never writes a head.
+
+#### Scenario: a raw handler writes its head
+- **WHEN** a middleware registers an `onSend` returning `.set(x-deferred, "late")` in front of a raw route whose handler writes `200` through the wrapped sender
+- **THEN** the closure runs once, inside the handler's write, and the `200` head carries `x-deferred: late`
+
+Pinned by: nothing yet, tracked in https://github.com/swift-wire/wire-mvc/issues/240.
 
 ### Requirement: The typed terminal drains the registry exactly once, on every path
 `wireMVCBufferedTerminal` and `wireMVCStreamingTerminal`, in all three overloads each, SHALL take the
@@ -201,7 +239,7 @@ as its `RequestContext` and SHALL serve a handler by passing `WireMVCContextHand
 `base.serve(handler:)`. The generated entry SHALL wrap the server it creates in `WireMVCContextServer`.
 
 #### Scenario: the generated entry
-- **WHEN** WireMVCRouteGen renders the `@main` for a `@WireMVCBootstrap` root
+- **WHEN** WireMVCRouteGen renders the `@main` for a `@WireMVCBootstrap` root whose `createServer()` is declared `throws`
 - **THEN** it contains `let server = WireMVCContextServer(try bootstrap.createServer())`
 
 #### Scenario: a global contribution on a route with no middleware
@@ -227,18 +265,18 @@ apply over them, and SHALL forward `sendInformational(_:)` without applying anyt
 - **WHEN** a global middleware contributes `x-served-by: wire-mvc` and `GET /no/such/route` reaches the raw `@NotFound` handler
 - **THEN** the `404` carries `x-served-by: wire-mvc`
 
-Pinned by: `Tests/WireMVCResponsesTests/ResponsesTests.swift` (`handlerFieldsSurviveAContribution`, `repeatedHandlerFieldsSurviveAContribution`, `setIfAbsentDefersToAHandlerWrittenField`, `setOverridesAHandlerWrittenField`, `headIsUnchangedWhenNothingContributes`, `contributedHeadersStillReachARawHead`), `Fixtures/Tests/WireMVCBootstrapExampleTests/WithTestServerTests.swift` (`globalContributionReachesARawRoute`, `globalContributionReachesTheNotFoundFallback`).
+Pinned by: `Tests/WireMVCResponsesTests/ResponsesTests.swift` (`handlerFieldsSurviveAContribution`, `repeatedHandlerFieldsSurviveAContribution`, `setIfAbsentDefersToAHandlerWrittenField`, `setOverridesAHandlerWrittenField`, `headIsUnchangedWhenNothingContributes`, `contributedHeadersStillReachARawHead`), `Fixtures/Tests/WireMVCBootstrapExampleTests/WithTestServerTests.swift` (`globalContributionReachesARawRoute`, `globalContributionReachesTheNotFoundFallback`). Every cited test writes through the two-argument `sendAndFinish`, which reaches the wrapper's `send(_:)`; the drain in `sendAndFinish(_:buffer:trailer:)` and the forwarding of `sendInformational(_:)` are pinned by nothing yet, tracked in https://github.com/swift-wire/wire-mvc/issues/240.
 
 ### Requirement: The outermost middleware's contribution applies last
 Because the registry drains newest first, a contribution registered by an outer middleware on the way
 in SHALL be applied after any contribution registered by a middleware inside it, and so SHALL win for
 `.set`.
 
-#### Scenario: a global stamp around a gate
-- **WHEN** a `@WireMVCBootstrap` root lists `@Middleware(StampKeys.factory)` before `@Middleware(GateKeys.factory)`, `Stamp` adds `.set(x-stamp, "global")`, `Gate` adds `.setIfAbsent(x-stamp, "gate")`, and `GET /ping` or `GET /gated` is served
-- **THEN** the response carries `x-stamp: global`
+#### Scenario: the outer registration wins
+- **WHEN** an outer middleware registers `.set(x-contested, "outer")` on the way in, an inner middleware then registers `.set(x-contested, "inner")`, and the registry is drained into empty fields
+- **THEN** `x-contested` is `outer` and has one value
 
-Pinned by: `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`setIfAbsentDefersToAContributorAlreadyThere`, `aGateResponseCarriesContributedFields`), `Tests/WireMVCResponsesTests/ResponsesTests.swift` (`theFirstRegistrationWinsAcrossTheOverflowBoundary`).
+Pinned by: `Tests/WireMVCResponsesTests/ResponsesTests.swift` (`theFirstRegistrationWinsAcrossTheOverflowBoundary`). Over the wire it is pinned by nothing yet: the fallback fixture's `GateTests` give the same result under either drain order, tracked in https://github.com/swift-wire/wire-mvc/issues/239.
 
 ## Related specifications
 
