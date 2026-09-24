@@ -46,7 +46,7 @@ prefixed with `try`.
 - **WHEN** a route declares `@ErrorResponse({ (e: ValidationError) in try .json(Problem(e.message), status: .unprocessableContent) })`
 - **THEN** the witness contains `wireMVCRespond(to: wireMVCError, ({ (e: ValidationError) in`
 
-Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`inlineClosureMapping`, `routeClosureOverridesController`).
+Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`inlineClosureMapping`, `routeClosureOverridesController`, `catchAllClosureIsTerminal`). The `try` prefix is pinned only by `catchAllClosureIsTerminal`, whose closure element is a catch-all; for a chain whose only closure element is a typed mapping it is pinned by nothing yet.
 
 ### Requirement: An untyped closure parameter is diagnosed
 A closure-form `@ErrorResponse` whose parameter has no type annotation SHALL be diagnosed with
@@ -104,7 +104,7 @@ answers.
 - **WHEN** a controller maps `NotFound` to `.notFound` and its route maps `NotFound` with `{ (e: NotFound) in .status(.gone) }`
 - **THEN** `wireMVCRespond(to: wireMVCError, ({ (e: NotFound) in` appears before `(wireMVCError is NotFound ? WireMVCOutcome.status(.notFound) : nil)`
 
-Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`routeClosureOverridesController`).
+Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`routeClosureOverridesController`). Controller-before-global ordering is pinned by nothing yet.
 
 ### Requirement: The composition root's `@ErrorResponse` folds into every typed route
 WireMVCRouteGen SHALL read the `@ErrorResponse` entries of the `@WireMVCBootstrap` root once, under
@@ -138,7 +138,7 @@ mapping and before the catch-all. A route with no bindings SHALL NOT include it.
 - **WHEN** `POST /users` arrives with `Content-Type: text/plain`, and again with the body `{bad`
 - **THEN** the responses are `415` and `422`
 
-Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`controllerScopeStatusShorthandCoversRoute`, `noBindsRouteGainsCatchForErrorResponse`), `Fixtures/Sources/WireMVCExample/main.swift` (the `415` and `422` checks, run by the `BuildAndRun` job in `.github/workflows/build.yml`).
+Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`controllerScopeStatusShorthandCoversRoute`, `noBindsRouteGainsCatchForErrorResponse`), `Fixtures/Sources/WireMVCExample/main.swift` (the `415` and `422` checks, run by the `BuildAndRun` job in `.github/workflows/build.yml`). `controllerScopeStatusShorthandCoversRoute` asserts only that the element is present; its position after the typed mappings and before the catch-all is pinned by nothing yet.
 
 ### Requirement: The innermost catch-all follows the binding built-in
 When any tier declares a catch-all, the chain SHALL end in the first catch-all found in route,
@@ -147,10 +147,10 @@ form, `wireMVCRespondAny(to: wireMVCError, (closure))` for the closure form, or
 `wireMVCRespondAny(to: wireMVCError, status: .status, (closure))` for the body form.
 
 #### Scenario: a controller catch-all closure
-- **WHEN** a controller declares `@ErrorResponse({ (e: Swift.Error) in .status(.internalServerError) })`
+- **WHEN** a controller declares `@ErrorResponse({ (e: Swift.Error) in .status(.internalServerError) })` and its route binds `@Path id`
 - **THEN** the chain contains `wireMVCRespondAny(to: wireMVCError, ({ (e: Swift.Error) in`, the closure body reads `return try (`, and nothing is rethrown
 
-Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`catchAllClosureIsTerminal`). Selection of the route's catch-all over a controller's is pinned by nothing yet.
+Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`catchAllClosureIsTerminal`), which asserts the closure-form element is present. Its position after the binding built-in and at the end of the chain, the status-form and body-form terminal elements, and selection of the route's catch-all over a controller's are pinned by nothing yet.
 
 ### Requirement: An unmapped throw becomes a written `500`
 When no tier declares a catch-all, the chain SHALL end in `WireMVCOutcome.status(.internalServerError)`,
@@ -167,10 +167,10 @@ bindings SHALL have the chain `WireMVCOutcome.status(.internalServerError)` alon
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`controllerScopeStatusShorthandCoversRoute`, `middlewareFactoryKeyFold`), `Fixtures/Sources/WireMVCExample/main.swift` (the `GET /boom` check, run by the `BuildAndRun` job in `.github/workflows/build.yml`).
 
-### Requirement: The mapped region covers scope entry, binding, the handler and encoding
+### Requirement: The mapped region covers scope entry, binding, the handler and buffered encoding
 The generated `building:` closure passed to the terminal SHALL contain the scoped controller's scope
-entry, every parameter bind, the handler call and the response encoding, so a throw from any of them
-SHALL be mapped by `errorMapping`. Body collection by the terminal's `collectingBodyFrom:` overload
+entry, every parameter bind, the handler call and, for a buffered route, the response encoding, so a
+throw from any of them SHALL be mapped by `errorMapping`. Body collection by the terminal's `collectingBodyFrom:` overload
 SHALL run inside the same mapped region.
 
 #### Scenario: a scoped controller with a mapping
@@ -178,6 +178,17 @@ SHALL run inside the same mapped region.
 - **THEN** `let wireMVCScopeEntry = try await self._wireEnterScope(request)` appears after `building: {`
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`scopedControllerScopeEntryInsideDoWhenMapped`).
+
+### Requirement: A throw while a streamed body is produced is not mapped
+On a streaming route, `wireMVCStreamingTerminal` SHALL send the head and produce the body only after
+`building` returns and the outcome is settled, so a throw from the producer SHALL NOT be mapped by
+`errorMapping`; it SHALL propagate and the response SHALL be aborted without `finish`.
+
+#### Scenario: a producer that fails after two chunks
+- **WHEN** `building` returns a producer that writes `<html>` and `<p>ok</p>` and then throws `BoomError`, with an `errorMapping` that answers `.status(.internalServerError)`
+- **THEN** the head already sent is `200`, the terminal rethrows `BoomError`, and the response is aborted rather than finished
+
+Pinned by: `Fixtures/Tests/StreamingTierTests/TierTests.swift` (`midBodyFailureAborts`).
 
 ### Requirement: A mapped response still carries middleware header contributions
 The terminal SHALL drain the response header registry after `building` returns or throws, and SHALL
@@ -189,7 +200,7 @@ threw, in which case the route's error SHALL be the one mapped.
 - **WHEN** `GET /hello/refused/Ada` passes a middleware that contributes `x-stamp: middleware` and a deferred `Set-Cookie`, and the handler throws `TenantMissing`, which the root maps to `400`
 - **THEN** the response is `400` carrying `x-stamp: middleware` and `Set-Cookie: greeted=Ada; Path=/`
 
-Pinned by: `Fixtures/Tests/WireMVCBootstrapExampleTests/WithTestServerTests.swift` (`middlewareContributionsSurviveAMappedRefusal`). The drain-failure precedence is pinned by nothing yet.
+Pinned by: `Fixtures/Tests/WireMVCBootstrapExampleTests/WithTestServerTests.swift` (`middlewareContributionsSurviveAMappedRefusal`), `Tests/WireMVCResponsesTests/ResponsesTests.swift` (`aDeferredContributionRunsOnceWhenALaterOneThrows`, `aMappedErrorStillCarriesTheContributions`). Precedence of the route error over a failed drain is pinned by nothing yet.
 
 ### Requirement: Raw routes and the fallback consult no `@ErrorResponse`
 A `@RawRoute` handler, including the root's `@NotFound` fallback, SHALL be called directly from its
