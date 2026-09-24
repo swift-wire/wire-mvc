@@ -26,7 +26,7 @@ SHALL read the controller from a `struct`, `class` or `actor` declaration.
 - **WHEN** `@Controller struct C` declares `@Get("/x")`
 - **THEN** the route's template is `/x`
 
-Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`fileLevelDiagnosticCarriesLocation`, `generatesSortedExtensionsWithImports`), `Fixtures/Sources/WireMVCBootstrapExample/HelloController.swift` (probed by the `Run @WireMVCBootstrap example (boot, probe, stop)` step of the `BuildAndRun` job in `.github/workflows/build.yml`).
+Pinned by: `Fixtures/Sources/WireMVCBootstrapExample/HelloController.swift` (probed by the `Run @WireMVCBootstrap example (boot, probe, stop)` step of the `BuildAndRun` job in `.github/workflows/build.yml`), for the prefixed form. The bare, `@Controller()`, `class` and `actor` forms are pinned by nothing yet, which is tracked in https://github.com/swift-wire/wire-mvc/issues/230.
 
 ### Requirement: Five verb annotations name the route's method
 `@Get`, `@Post`, `@Put`, `@Patch` and `@Delete` SHALL each be declared in two forms, `(_ path:
@@ -34,21 +34,23 @@ String)` and `()`, and WireMVCRouteGen SHALL register the route with `.get`, `.p
 `.patch` or `.delete` respectively. A member function with no verb annotation SHALL NOT be a route.
 
 #### Scenario: a verb with a subpath
-- **WHEN** a controller declares `@Get("/{id}") @JSONResponse func get(@Path id: String)`
+- **WHEN** `@Controller("/todos")` declares `@Get("/{id}") @JSONResponse func get(@Path id: String)`
 - **THEN** the witness contains `builder.register(method: .get, path: "/todos/{id}")`
 
 #### Scenario: a bare verb routes the prefix
 - **WHEN** `@Controller("/ping")` declares `@Get @JSONResponse func ping()`
 - **THEN** `GET /ping` answers `200`
 
-Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`plainJSONRouteWithPathBinding`), `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`matchedRouteCarriesTheGlobalHeader`).
+Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`plainJSONRouteWithPathBinding`), `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`matchedRouteCarriesTheGlobalHeader`), for `.get`. `.post` is pinned incidentally by `allParameterBindingShapes` in the same codegen test file. `.put`, `.patch` and `.delete` are pinned by nothing yet, which is tracked in https://github.com/swift-wire/wire-mvc/issues/230.
 
 ### Requirement: There is no `@Head` or `@Options` annotation
 The package SHALL NOT declare a verb annotation for `HEAD` or `OPTIONS`; the verb-to-method mapping
-SHALL recognise only `Get`, `Post`, `Put`, `Patch` and `Delete`.
+SHALL recognise only `Get`, `Post`, `Put`, `Patch` and `Delete`. Because WireMVC declares no `Head`
+or `Options` macro, `@Head` on a function compiles only when the app declares an attribute of that
+name itself.
 
 #### Scenario: an attribute outside the five
-- **WHEN** a member function carries an attribute named `Head` and no other verb
+- **WHEN** an app declares its own `Head` attribute and a member function carries `@Head` and no other verb
 - **THEN** WireMVCRouteGen treats it as a helper and registers nothing for it
 
 Pinned by: nothing yet.
@@ -62,7 +64,7 @@ attached peer macros implemented by `RouteMarkerMacro`, whose expansion SHALL re
 - **WHEN** a struct member carrying `@Get("/{id}")` and `@JSONResponse` is macro-expanded
 - **THEN** the expanded source is the member with both attributes removed and nothing added
 
-Pinned by: `Tests/WireMVCMacrosTests/ControllerMacroTests.swift` (`testControllerAddsNoPeer`, `testControllerWithMiddlewareAddsNoPeer`).
+Pinned by: `Tests/WireMVCMacrosTests/ControllerMacroTests.swift` (`testControllerAddsNoPeer`, `testControllerWithMiddlewareAddsNoPeer`), for `RouteMarkerMacro` expanding to nothing. That each listed declaration in `Sources/WireMVC/Macros.swift` names `RouteMarkerMacro` is pinned by nothing yet, which is tracked in https://github.com/swift-wire/wire-mvc/issues/230.
 
 ### Requirement: The full path joins the prefix and the subpath
 WireMVCRouteGen SHALL form each route's template with `routeJoinPath(prefix, sub)`: one trailing `/`
@@ -84,17 +86,33 @@ empty subpath.
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`plainJSONRouteWithPathBinding`, `pathPlaceholderMismatchIsDiagnosed`). The empty and slash-normalising cases are pinned by nothing yet.
 
-### Requirement: A wildcard segment other than the trailing catch-all is an error
+### Requirement: A bare `*` or `**` segment is an error
 WireMVCRouteGen SHALL report `wildcardPathSegment` for a joined template containing a segment that
 is exactly `*` or `**`, anchored at the handler's name, and SHALL generate no registration for that
-route. The message SHALL read `route path "<path>" uses '<segment>': the only wildcard WireMVC route
+route, unless the template also has a catch-all before its last segment, in which case only
+`catchAllNotLastSegment` is reported. A route draws at most one of the two. The message SHALL read `route path "<path>" uses '<segment>': the only wildcard WireMVC route
 templates express is the trailing catch-all, '{name*}'`.
 
 #### Scenario: a bare star
 - **WHEN** `@Controller("/files")` declares `@Get("/*")`
 - **THEN** exactly one diagnostic is reported and it contains `{name*}`
 
-Pinned by: `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`unexpressibleWildcardIsDiagnosed`).
+#### Scenario: a misplaced catch-all and a bare star
+- **WHEN** `@Controller("/files")` declares `@Get("/{p*}/*")`
+- **THEN** only `catchAllNotLastSegment` is reported
+
+Pinned by: `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`unexpressibleWildcardIsDiagnosed`). The precedence of `catchAllNotLastSegment` is pinned by nothing yet.
+
+### Requirement: A prefix or suffix wildcard segment is not diagnosed
+WireMVCRouteGen SHALL NOT diagnose a segment that contains `*` but is neither exactly `*` or `**` nor
+a `{name*}` catch-all, such as `*.png` or `file*`; the route registers with that segment as a
+literal. This is tracked as a defect in https://github.com/swift-wire/wire-mvc/issues/229.
+
+#### Scenario: a suffix wildcard
+- **WHEN** `@Controller("/files")` declares `@Get("/*.png") @JSONResponse func serve() -> String`
+- **THEN** no diagnostic is reported and the witness contains `builder.register(method: .get, path: "/files/*.png")`
+
+Pinned by: nothing yet.
 
 ### Requirement: A catch-all before the last segment is an error
 WireMVCRouteGen SHALL report `catchAllNotLastSegment` when a `{name*}` segment is followed by any
