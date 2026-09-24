@@ -37,11 +37,16 @@ Pinned by: `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`aR
 `CORSConfiguration.AllowOrigin` SHALL be a `Sendable, Equatable` enum whose value for a request origin
 is: nothing for `.none`; `*` for `.all`; the request's origin for `.originBased`; the request's origin
 for `.oneOf(list)` when `list` contains it, else nothing; the given string for `.custom(value)`. When
-the value is not nothing, `CORSMiddleware` SHALL contribute `Access-Control-Allow-Origin` with it.
+the request carries `Origin` and the value is not nothing, `CORSMiddleware` SHALL contribute
+`Access-Control-Allow-Origin` with it.
 
 #### Scenario: `.oneOf` and an unlisted origin
 - **WHEN** the policy is `.oneOf(["https://a.example", "https://b.example"])` and the origin is `https://evil.example`
-- **THEN** the value is `nil`, and over a live server `GET /ping` with `Origin: https://evil.example` answers `200` without `Access-Control-Allow-Origin`
+- **THEN** the value is `nil`
+
+#### Scenario: the fixture's `.oneOf` and an unlisted origin
+- **WHEN** the fixture app, configured with `.oneOf(["https://allowed.example"])`, receives `GET /ping` with `Origin: https://evil.example`
+- **THEN** it answers `200` without `Access-Control-Allow-Origin`
 
 #### Scenario: `.originBased` echoes
 - **WHEN** the policy is `.originBased` and the origin is `https://app.example`
@@ -51,7 +56,7 @@ the value is not nothing, `CORSMiddleware` SHALL contribute `Access-Control-Allo
 - **WHEN** the origin is `https://a.example`
 - **THEN** `.all` yields `*` and `.none` yields `nil`
 
-Pinned by: `Tests/WireMVCMiddlewareTests/CORSConfigurationTests.swift` (`originBasedEchoesTheRequestOrigin`, `oneOfEchoesOnlyListedOrigins`, `fixedPoliciesDoNotVaryByOrigin`), `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`anUnlistedOriginGetsNoAllowOrigin`).
+Pinned by: `Tests/WireMVCMiddlewareTests/CORSConfigurationTests.swift` (`originBasedEchoesTheRequestOrigin`, `oneOfEchoesOnlyListedOrigins`, `fixedPoliciesDoNotVaryByOrigin`), `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`anUnlistedOriginGetsNoAllowOrigin`). The `.custom` value is pinned by nothing yet.
 
 ### Requirement: Credentials are advertised when configured
 When `configuration.allowCredentials` is `true` and the request carries `Origin`, `CORSMiddleware`
@@ -64,8 +69,8 @@ SHALL contribute `Access-Control-Allow-Credentials: true`.
 Pinned by: `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`anAllowedOriginGetsTheCORSFields`).
 
 ### Requirement: `Vary: Origin` is appended exactly when the answer depends on the origin
-`CORSMiddleware` SHALL contribute `.append(.vary, "Origin")` when `allowOrigin` is `.originBased` or
-`.oneOf`, and SHALL NOT contribute `Vary` for `.none`, `.all` or `.custom`. `Vary` is not a
+For a request that carries `Origin`, `CORSMiddleware` SHALL contribute `.append(.vary, "Origin")`
+when `allowOrigin` is `.originBased` or `.oneOf`, and SHALL NOT contribute `Vary` for `.none`, `.all` or `.custom`. `Vary` is not a
 configuration field.
 
 #### Scenario: a listed origin under `.oneOf`
@@ -90,8 +95,8 @@ Pinned by: `Tests/WireMVCMiddlewareTests/CORSConfigurationTests.swift` (`fixedPo
 Pinned by: nothing yet.
 
 ### Requirement: `Expose-Headers` is sent on an actual request only
-When the request is not a preflight and `configuration.exposedHeaders` is not empty, `CORSMiddleware`
-SHALL contribute `Access-Control-Expose-Headers` with the names' `rawName`s joined by `", "`. A
+When the request carries `Origin`, is not a preflight and `configuration.exposedHeaders` is not
+empty, `CORSMiddleware` SHALL contribute `Access-Control-Expose-Headers` with the names' `rawName`s joined by `", "`. A
 preflight SHALL NOT receive it.
 
 #### Scenario: the fixture exposes one field
@@ -101,8 +106,8 @@ preflight SHALL NOT receive it.
 Pinned by: `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`anAllowedOriginGetsTheCORSFields`). The preflight's omission is pinned by nothing yet.
 
 ### Requirement: A preflight is answered `204` with the preflight fields and the drained contributions
-A request whose method is `OPTIONS` and which carries `Access-Control-Request-Method` SHALL be a
-preflight. `CORSMiddleware` SHALL answer it with `input.respondingWith(.status(.noContent,
+A request that carries `Origin`, whose method is `OPTIONS` and which carries
+`Access-Control-Request-Method` SHALL be a preflight. `CORSMiddleware` SHALL answer it with `input.respondingWith(.status(.noContent,
 headerFields:))` carrying `Access-Control-Allow-Methods` (the methods' raw values joined by `", "`),
 `Access-Control-Allow-Headers` (the names' `rawName`s joined by `", "`) when `allowHeaders` is not
 empty, and `Access-Control-Max-Age` (the whole seconds of `maxAge`) when `maxAge` is set, and SHALL
