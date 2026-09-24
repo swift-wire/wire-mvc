@@ -25,20 +25,43 @@ offer `init(wrappedValue:_ name:)`; `JSONBody` SHALL offer only `init(wrappedVal
 - **WHEN** `scanRequestBindings` is run over `Sources/WireMVC/RequestBinding.swift`
 - **THEN** it finds exactly four bindings: `Path` with `.path`, `JSONBody` with `.body`, and `Query` and `Header` with no obligation
 
-Pinned by: `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`theBuiltInsAreAnnotated`, `builtInsNeedNoSpecialCase`).
+Pinned by: `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`theBuiltInsAreAnnotated`). The conditional `RequestBound` conformances and `Header`'s `init(wrappedValue:_ name:)` are exercised only by the fixtures compiling (the `@Query`, `@Path` and `@Header("x-trace")` parameters in `Fixtures/Sources/WireMVCExample/UsersController.swift`); the remaining initialiser shapes are pinned by nothing yet.
 
 ### Requirement: `RequestBound` is a static `bind` with a defaulted coding-aware overload
 `RequestBound` SHALL have an associated type `Value` and one requirement,
 `static func bind(name: String, request: HTTPRequest, pathParameters: [String: Substring], body: [UInt8]?) async throws -> Value`.
 An extension SHALL supply `bind(name:request:pathParameters:body:coding:)` forwarding to it, and the
-generated terminal SHALL call that coding-aware form as `<Wrapper><<Type>>.bind(…, coding: wireMVCAppCoding)`.
-`JSONBody` SHALL override the coding-aware form to decode with the given `WireMVCCoding`.
+generated terminal SHALL call the coding-aware form (`bind`, or `bindOptional` for an optional or defaulted
+parameter), passing as `coding:` the innermost `@Coding` in scope (the route's, then the controller's, read
+from the proxy), else `wireMVCAppCoding`.
 
 #### Scenario: every parameter is bound through the coding-aware call
 - **WHEN** a route declares `@Path scope: String` and `@JSONBody filter: Filter`
 - **THEN** the terminal contains `let scope = try await Path<String>.bind(name: "scope", request: request, pathParameters: pathParameters, body: requestBody, coding: wireMVCAppCoding)` and the matching `JSONBody<Filter>.bind(…)` line
 
-Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`allParameterBindingShapes`).
+#### Scenario: a controller's `@Coding` replaces the app's
+- **WHEN** a `@Coding(WireMVCCoding.controller)` controller declares `@Get("/{id}") func get(@Path id: String)` and a second route that adds `@Coding(WireMVCCoding.route)`
+- **THEN** the first route's bind passes `coding: self._wireWireMVCCoding_controller`, the second's passes `coding: self._wireWireMVCCoding_route`, and neither passes `wireMVCAppCoding`
+
+Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`allParameterBindingShapes`, `codingTiersResolveInnermostFirst`).
+
+### Requirement: `JSONBody`'s own coding-aware `bind` is reached only by a direct call
+`JSONBody` SHALL declare its own `bind(name:request:pathParameters:body:coding:)`, which decodes with the
+given `WireMVCCoding` and which the generated `JSONBody<T>.bind(…, coding:)` call reaches by static
+dispatch. It is not a `RequestBound` requirement, so `RequestBound.bindOptional` reaches the extension's
+forwarding form instead, and an optional or defaulted `@JSONBody` parameter decodes with
+`WireMVCCoding.default` whatever `coding:` it is passed, which is tracked as a defect in
+https://github.com/swift-wire/wire-mvc/issues/235.
+
+#### Scenario: a required body under a controller coding
+- **WHEN** a `@Coding(WireMVCCoding.controller)` controller's route declares `@JSONBody filter: Filter`
+- **THEN** the terminal calls `JSONBody<Filter>.bind(…, coding: self._wireWireMVCCoding_controller)` and the body is decoded with that coding
+
+#### Scenario: an optional body under a controller coding
+- **WHEN** the same route declares `@JSONBody filter: Filter?` instead
+- **THEN** the terminal calls `JSONBody<Filter>.bindOptional(…, coding: self._wireWireMVCCoding_controller)` and the body is decoded with `WireMVCCoding.default`
+
+Pinned by: nothing yet.
 
 ### Requirement: A binding is recognised by its declaration, and an unrecognised parameter is an error
 WireMVCRouteGen SHALL treat an attribute on a handler parameter as a binding exactly when a type of that
@@ -58,11 +81,11 @@ not be emitted.
 - **WHEN** the sources declare `public struct NotABinding<V>: RequestBound {}` with no `@RequestBinding`
 - **THEN** the scan does not record `NotABinding` as a binding
 
-Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`unannotatedParameterIsDiagnosed`), `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`unknownIsStillDiagnosed`, `unannotatedIsNotABinding`, `recognised`).
+Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`unannotatedParameterIsDiagnosed`), `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`unknownIsStillDiagnosed`, `unannotatedIsNotABinding`, `recognised`). That the route is not emitted, and that the diagnostic is anchored at the parameter, is pinned by nothing yet.
 
 ### Requirement: The wire name is the attribute's string literal, else the parameter's label
-WireMVCRouteGen SHALL pass as `name:` the binding attribute's first string-literal argument when it has
-one, otherwise the parameter's external label, or its internal name when the external label is `_`.
+WireMVCRouteGen SHALL pass as `name:` the binding attribute's first argument when that argument is a
+string literal, otherwise the parameter's external label, or its internal name when the external label is `_`.
 
 #### Scenario: an override and an inferred name side by side
 - **WHEN** a route declares `@Query("q") query: String` and `@Query limit: Int?`
@@ -115,13 +138,13 @@ one binding SHALL include `(wireMVCError as? WireMVCBindingError).map { WireMVCO
 
 #### Scenario: the built-in mapping is emitted
 - **WHEN** WireMVCRouteGen renders a route with any binding
-- **THEN** its `errorMapping` chains the `WireMVCBindingError` status mapping ahead of `WireMVCOutcome.status(.internalServerError)`
+- **THEN** its `errorMapping` chains the `WireMVCBindingError` status mapping after any non-catch-all `@ErrorResponse` mappings and before the `@ErrorResponse(Error.self, …)` catch-all, or, with no catch-all, before `WireMVCOutcome.status(.internalServerError)`
 
 #### Scenario: a route with no bindings
 - **WHEN** a route takes no parameters
 - **THEN** its `errorMapping` does not mention `WireMVCBindingError`
 
-Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`allParameterBindingShapes`, `noBindsRouteGainsCatchForErrorResponse`).
+Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`allParameterBindingShapes`, `noBindsRouteGainsCatchForErrorResponse`) for the emitted mapping; `Fixtures/Tests/WireMVCBootstrapExampleTests/HTMLResponseOverTheWireTests.swift` (`aBindingFailureStillMaps`) for the `400`; `Fixtures/Sources/WireMVCExample/main.swift` (the `POST wrong Content-Type` and `POST malformed JSON` checks, run by the `Run end-to-end example` step of the `BuildAndRun` job in `.github/workflows/build.yml`) for the `415` and `422`.
 
 ### Requirement: `@JSONBody` rejects a contradictory `Content-Type` and a malformed body
 `JSONBody.bind` SHALL throw `unsupportedMediaType` when the request has a `Content-Type` that does not
@@ -163,18 +186,23 @@ Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`p
 
 ### Requirement: Binding runs inside the terminal's `building` closure, after scope entry
 WireMVCRouteGen SHALL emit every `bind` call inside the terminal's `building` closure, so a binding
-failure reaches that route's `errorMapping`. On a `@Scoped(seed:)` controller the binds SHALL follow
-`let wireMVCScopeEntry = try await self._wireEnterScope(request)`.
+failure reaches that route's `errorMapping`. On a `@Scoped(seed:)` controller the binds SHALL follow the
+scope-entry line, `let wireMVCScopeEntry = try await self._wireEnterScope(…)`, whose arguments are
+`(request)` in the production witness and `(request, wireMVCDoubles)` in a keyed test-variant witness.
 
-#### Scenario: a scoped controller with a mapped error
+#### Scenario: the scope entry is inside the mapped region
 - **WHEN** a `@Scoped(seed: HTTPRequest.self)` controller carries `@ErrorResponse(Unauthenticated.self, .unauthorized)`
-- **THEN** `building: {` precedes the scope-entry line in the rendered witness
+- **THEN** `building: {` precedes `let wireMVCScopeEntry = try await self._wireEnterScope(request)` in the rendered witness
 
-#### Scenario: a scoped controller binds over HTTP
-- **WHEN** `POST /scoped-pages/digest` reaches a scoped controller's route with a body binding
-- **THEN** the response is `200` and carries both the scope-entered controller's injected value and the bound value
+#### Scenario: an ordinary bind on a scoped controller
+- **WHEN** a `@Scoped(seed: HTTPRequest.self)` controller declares `@Get("/{id}") func note(@Path id: String)`
+- **THEN** `let wireMVCScopeEntry = try await self._wireEnterScope(request)` precedes `let id = try await Path<String>.bind(` in the rendered witness
 
-Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`scopedControllerScopeEntryInsideDoWhenMapped`), `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`theBindComesAfterTheScopeEntryThatProducesIt`), `Fixtures/Tests/WireMVCBootstrapExampleTests/StreamingRequestTests.swift` (`streamedResponseOnScopedController`).
+#### Scenario: a scoped controller binds a path parameter over HTTP
+- **WHEN** `GET /notes/z` reaches the `@Scoped(seed: HTTPRequest.self)` `NotesController`'s `note(@Path id: String)`
+- **THEN** the handler receives `id == "z"` and returns `stamped:real:z`, built from the scope-entered controller's injected values and the bound value
+
+Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`scopedControllerScopeEntryInsideDoWhenMapped`), `Fixtures/Tests/WireMVCBootstrapExampleBindTests/KeylessCoexistTests.swift` (`keylessSuiteServesRealBackendOnSharedRoute`). The bind-after-entry order is measured only for a graph-aware binding, by `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`theBindComesAfterTheScopeEntryThatProducesIt`); the order of an ordinary bind is pinned by nothing yet.
 
 ### Requirement: The body is collected once, and only when a binding declares `.body`
 When any parameter's binding declares `.body`, the terminal SHALL be called with
@@ -200,8 +228,8 @@ Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`a
 ### Requirement: `WireMVCRequest.collectBody` caps the body and reports any failure as `malformedBody`
 `WireMVCRequest.collectBody(_:maximumSize:)` SHALL consume the reader into a `[UInt8]` with a default
 `maximumSize` of `1_000_000`, and SHALL throw `WireMVCBindingError.malformedBody` when the collect throws
-for any reason, including exceeding the maximum. The generated collecting terminals SHALL call it with
-the default maximum.
+for any reason, including exceeding the maximum. WireMVC's collecting terminal overloads
+(`collectingBodyFrom:`), which the generated code calls, SHALL call it with the default maximum.
 
 #### Scenario: an oversized collected body
 - **WHEN** a `@JSONBody` route receives a body longer than 1,000,000 bytes
@@ -211,8 +239,10 @@ Pinned by: nothing yet.
 
 ### Requirement: `@Query` parses the query string itself and percent-decodes the value
 `Query.bind` SHALL take the text after the first `?` of `request.path`, split it on `&`, split each pair on
-its first `=`, and use the first pair whose undecoded key equals the binding name. A pair with no `=`
-SHALL yield the empty string. The value SHALL be percent-decoded without Foundation: each `%XX` with two
+its first `=`, and use the first pair whose undecoded key equals the binding name. Both splits SHALL drop
+empty pieces, so `k=` and a bare `k` both yield the empty string, a trailing `?` with nothing after it
+throws `missingQueryParameter`, and a pair with an empty key (`=v`) is read as key `v` with an empty value, which is
+tracked as a possible defect in https://github.com/swift-wire/wire-mvc/issues/236. The value SHALL be percent-decoded without Foundation: each `%XX` with two
 hex digits becomes that byte, any other `%` passes through unchanged, and the bytes are decoded as UTF-8.
 
 #### Scenario: an encoded value
