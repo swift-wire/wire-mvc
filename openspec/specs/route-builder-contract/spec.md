@@ -108,7 +108,7 @@ Pinned by: `Fixtures/Sources/WireMVCExample/main.swift` (the `@BackgroundService
 - **WHEN** a target applying `WireMVCBuildPlugin` depends on the `WireMVC` product and calls `Wire.bootstrap()`
 - **THEN** the returned graph is accepted by `WireMVC.apply(_:to:coding:)` as `some WireMVCComposable`
 
-Pinned by: `Tests/WireMVCServerTransportTests/AdapterTests.swift` (`servesProposalRoutesOnServerTransport`), `Fixtures/Sources/WireMVCExample/main.swift` (the `Build fixtures` step of the `BuildAndRun` job in `.github/workflows/build.yml`).
+Pinned by: `Tests/WireMVCServerTransportTests/AdapterTests.swift` (`servesProposalRoutesOnServerTransport`), `Fixtures/Sources/WireMVCExample/main.swift` (the `Build fixtures` step of the `BuildAndRun` job in `.github/workflows/build.yml`). The controllers-but-no-services case is pinned by `Fixtures/Sources/WireMVCBootstrapExample`, a generated graph with controllers and no `@BackgroundService`, built by the same `Build fixtures` step. The services-but-no-controllers case is pinned by nothing yet.
 
 ### Requirement: `WireMVC.apply` registers every contributor and returns the services
 `WireMVC.apply<Builder: HTTPServerRouteBuilder>(_ graph: some WireMVCComposable, to builder: inout
@@ -193,20 +193,29 @@ Pinned by: `Fixtures/Sources/WireMVCBootstrapExample/HelloController.swift` (bui
 `ControllerMacro`, whose expansion SHALL return no peers and emit no diagnostics. Route-shape
 validation SHALL happen in WireMVCRouteGen at build time, not in the macro.
 
-#### Scenario: a controller with routes and middleware
-- **WHEN** `@Controller("/todos")` is expanded over a struct carrying `@Get`, `@JSONResponse` and `@Middleware` members
-- **THEN** the expanded source is the struct with its attributes stripped and no added declaration
+#### Scenario: a controller with a route
+- **WHEN** `@Controller("/todos")` is expanded over `struct Todos` carrying a `@Get("/{id}") @JSONResponse func get(@Path id: String)` route, with `@Get` and `@JSONResponse` expanded by `RouteMarkerMacro`
+- **THEN** the expanded source is `struct Todos` with the `@Get` and `@JSONResponse` markers removed, `@Path` kept, and no added declaration
+
+#### Scenario: a controller with type-level middleware
+- **WHEN** `@Controller("/x") @Middleware(Keys.session)` is expanded over `struct C`
+- **THEN** the expanded source is `struct C` with no added declaration, and in particular no proxy holding `_wireFactory_Keys_session`
 
 #### Scenario: a malformed route in the macro's view
 - **WHEN** `@Controller` is expanded over a route whose parameter has no binding annotation
 - **THEN** the macro reports no diagnostic
 
-Pinned by: `Tests/WireMVCMacrosTests/ControllerMacroTests.swift` (`testControllerAddsNoPeer`, `testControllerWithMiddlewareAddsNoPeer`, `testMarkerDoesNotDiagnoseRouteShape`).
+#### Scenario: the same route in WireMVCRouteGen's view
+- **WHEN** WireMVCRouteGen renders the witness for a route `func f(id: String) -> Int` whose parameter has no binding annotation
+- **THEN** it reports exactly one diagnostic, `handler parameter 'id' needs a binding annotation — one of @Path, @Query, @JSONBody, @Header`
+
+Pinned by: `Tests/WireMVCMacrosTests/ControllerMacroTests.swift` (`testControllerAddsNoPeer`, `testControllerWithMiddlewareAddsNoPeer`, `testMarkerDoesNotDiagnoseRouteShape`), `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`unannotatedParameterIsDiagnosed`).
 
 ### Requirement: The witness is an extension on the proxy, calling the subject through `_wireSubject`
-WireMVCRouteGen SHALL emit each controller's witness as `extension
-_WireRouteContributor_<Controller>: RouteContributor { … }` into `_WireRoutes.swift`, prefixed with
-the controller's own access keyword, and the witness body SHALL reach the controller through the
+WireMVCRouteGen SHALL emit each controller's witness into `_WireRoutes.swift` as `extension
+_WireRouteContributor_<Controller>: RouteContributor { … }`, with no access keyword on the extension.
+Its `registerWireRoutes` method SHALL carry `public ` when the controller is `public` or `open`,
+`package ` when it is `package`, and no access keyword otherwise. The witness body SHALL reach the controller through the
 stored field `_wireSubject`. `contributorProxySubjectAccessor` SHALL equal `"_wireSubject"`, and the
 witness body SHALL differ from one rendered against any other accessor only in that name.
 
@@ -223,7 +232,8 @@ Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`p
 ### Requirement: Lifted field names are derived by the same rule on both sides
 The witness SHALL name the proxy's WireGen-emitted fields by these rules, each applied to the
 annotation's canonical argument text: a `@Middleware(key)` naming a `@Factory` template reads
-`_wireFactory_<key>` with every character outside `[A-Za-z0-9_]` replaced by `_`; a `@Middleware(key)`
+`_wireFactory_<key>` with every character that is not a letter, a digit or `_` (by Swift's
+`Character.isLetter` and `isNumber`, so non-ASCII letters and digits are kept) replaced by `_`; a `@Middleware(key)`
 naming any other binding key reads `_wire<key>` sanitised the same way; a `@Middleware(T.self)` reads
 `_wire<T>` where `<T>` is the simple type name with generics and namespace stripped and its first
 letter upper-cased; and a scoped controller's per-request entry calls `self._wireEnterScope(request)`.
@@ -238,22 +248,29 @@ letter upper-cased; and a scoped controller's per-request entry calls `self._wir
 
 #### Scenario: a scoped controller
 - **WHEN** the controller is `@Scoped(seed: HTTPRequest.self)`
-- **THEN** each route begins `let wireMVCScopeEntry = try await self._wireEnterScope(request)`
+- **THEN** each route's terminal body enters the scope with `let wireMVCScopeEntry = try await self._wireEnterScope(request)`, dispatches on `wireMVCController` bound from `wireMVCScopeEntry._wireSubject`, and never reads `self._wireSubject`
 
-Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`middlewareFactoryKeyFold`, `middlewareBindingKeyFold`, `scopedControllerConstructsPerRequestViaScopeEntry`, `factoryKeyDeclaredInAnotherFileIsClassifiedAsFactory`).
+#### Scenario: by-type middleware
+- **WHEN** a controller carries `@Middleware(ControllerGate.self)` and its route carries `@Middleware(RouteGate.self)`
+- **THEN** the witness reads `self._wireControllerGate` and `self._wireRouteGate`
+
+Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`middlewareFactoryKeyFold`, `middlewareBindingKeyFold`, `scopedControllerConstructsPerRequestViaScopeEntry`, `factoryKeyDeclaredInAnotherFileIsClassifiedAsFactory`, `controllerAndRouteByTypeMiddlewareOrder`). The placement of the scope entry inside the terminal body, the stripping of generics and namespace from a by-type name, and the upper-casing of its first letter are pinned by nothing yet.
 
 ### Requirement: `@BackgroundService` aliases a contribution to the services key
 The package SHALL declare `wireMVCServiceAlias` as a `WireAdapterAnnotationV1` for annotation
 `BackgroundService` with capability `.contributes(to: WireMVCKeys.services)`. `@BackgroundService()`
 SHALL be an attached peer macro implemented by `BackgroundServiceMacro` whose expansion returns no
-peers, so it attaches to a `@Singleton` or `@Scoped` type or to a `@Provides` function alike. The
-marker SHALL NOT add a `Service` conformance.
+peers, so it attaches to a `@Singleton` or `@Scoped` type or to a `@Provides` function. Only a
+default-graph contribution (a `@Singleton` type or a `@Provides` function) SHALL reach `graph.services`
+and the result of `WireMVC.apply`; a `@Scoped(seed:)` type contributes to its seed scope's
+`WireMVCKeys.services` aggregate instead, which is tracked as a possible defect in
+https://github.com/swift-wire/wire-mvc/issues/237. The marker SHALL NOT add a `Service` conformance.
 
 #### Scenario: the provider form
 - **WHEN** `@Provides @BackgroundService func makeHeartbeat() -> Heartbeat` is declared and `Heartbeat: Service` states its own conformance
 - **THEN** `WireMVC.apply` returns a services array containing the `Heartbeat`
 
-Pinned by: `Fixtures/Sources/WireMVCExample/Heartbeat.swift` and `Fixtures/Sources/WireMVCExample/main.swift` (run by the `BuildAndRun` job in `.github/workflows/build.yml`). The macro's empty expansion is pinned by nothing yet.
+Pinned by: `Fixtures/Sources/WireMVCExample/Heartbeat.swift` and `Fixtures/Sources/WireMVCExample/main.swift` (run by the `BuildAndRun` job in `.github/workflows/build.yml`). The macro's empty expansion and the `@Scoped(seed:)` case are pinned by nothing yet.
 
 ## Related specifications
 
