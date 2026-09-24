@@ -27,7 +27,7 @@ off the target compiles to an empty module and OpenAPIRuntime is not linked.
 - **WHEN** CI runs `swift test --traits ServerTransport`
 - **THEN** the log contains `Suite "WireMVCServerTransport" passed`, and the step fails if it does not
 
-Pinned by: `.github/workflows/build.yml` (`BuildAndRun`, steps `Build`, `Test` and `Test ServerTransport adapter (trait)`).
+Pinned by: `.github/workflows/build.yml` (`BuildAndRun`, steps `Build`, `Test` and `Test ServerTransport adapter (trait)`), which show only that both builds succeed and that the trait build runs the suite. That the trait-off target contributes no symbols and does not link OpenAPIRuntime holds by construction (`#if ServerTransport` around the target's only source file, and the trait-gated `OpenAPIRuntime` product dependency in `Package.swift`) and is pinned by nothing yet.
 
 ### Requirement: `WireMVCServerTransport.apply` registers the graph and returns its services
 `WireMVCServerTransport.apply(_ graph: some WireMVCComposable, to transport: some ServerTransport)
@@ -47,8 +47,10 @@ Pinned by: `Tests/WireMVCServerTransportTests/AdapterTests.swift` (`servesPropos
 
 ### Requirement: One `transport.register` per route
 The bridge SHALL call `transport.register(_:method:path:)` once per collected route, in registration
-order, passing the route's method and its template string unchanged, and SHALL take each request's path
-parameters from `ServerRequestMetadata.pathParameters`.
+order, until it reaches a route it refuses (see "A catch-all template is refused at registration"),
+passing the route's method and its template string unchanged, and SHALL take each request's path
+parameters from `ServerRequestMetadata.pathParameters`. Routes after a refused one SHALL NOT be
+registered.
 
 #### Scenario: a parameter supplied by the transport
 - **WHEN** the transport matches `GET /users/42` against the registered `/users/{id}` and passes `pathParameters["id"] == "42"`
@@ -121,7 +123,7 @@ the handler until the transport pulls it.
 - **WHEN** a route echoes a three-chunk request body as it reads it
 - **THEN** the first response chunk arrives before the request source has produced all three chunks
 
-Pinned by: `Tests/WireMVCServerTransportTests/AdapterTests.swift` (`streamsRawResponseWithBackpressure`, `streamsRequestAndResponseBodiesConcurrently`).
+Pinned by: `Tests/WireMVCServerTransportTests/AdapterTests.swift` (`streamsRawResponseWithBackpressure`, `streamsRequestAndResponseBodiesConcurrently`). That the body's length is unknown and its iteration single is pinned by nothing yet.
 
 ### Requirement: The handler runs in an unstructured task that inherits task-locals
 The bridge SHALL run each route handler in an unstructured `Task`, so task-local values set around the
@@ -133,7 +135,7 @@ closure has returned.
 - **THEN** the body is `abc-123`
 
 #### Scenario: a streamed response
-- **WHEN** the same route streams three lines reading the task-local after the head is returned
+- **WHEN** the transport call runs inside the same `withValue` scope and a route (`GET /trace-stream`) sends its head, then streams three lines that each read the task-local after the head has been returned
 - **THEN** the body is `1:abc-123\n2:abc-123\n3:abc-123\n`
 
 Pinned by: `Tests/WireMVCServerTransportTests/AdapterTests.swift` (`taskLocalContextReachesTheHandlerThroughTheBridge`, `taskLocalContextSurvivesIntoAStreamedBody`).
@@ -173,8 +175,10 @@ Pinned by: nothing yet.
 
 ### Requirement: The bridge carries response-header contributions
 The bridge SHALL give each handler a `WireMVCContext<BridgeRequestContext>` holding a fresh
-`ResponseHeaderRegistry`, so fields contributed by middleware reach the response the terminal writes,
-and fields contributed after a gate has responded do not.
+`ResponseHeaderRegistry`, so the middleware box's contribution rules (see
+[middleware](../middleware/spec.md)) hold on this runtime as they do natively. Dropping a contribution
+made after a gate has responded is done by `RequestResponseMiddlewareBox.contributing` in the `WireMVC`
+module, not by the bridge; the gate scenario shows that rule survives the bridge.
 
 #### Scenario: a stamped route
 - **WHEN** middleware on `GET /stamped` contributes `x-stamp: adapter`
