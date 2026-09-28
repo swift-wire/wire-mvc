@@ -134,7 +134,7 @@ at mount time, into a `WireMVCResponse.json` with status `200`, and register a `
 that sends that prepared outcome.
 
 #### Scenario: the default path
-- **WHEN** `WireMVCExample` calls `try WireMVC.mountIntrospection(for: graph, into: &builder)` and a client requests `GET /wiring`
+- **WHEN** `WireMVCExample`, whose graph collates a `UsersController`, calls `try WireMVC.mountIntrospection(for: graph, into: &builder)` and a client requests `GET /wiring`
 - **THEN** the response is `200` and its JSON body lists the collated `UsersController` under `bindings`
 
 #### Scenario: the generated entry mounts an unguarded path
@@ -155,7 +155,7 @@ cancel the group when serving returns.
 - **THEN** its last statement is `try await WireMVC.serve(on: server, handler: wireMVCServed, services: wireMVCServices)`
 
 #### Scenario: the generated program serves
-- **WHEN** CI boots the `WireMVCBootstrapExample` binary and polls `GET /hello/ci`
+- **WHEN** CI boots the `WireMVCBootstrapExample` binary, whose `HelloController` answers `GET /hello/{name}` with `{"message":"Hello, <name>!"}`, and polls `GET /hello/ci`
 - **THEN** the route answers `{"message":"Hello, ci!"}` while the process stays alive until killed
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`bootstrapEntryGeneratesMain`), `.github/workflows/build.yml` (`BuildAndRun`, step `Run @WireMVCBootstrap example (boot, probe, stop)`).
@@ -183,7 +183,7 @@ The package SHALL declare `wireMVCControllerAlias` as a `WireAdapterAnnotationV1
 controller itself SHALL NOT enter the collection.
 
 #### Scenario: a controller declared with only two annotations
-- **WHEN** a type is declared `@Singleton @Controller("/hello") struct HelloController`
+- **WHEN** a type is declared `@Singleton @Controller("/hello") struct HelloController` with a `@Get("/{name}")` route
 - **THEN** the generated graph's `routeContributors` holds a `_WireRouteContributor_HelloController`, and `GET /hello/ci` serves through it
 
 Pinned by: `Fixtures/Sources/WireMVCBootstrapExample/HelloController.swift` (built by the `Build fixtures` step and probed by the `Run @WireMVCBootstrap example` step of the `BuildAndRun` job in `.github/workflows/build.yml`).
@@ -220,7 +220,7 @@ stored field `_wireSubject`. `contributorProxySubjectAccessor` SHALL equal `"_wi
 witness body SHALL differ from one rendered against any other accessor only in that name.
 
 #### Scenario: the proxy extension for a controller named `Todos`
-- **WHEN** WireMVCRouteGen renders the witness for `@Controller("/todos") struct Todos`
+- **WHEN** WireMVCRouteGen renders the witness for `@Controller("/todos") struct Todos` declaring `@Get("/{id}") @JSONResponse func get(@Path id: String)`
 - **THEN** the source begins `extension _WireRouteContributor_Todos: RouteContributor {` and the route calls `self._wireSubject.get(id: id)`
 
 #### Scenario: the accessor is the only variable
