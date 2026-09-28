@@ -36,12 +36,12 @@ builder, then register every collected route onto `transport`, and SHALL return 
 result SHALL be `@discardableResult`.
 
 #### Scenario: a hand-written graph served over a transport
-- **WHEN** a test applies a `WireMVCComposable` with `GET /hello`, `POST /echo` and `GET /users/{id}` routes to an in-process `ServerTransport`
+- **WHEN** a test applies a `WireMVCComposable` to an in-process `ServerTransport`, whose `GET /hello` route answers `Well, hello!`, `POST /echo` answers with the request body, and `GET /users/{id}` answers `user <id>`
 - **THEN** `GET /hello` answers `200` with `Well, hello!`, `POST /echo` with body `round-trip` answers `200` with `round-trip`, and `GET /users/42` answers `200` with `user 42`
 
 #### Scenario: the Hummingbird example
 - **WHEN** `HummingbirdExample` builds its application with `let services = try WireMVCServerTransport.apply(graph, to: router)`
-- **THEN** its runtime suite drives the collated controllers on Hummingbird
+- **THEN** the graph's collated controllers answer their routes through Hummingbird's router
 
 Pinned by: `Tests/WireMVCServerTransportTests/AdapterTests.swift` (`servesProposalRoutesOnServerTransport`), [HummingbirdExample TodoVerificationTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/HummingbirdExample/Tests/HummingbirdExampleTests/TodoVerificationTests.swift).
 
@@ -53,7 +53,7 @@ parameters from `ServerRequestMetadata.pathParameters`. Routes after a refused o
 registered.
 
 #### Scenario: a parameter supplied by the transport
-- **WHEN** the transport matches `GET /users/42` against the registered `/users/{id}` and passes `pathParameters["id"] == "42"`
+- **WHEN** the transport matches `GET /users/42` against the registered `/users/{id}`, whose handler answers `user <id>` from its path parameters, and passes `pathParameters["id"] == "42"`
 - **THEN** the handler reads `42` and answers `user 42`
 
 Pinned by: `Tests/WireMVCServerTransportTests/AdapterTests.swift` (`servesProposalRoutesOnServerTransport`).
@@ -91,7 +91,7 @@ SHALL signal the end with an empty buffer and a final element of `.some(nil)` on
 last chunk, and SHALL impose no size limit of its own.
 
 #### Scenario: a handler that stops early
-- **WHEN** a route reads three chunks from an unbounded request body and answers
+- **WHEN** a route reads three chunks from an unbounded request body and answers `read <n>` with the number of chunks it read
 - **THEN** the response is `read 3` and the body source produced exactly three chunks
 
 #### Scenario: a body past one megabyte
@@ -105,7 +105,7 @@ When a handler calls `sendAndFinish`, the bridge SHALL return the head with the 
 `Data`-backed `HTTPBody`, or with no body when the buffer is empty.
 
 #### Scenario: a typed route
-- **WHEN** `GET /hello` answers through `sendAndFinish`
+- **WHEN** `GET /hello` answers `Well, hello!` through `sendAndFinish`
 - **THEN** the transport receives `200` and the body `Well, hello!`
 
 Pinned by: `Tests/WireMVCServerTransportTests/AdapterTests.swift` (`servesProposalRoutesOnServerTransport`). That the body's length is known is pinned by nothing yet.
@@ -135,7 +135,7 @@ closure has returned.
 - **THEN** the body is `abc-123`
 
 #### Scenario: a streamed response
-- **WHEN** the transport call runs inside the same `withValue` scope and a route (`GET /trace-stream`) sends its head, then streams three lines that each read the task-local after the head has been returned
+- **WHEN** the transport call runs inside the same `withValue` scope and a route (`GET /trace-stream`) sends its head, then streams three lines, the `n`th written as `<n>:<traceID>\n` from the task-local read after the head has been returned
 - **THEN** the body is `1:abc-123\n2:abc-123\n3:abc-123\n`
 
 Pinned by: `Tests/WireMVCServerTransportTests/AdapterTests.swift` (`taskLocalContextReachesTheHandlerThroughTheBridge`, `taskLocalContextSurvivesIntoAStreamedBody`).
