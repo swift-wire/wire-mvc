@@ -158,7 +158,7 @@ functions are declared in the controller body. The order of controllers within t
 is specified in build-plugins-and-routegen-cli.
 
 #### Scenario: two routes on one controller
-- **WHEN** a controller declares `@Get("/{id}")` and then `@Get("/{id}/raw")`
+- **WHEN** `@Controller("/todos")` declares `@Get("/{id}")` and then `@Get("/{id}/raw")`
 - **THEN** the witness's register call for `/todos/{id}` precedes the one for `/todos/{id}/raw`
 
 Pinned by: nothing yet.
@@ -186,7 +186,7 @@ else the witness's `coding wireMVCAppCoding` parameter. A route's `@Coding` SHAL
 routes.
 
 #### Scenario: a controller tier and a route override
-- **WHEN** `@Coding(WireMVCCoding.controller)` is on the controller and `@Coding(WireMVCCoding.route)` on its `/todos/{id}/raw` route only
+- **WHEN** `@Controller("/todos")` carries `@Coding(WireMVCCoding.controller)` and declares `@Get("/{id}")` and `@Get("/{id}/raw")`, and only the `/{id}/raw` route carries `@Coding(WireMVCCoding.route)`
 - **THEN** the `/todos/{id}` block reads `self._wireWireMVCCoding_controller` and nothing else, and the `/todos/{id}/raw` block reads `self._wireWireMVCCoding_route` and not the controller's
 
 #### Scenario: no inner tier
@@ -239,7 +239,7 @@ and decode with `Date(string, strategy: .iso8601)`.
 
 #### Scenario: a round trip
 - **WHEN** the default encoder's output is decoded by the default decoder
-- **THEN** the date comes back equal to the second
+- **THEN** the date comes back equal to the encoded one, to the whole second
 
 Pinned by: `Tests/WireMVCCodingTests/WireMVCCodingTests.swift` (`defaultDateFormat`, `roundTrip`).
 
@@ -248,7 +248,7 @@ Pinned by: `Tests/WireMVCCodingTests/WireMVCCodingTests.swift` (`defaultDateForm
 `WireMVCCoding.decoder()` SHALL decode every `Date` from a single string through `dates.decode`.
 
 #### Scenario: an epoch-seconds transcoder
-- **WHEN** `WireMVCCoding(dates: Epoch())` encodes a value whose date is `1700000000` seconds since 1970
+- **WHEN** `WireMVCCoding(dates: Epoch())`, where `Epoch` encodes a date as the decimal string of its whole seconds since 1970 and decodes that string back, encodes a value whose only property, `at`, is the date `1700000000` seconds since 1970
 - **THEN** the output is `{"at":"1700000000"}` and decoding it yields the same value
 
 Pinned by: `Tests/WireMVCCodingTests/WireMVCCodingTests.swift` (`customTranscoder`).
