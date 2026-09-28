@@ -104,8 +104,8 @@ initialiser rejects SHALL throw `pathParameterTypeMismatch`, `queryParameterType
 `headerTypeMismatch` with the name and the raw text.
 
 #### Scenario: a path segment that is not an `Int`
-- **WHEN** a client requests `GET /pages/list/abc` on a route whose `{count}` is bound `@Path count: Int`
-- **THEN** the response status is `400` and no page body is streamed
+- **WHEN** a client requests `GET /pages/list/abc` on an `@HTMLResponse` route `/pages/list/{count}` whose handler takes `@Path count: Int` and returns an HTML page
+- **THEN** the response status is `400` and no HTML page is streamed
 
 #### Scenario: a query value converts
 - **WHEN** `GET /users?limit=3&cursor=c1` reaches a route binding `@Query limit: Int = 10`
@@ -152,11 +152,11 @@ begin with `application/json`, SHALL attempt the decode when the request has no 
 throw `malformedBody` when the body is `nil` or the decoder throws.
 
 #### Scenario: a text body
-- **WHEN** `POST /users` is sent with `Content-Type: text/plain` and body `nope`
+- **WHEN** `POST /users`, a route whose handler takes `@JSONBody new: NewUser`, is sent with `Content-Type: text/plain` and body `nope`
 - **THEN** the response status is `415`
 
 #### Scenario: malformed JSON
-- **WHEN** `POST /users` is sent with `Content-Type: application/json` and body `{bad`
+- **WHEN** the same route is sent `Content-Type: application/json` and body `{bad`
 - **THEN** the response status is `422`
 
 #### Scenario: no `Content-Type`
@@ -199,7 +199,7 @@ scope-entry line, `let wireMVCScopeEntry = try await self._wireEnterScope(…)`,
 - **THEN** `let wireMVCScopeEntry = try await self._wireEnterScope(request)` precedes `let id = try await Path<String>.bind(` in the rendered witness
 
 #### Scenario: a scoped controller binds a path parameter over HTTP
-- **WHEN** `GET /notes/z` reaches the `@Scoped(seed: HTTPRequest.self)` `NotesController`'s `note(@Path id: String)`
+- **WHEN** `GET /notes/z` reaches `@Scoped(seed: HTTPRequest.self) @Controller("/notes")`'s `@Get("/{id}") note(@Path id: String)`, which returns `stamp.stamp(await backend.note(id))` from the controller's injected `stamp`, which prefixes `stamped:`, and `backend`, which prefixes `real:`
 - **THEN** the handler receives `id == "z"` and returns `stamped:real:z`, built from the scope-entered controller's injected values and the bound value
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`scopedControllerScopeEntryInsideDoWhenMapped`), `Fixtures/Tests/WireMVCBootstrapExampleBindTests/KeylessCoexistTests.swift` (`keylessSuiteServesRealBackendOnSharedRoute`). The bind-after-entry order is measured only for a graph-aware binding, by `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`theBindComesAfterTheScopeEntryThatProducesIt`); the order of an ordinary bind is pinned by nothing yet.
