@@ -68,7 +68,7 @@ Content, chunkSize: Int = 1024)` and `contentType` equal to `wireMVCHTMLContentT
 controller's module.
 
 #### Scenario: a streamed page over the wire
-- **WHEN** `GET /pages/home` is served from an `@HTMLResponse` route in the fixture app
+- **WHEN** `GET /pages/home` is served from an `@HTMLResponse` route whose handler returns an Elementary `HTMLDocument`
 - **THEN** the response is `200` with `Content-Type: text/html; charset=utf-8` and a body beginning `<!DOCTYPE html><html><head>` and ending `</body></html>`
 
 #### Scenario: an annotated status beside a route constant
@@ -91,8 +91,8 @@ take the writer back, and call `finish` with an empty buffer and the given trail
 - **THEN** more than ten separate writes reach the sender and their concatenation equals the page's buffered `render()`
 
 #### Scenario: the head before the tail renders
-- **WHEN** a page ends in `AsyncContent` that waits on a gate
-- **THEN** the head and at least one chunk are recorded before the gate opens, and the body ends `<p>late</p></div>` after it does
+- **WHEN** `div { ul { … } AsyncContent { await gate; p { "late" } } }` is driven with `chunkSize: 256`, the list long enough to fill a chunk
+- **THEN** the response head and at least one body chunk reach the sender before the gate opens, and after it does the body ends `<p>late</p></div>` and the response finishes
 
 #### Scenario: a trailer
 - **WHEN** `WireMVCHTMLProducer(p { "done" })` is driven with trailer `x-render: elementary`
