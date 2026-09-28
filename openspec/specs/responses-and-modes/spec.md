@@ -65,11 +65,11 @@ and SHALL appear in the typed client, emitting `<codec>.encodeResponseBody(…)`
 status is read from either an unlabelled first argument or a `status:` argument.
 
 #### Scenario: one mode of each terminal
-- **WHEN** a module declares `@CSVResponse` (buffered, `CSVCodec`), `@EventStream` (streaming, `SSEProducer`, `.text`), `@NoContent(_:)` and `@Accepted(status:)` (both bodiless) and uses each on a route
+- **WHEN** a module declares `@CSVResponse` (buffered, `CSVCodec`), `@EventStream` (streaming, `SSEProducer`, `.text`), `@NoContent(_:)` and `@Accepted(status:)` (both bodiless) and uses them as `@CSVResponse func ledger() -> Ledger`, `@EventStream func events() -> EventSource`, `@NoContent(.noContent) func remove(@Path id: String)` and `@Accepted(status: .accepted) func queue()`
 - **THEN** there are no diagnostics, the witness contains `try CSVCodec.encodeResponseBody(try await self._wireSubject.ledger()`, `producer: SSEProducer(try await self._wireSubject.events())`, `return .status(.noContent` and `return .status(.accepted`, and the client contains `try CSVCodec<Ledger>.decodeResponseBody(`
 
 #### Scenario: over the wire
-- **WHEN** the fixture's `@CSVResponse` route `GET /pages/ledger` is requested
+- **WHEN** `GET /pages/ledger` is requested on a `@CSVResponse` route returning `Ledger`, whose `CSVCodec` encodes it with the content type `text/csv; charset=utf-8`
 - **THEN** the response is `200` with `Content-Type: text/csv; charset=utf-8` and the typed client's `ledger()` decodes a `Ledger` through `CSVCodec`
 
 Pinned by: `Tests/WireMVCCodegenTests/ResponseModeScanTests.swift` (`everyModeReachesTheWitness`, `everyModeReachesTheClient`, `eachTerminalEmitsItsOwnShape`), `Fixtures/Tests/WireMVCBootstrapExampleTests/UserDeclaredResponseModeTests.swift` (`servesTheCodecsBytesAndContentType`, `theTypedClientDecodesThroughTheMode`, `aUserModeCarriesAnAnnotatedStatus`, `theBuiltInModesStillBehaveAsBefore`).
@@ -157,7 +157,7 @@ WireMVCRouteGen SHALL read a return type as a response tuple only when at least 
 `responseTupleInvalidLabels`. A tuple with none of those labels SHALL be encoded as the body.
 
 #### Scenario: the full tuple
-- **WHEN** a `@JSONResponse` route returns `(status: HTTPResponse.Status, headers: HTTPFields, body: Thing)`
+- **WHEN** a `@JSONResponse` route `get(@Path id: String)` returns `(status: HTTPResponse.Status, headers: HTTPFields, body: Thing)`
 - **THEN** the witness binds `let wireMVCReturn = try await self._wireSubject.get(id: id)`, encodes `wireMVCReturn.body`, and passes `status: wireMVCReturn.status`
 
 #### Scenario: a misspelled label
@@ -165,7 +165,7 @@ WireMVCRouteGen SHALL read a return type as a response tuple only when at least 
 - **THEN** the diagnostic is "the response tuple returned by 'get' is labelled (status, header), which is not a response shape — write one of (headers:body:), (status:body:), (status:headers:body:), or (status:headers:) for a bodiless response. Returning a payload that is genuinely a tuple? Leave its elements unlabelled and it stays the body."
 
 #### Scenario: an unlabelled tuple
-- **WHEN** a `@JSONResponse` route returns `(Int, String)`
+- **WHEN** a `@JSONResponse` route `pair()` returns `(Int, String)`
 - **THEN** the witness encodes `try await self._wireSubject.pair()` directly and binds no `wireMVCReturn`
 
 Pinned by: `Tests/WireMVCCodegenTests/ResponseHeaderGenerationTests.swift` (`fullResponseTupleProjectsEveryElement`, `invalidResponseTupleLabelsAreDiagnosed`, `unlabelledTupleStaysABody`), `Tests/WireMVCCodegenTests/HTMLResponseGenerationTests.swift` (`responseTuple`).
@@ -299,8 +299,8 @@ error as a buffered `WireMVCOutcome`, consuming the sender once after the result
 - **THEN** the sender records one head `404` with `Content-Length: 0` and a finish, and no chunks
 
 #### Scenario: a binding failure on an HTML route
-- **WHEN** `GET /pages/list/abc` is requested and `{count}` binds an `Int`
-- **THEN** the response is `400` and no page is streamed
+- **WHEN** `GET /pages/list/abc` is requested on an `@HTMLResponse` route `/pages/list/{count}` whose handler takes `@Path count: Int` and returns an HTML page
+- **THEN** the response is `400` and no HTML page is streamed
 
 Pinned by: `Fixtures/Tests/StreamingTierTests/TierTests.swift` (`handlerFailureMapsNormally`), `Fixtures/Tests/WireMVCBootstrapExampleTests/HTMLResponseOverTheWireTests.swift` (`aBindingFailureStillMaps`, `aHandlerThrowMapsThroughErrorResponse`), `Tests/WireMVCCodegenTests/HTMLResponseGenerationTests.swift` (`bindingsInsideBuilding`, `decodeStaysMapped`).
 
@@ -320,8 +320,8 @@ SHALL NOT set `Content-Length`.
 - **THEN** the head and the first chunk are recorded while the response is not yet finished
 
 #### Scenario: a large page over the wire
-- **WHEN** `GET /pages/list/400` is served
-- **THEN** the response is `200` with no `Content-Length` and the whole page arrives
+- **WHEN** `GET /pages/list/400` is served by an `@HTMLResponse` route `/pages/list/{count}` whose handler returns an HTML page listing `count` rows
+- **THEN** the response is `200` with no `Content-Length` and the whole page, first row to last, arrives
 
 Pinned by: `Fixtures/Tests/StreamingTierTests/TierTests.swift` (`incrementalWrites`, `headPrecedesCompletion`, `trailers`), `Fixtures/Tests/WireMVCBootstrapExampleTests/HTMLResponseOverTheWireTests.swift` (`aLargePageIsNotLengthPrefixed`, `aSmallPageIsAlsoStreamed`), `Tests/WireMVCResponsesTests/ResponsesTests.swift` (`aSucceedingDrainReachesTheStreamedHead`). A route's own `Content-Type` beating the producer's at send time is pinned by nothing yet.
 
@@ -341,7 +341,7 @@ protocol extension, and `consuming func writeBody<W: CallerAsyncWriter & ~Copyab
 ~Escapable>(into:terminatedBy:) async throws`, and SHALL NOT refine `Sendable`.
 
 #### Scenario: a producer holding a class instance
-- **WHEN** a producer stores a non-`Sendable` `NonSendableModel` and writes its rows
+- **WHEN** a producer stores a non-`Sendable` `NonSendableModel` holding the rows `a` and `b` and writes each row as one chunk
 - **THEN** it compiles and streams `a` then `b` through the streaming terminal
 
 Pinned by: `Fixtures/Tests/StreamingTierTests/TierTests.swift` (`nonSendableProducer`).
