@@ -70,8 +70,8 @@ bootstrap.createRouteBuilder(for: server)` over the wrapped server. The builder 
 `FinalizableHTTPServerRouteBuilder`, since the entry registers the fallbacks on it and finalises it.
 
 #### Scenario: the fixture's trie router
-- **WHEN** `WireMVCBootstrapExample`'s root returns `TrieRouteBuilder(for: server)` as `some FinalizableHTTPServerRouteBuilder<Server.RequestContext, Server.Reader, Server.ResponseSender>`
-- **THEN** the generated program builds and serves `GET /hello/ci`
+- **WHEN** `WireMVCBootstrapExample`'s root returns `TrieRouteBuilder(for: server)` as `some FinalizableHTTPServerRouteBuilder<Server.RequestContext, Server.Reader, Server.ResponseSender>`, and its `@Controller("/hello")` declares `@Get("/{name}")`
+- **THEN** the generated program registers that route on the returned builder, finalises it, and answers `GET /hello/ci` with `200`
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`bootstrapEntryGeneratesMain`), `Fixtures/Sources/WireMVCBootstrapExample/Bootstrap.swift` (built and probed by the `Run @WireMVCBootstrap example (boot, probe, stop)` step of the `BuildAndRun` job in `.github/workflows/build.yml`).
 
@@ -86,7 +86,7 @@ with the effect markers the declaration states, and SHALL call `Wire.bootstrap(i
 
 #### Scenario: the fixture's inputs reach the graph under the test entry
 - **WHEN** a `.wiremvc(.swiftHttpServer)` suite runs against `WireMVCBootstrapExample`, whose generated test entry routes the call as `let wireMVCInputs = try await WireMVCTesting.preparedOnce { try await AppBootstrap.prepare() }` rather than the bare `@main` call, and `prepare()` returns `AppInputs(serverConfig: ServerConfig(host: "127.0.0.1", port: 8080), releaseChannel: "stable")`
-- **THEN** a binding constructed from those inputs reports `127.0.0.1:8080|stable`, and `prepare()` ran before any binding was constructed
+- **THEN** a binding that injects `ServerConfig` by type and the `releaseChannel` input through `@Bind` is constructed with host `127.0.0.1`, port `8080` and channel `stable`, and `prepare()` ran before any binding was constructed
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`preparePreStepSuppliesTheGraphsInputs`), `Fixtures/Tests/WireMVCBootstrapExampleTests/WithTestServerTests.swift` (`inputsFromPrepareReachedTheGraph`, `prepareRanBeforeAnyBindingWasConstructed`) for the test entry. The `@main` path is pinned end to end only by `.github/workflows/build.yml` (`BuildAndRun`, step `Run @WireMVCBootstrap example (boot, probe, stop)`), where the binary binds `127.0.0.1:8080` from the `ServerConfig` that `prepare()` supplies.
 
@@ -119,7 +119,7 @@ WireMVC.serve(on: server, handler: wireMVCServed, services: wireMVCServices)`.
 - **THEN** the rendered `struct _WireMVCBootstrapEntry` body is exactly the bootstrap, root, server, builder and `apply` lines, the synthesised `registerNotFound` and `registerMethodNotAllowed` blocks, `finalize()`, `wrapGlobalMiddleware` and `WireMVC.serve`, in that order
 
 #### Scenario: the generated program serves
-- **WHEN** CI boots the `WireMVCBootstrapExample` binary and requests `/hello/ci`, `/hello/tenant`, `/nope` and `/wiring`
+- **WHEN** CI boots the `WireMVCBootstrapExample` binary, whose root carries `@ErrorResponse(TenantMissing.self, .badRequest)`, returns `"/wiring"` from `mountIntrospectionAt()` and declares a `@NotFound` handler that writes `no route here` with `404`, and requests `/hello/ci` (a `@JSONResponse` greeting route), `/hello/tenant` (a route that throws `TenantMissing` and maps no error itself), the unmatched `/nope`, and `/wiring`
 - **THEN** the answers are a `200` greeting, a `400` from the global `@ErrorResponse`, the `@NotFound` body `no route here` with `404`, and a `200` wiring model
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`bootstrapEntryGeneratesMain`), `.github/workflows/build.yml` (`BuildAndRun`, step `Run @WireMVCBootstrap example (boot, probe, stop)`).
@@ -146,8 +146,8 @@ mount nothing.
 - **THEN** the entry calls `graph._WireGlobalMiddleware_AppBootstrap.registerIntrospection(…)` and does not call `WireMVC.mountIntrospection`
 
 #### Scenario: served in a suite
-- **WHEN** a `.wiremvc(.inProcess)` suite requests `GET /wiring` against `WireMVCBootstrapExample`
-- **THEN** the response is `200` and its body names `HelloController`
+- **WHEN** a `.wiremvc(.inProcess)` suite requests `GET /wiring` against `WireMVCBootstrapExample`, whose root returns `"/wiring"` from a guarded `mountIntrospectionAt()` and whose graph binds a `HelloController`
+- **THEN** the response is `200` and its body, the graph's wiring model, names `HelloController`
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`bootstrapEntryMountsIntrospection`, `bootstrapEntryOmitsIntrospectionWhenAbsent`, `guardedIntrospectionFoldsGuardMiddleware`, `unguardedIntrospectionOmitsRegisterIntrospection`), `Fixtures/Tests/WireMVCBootstrapExampleReplaceTests/ReplaceTests.swift` (`guardedIntrospectionRouteServes`).
 
@@ -162,7 +162,7 @@ responseSender, registry: wireMVCResponseHeaderRegistry)`.
 - **THEN** the output contains `builder.registerNotFound` and `try await bootstrap.handleNotFound(request: request, responseSender: ResponseHeaderApplyingSender(wrapping: responseSender, registry: wireMVCResponseHeaderRegistry))`
 
 #### Scenario: an unmatched path
-- **WHEN** a suite requests `GET /no/such/route` against `WireMVCBootstrapExample`
+- **WHEN** a suite requests `GET /no/such/route` against `WireMVCBootstrapExample`, whose `@NotFound @RawRoute` handler writes the body `no route here` with status `404`
 - **THEN** the response is `404` and its body contains `no route here`
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`notFoundHandlerRegistersAsFallback`), `Fixtures/Tests/WireMVCBootstrapExampleTests/WithTestServerTests.swift` (`notFoundFallbackServes`), `Fixtures/Tests/WireMVCBootstrapExampleReplaceTests/ReplaceTests.swift` (`notFoundFallbackServes`).
@@ -197,7 +197,7 @@ The generated entry SHALL always register `builder.registerMethodNotAllowed`, wh
 try await <registry>.drain()))`. No annotation SHALL exist to author a custom 405.
 
 #### Scenario: a wrong method on a real route
-- **WHEN** `/ping` answers only `GET` and a client sends `DELETE /ping` to `WireMVCFallbackExample`
+- **WHEN** `/ping` answers only `GET` and a client sends `DELETE /ping` to `WireMVCFallbackExample`, whose root's global `@Middleware` contributes `x-stamp: global`
 - **THEN** the response is `405` with `Allow: GET` and `x-stamp: global`
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`bootstrapEntryGeneratesMain`), `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`aWrongMethodOnARealRouteIsMethodNotAllowed`, `aMethodNotAllowedCarriesTheGlobalHeader`).
