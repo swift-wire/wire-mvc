@@ -30,7 +30,7 @@ declaration in any parsed file, recording `S` without `.self`.
 
 #### Scenario: the worker read through the scan
 - **WHEN** `generateRouteContributors` is given `@RequestBinding(DocumentAuthorizer.self) struct AuthorizedDocument`, which conforms to neither send protocol, beside `@Scoped(seed: HTTPRequest.self) struct DocumentAuthorizer` and a scoped controller using it
-- **THEN** the binding is recorded with worker `DocumentAuthorizer`, and no diagnostic contains `does not conform to RequestSendable`
+- **THEN** the route binds its parameter through `wireMVCScopeEntry.documentAuthorizer.bind(`, and no diagnostic contains `does not conform to RequestSendable`
 
 Pinned by: `Fixtures/Sources/WireMVCBootstrapExample/AuthorizedNoteBinding.swift` and `Fixtures/Sources/WireMVCBootstrapExample/NotesController.swift` (built by the `Build fixtures` step of the `BuildAndRun` job in `.github/workflows/build.yml`), `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`theOmittedRouteIsNotAlsoNaggedAboutRequestSendable`). Resolving the worker's seed through the scan is pinned by nothing yet.
 
