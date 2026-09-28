@@ -69,7 +69,7 @@ which is `.server(_:on:)` over one bound to the given port. Both SHALL construct
 factory nor the `NIOHTTPServer: WireMVCTestServer` conformance SHALL exist.
 
 #### Scenario: an ephemeral loopback suite
-- **WHEN** a suite is declared `@Suite(.wiremvc(.swiftHttpServer))` in a package that enables the `NIOHTTPServer` trait
+- **WHEN** a suite is declared `@Suite(.wiremvc(.swiftHttpServer))` in a package that enables the `NIOHTTPServer` trait, for an app whose `HelloController` answers `GET /hello/{name}` with a greeting `Hello, <name>!`
 - **THEN** `GET /hello/Alice` through the typed client answers `Hello, Alice!` over a real HTTP round-trip
 
 Pinned by: `Fixtures/Tests/WireMVCBootstrapExampleTests/WithTestServerTests.swift` (`servesHelloRouteOverEphemeralPort`, `notFoundFallbackServes`).
@@ -125,8 +125,8 @@ and on every exit restore each variable's previous value or `unsetenv` one that 
 provider SHALL run the body untouched.
 
 #### Scenario: a suite declaring an environment
-- **WHEN** a suite is declared `@Suite(.wiremvc(.inProcess, environment: { ["DEPLOYMENT_SETTING": "from-the-suite"] }))` and a `@Provides` reads that variable
-- **THEN** the route serving the bound value answers `from-the-suite`
+- **WHEN** a suite is declared `@Suite(.wiremvc(.inProcess, environment: { ["DEPLOYMENT_SETTING": "from-the-suite"] }))`, a `@Provides` reads that variable, and a route answers with the provided value
+- **THEN** the route answers `from-the-suite`
 
 #### Scenario: a variable that had no value
 - **WHEN** `withEnvironment(["K": "applied"]) { … }` runs and `K` was unset before
@@ -167,7 +167,7 @@ spelled `"<METHOD> <resolved path>"`. The client SHALL NOT be emitted for a prog
 - **THEN** `NotesControllerClient` has `func fetch(id: String, headers: [String: String] = [:]) async throws -> Note`
 
 #### Scenario: a route answering 401
-- **WHEN** a typed method drives a route that answers `401` with body `nope`
+- **WHEN** `routeResponse(method: "GET", path: "/fail")`, which every typed method funnels through, drives a route that answers `401` with body `nope`
 - **THEN** the call throws `WireMVCRouteError` with `status == .unauthorized`, `bodyText == "nope"` and `route == "GET /fail"`
 
 #### Scenario: a program consumer
@@ -227,11 +227,11 @@ declared one, and which value is sent then depends on dictionary order, which is
 https://github.com/swift-wire/wire-mvc/issues/248.
 
 #### Scenario: a collision
-- **WHEN** `pages.tenant(tenant: "declared", headers: ["x-tenant": "caller"])` drives a route binding `@Header("x-tenant")`
+- **WHEN** `PagesControllerClient`'s `tenant(tenant:headers:)`, for a route binding `@Header("x-tenant") tenant`, is called as `pages.tenant(tenant: "declared", headers: ["x-tenant": "caller"])`
 - **THEN** the route sees `declared`
 
 #### Scenario: an undeclared header
-- **WHEN** `pages.tenant(tenant: "acme", headers: ["x-trace": "abc123"])` is called
+- **WHEN** the same method is called as `pages.tenant(tenant: "acme", headers: ["x-trace": "abc123"])`
 - **THEN** the request carries `x-trace: abc123`
 
 Pinned by: `Fixtures/Tests/WireMVCBootstrapExampleTests/HTMLResponseOverTheWireTests.swift` (`aDeclaredHeaderBeatsTheCallersBag`). The undeclared-header scenario is pinned by nothing yet: `theBagStillCarriesUndeclaredHeaders` asserts only the declared header's effect (https://github.com/swift-wire/wire-mvc/issues/250).
@@ -296,8 +296,8 @@ handler's own `HTTPResponse`; on the loopback transport it is rebuilt from `HTTP
 so header field order and repeated fields are not preserved.
 
 #### Scenario: a CORS preflight
-- **WHEN** `client.send("OPTIONS", "/ping", headers: ["Origin": …, "Access-Control-Request-Method": "POST"])` is called
-- **THEN** the route answers `204` and the response head's CORS fields are readable
+- **WHEN** `client.send("OPTIONS", "/ping", headers: ["Origin": …, "Access-Control-Request-Method": "POST"])` is called against an app whose CORS middleware allows that origin and method
+- **THEN** the preflight is answered `204` and the response head's CORS fields are readable
 
 #### Scenario: a request with a body and headers
 - **WHEN** `client.post("/notes", json: Payload(note: "hi"), headers: ["X-Echo": "seen"])` is driven in process
@@ -422,7 +422,7 @@ subject SHALL enter scope through `_wireEnterScope(request, doubles)`; a seedles
 - **THEN** `withClient(supplying: SummaryControllerDoubles(…))` rebuilds it per request and its route serves the mock
 
 #### Scenario: a subject reaching no substituted slot
-- **WHEN** `PingController` is a subject whose doubles struct has no fields
+- **WHEN** `PingController` is a subject serving `GET /ping` whose doubles struct has no fields
 - **THEN** `withClient(supplying: PingControllerDoubles())` serves `/ping`
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`keyedHarnessEmitsDoublesAwareDispatchAndFactory`), `Fixtures/Tests/WireMVCBootstrapExampleBindTests/BindTests.swift` (`suppliedMockIsObservedOverHTTP`, `appScopedTestScopableRouteServesMockSeedlessly`, `seedScopedRouteWithMockConsumingMiddlewareServesMock`, `keyedBindTypeSlotThreadsMockOverHTTP`, `mockIgnoringRouteServesUnderWithBindValues`, `factoryCarryingRouteEntersAndServes`).
@@ -459,7 +459,7 @@ followed by a newline, and return. `wireMVCTestCorrelationID(in:)` SHALL be a pu
 not consult `harnessIsActive`.
 
 #### Scenario: a keyed route driven without doubles
-- **WHEN** `withClient(for: NotesControllerClient.self) { notes in try await notes.note(id: "y") }` runs under the keyed suite
+- **WHEN** `withClient(for: NotesControllerClient.self) { notes in try await notes.note(id: "y") }`, where `note(id:)` is the typed method for `NotesController`'s `GET /notes/{id}`, runs under the keyed suite
 - **THEN** it throws `WireMVCRouteError` with `status == .internalServerError`
 
 #### Scenario: a subject with an empty doubles struct driven without doubles
@@ -474,8 +474,8 @@ the variant graph, each on its own server, so both can run in one target concurr
 Two `withClient(supplying:)` requests in flight at once SHALL each resolve their own doubles.
 
 #### Scenario: a shared route across the two suites
-- **WHEN** `KeylessCoexistTests` and `BindTests` run in parallel and both drive `GET /notes/z`
-- **THEN** the keyless suite answers `stamped:real:z` and the keyed suite, with doubles supplied, answers `stamped:mock:z`
+- **WHEN** a keyless suite and a keyed suite in one target run in parallel and both drive `GET /notes/z`, whose handler answers with what its injected `NoteBackend` returns for `z`
+- **THEN** the keyless suite's answer comes from the production `NoteBackend` and the keyed suite's, with a `MockNoteBackend` supplied as its doubles, from that mock
 
 #### Scenario: two differently-mocked requests held in their handlers simultaneously
 - **WHEN** requests tagged `alpha` and `beta`, each with its own `MockNoteBackend`, rendezvous inside the handler
@@ -490,8 +490,8 @@ marker on a `TestingKey`, which the keyed factory serves with per-request double
 `@BindType` and `@TestScopable` semantics are swift-wire's and are specified there.
 
 #### Scenario: a replaced binding
-- **WHEN** the test target declares `@Replaces FakeGreeter` and the suite is `@Suite(.wiremvc(.inProcess))`
-- **THEN** `hello.hello(name: "Alice")` answers `FAKE:Alice`
+- **WHEN** the test target declares `@Replaces FakeGreeter`, a `Greeter` that greets `Alice` as `FAKE:Alice`, in place of the app's greeter behind `HelloController`'s `hello(name:)` route, and the suite is `@Suite(.wiremvc(.inProcess))`
+- **THEN** `HelloControllerClient`'s `hello(name: "Alice")` answers `FAKE:Alice`
 
 #### Scenario: a bound type
 - **WHEN** the key declares `@BindType(NoteBackend.self, MockNoteBackend.self)` and a test supplies a `MockNoteBackend`
