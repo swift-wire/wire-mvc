@@ -18,7 +18,7 @@ itself.
 configuration: CORSConfiguration`. `CORSMiddlewareKeys.factory` SHALL be a `FactoryKey`.
 
 #### Scenario: folded globally with the configuration provided by the root
-- **WHEN** `FallbackBootstrap` is declared `@WireMVCBootstrap @Middleware(CORSMiddlewareKeys.factory)` and `@Provides package static let cors = CORSConfiguration(allowOrigin: .oneOf(["https://allowed.example"]), …)`
+- **WHEN** `FallbackBootstrap` is declared `@WireMVCBootstrap @Middleware(CORSMiddlewareKeys.factory)` and `@Provides package static let cors = CORSConfiguration(allowOrigin: .oneOf(["https://allowed.example"]), …)`, and its app serves a `@Get` route at `/ping`
 - **THEN** `GET /ping` with `Origin: https://allowed.example` answers `200` with `Access-Control-Allow-Origin: https://allowed.example`
 
 Pinned by: `Fixtures/Sources/WireMVCFallbackExample/App.swift`, `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`anAllowedOriginGetsTheCORSFields`).
@@ -28,7 +28,7 @@ When the request has no `Origin` field, `CORSMiddleware` SHALL call `next` with 
 contribute no field.
 
 #### Scenario: a same-origin request
-- **WHEN** `GET /ping` is sent with no `Origin` to the fixture app
+- **WHEN** `GET /ping` is sent with no `Origin` to an app that folds `CORSMiddleware` globally under `.oneOf(["https://allowed.example"])`
 - **THEN** the response has no `Access-Control-Allow-Origin` and no `Vary` value `Origin`
 
 Pinned by: `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`aRequestWithoutOriginIsUntouched`, `aCacheableRouteIsNotReplayedForALaterRequest`).
@@ -45,7 +45,7 @@ the request carries `Origin` and the value is not nothing, `CORSMiddleware` SHAL
 - **THEN** the value is `nil`
 
 #### Scenario: the fixture's `.oneOf` and an unlisted origin
-- **WHEN** the fixture app, configured with `.oneOf(["https://allowed.example"])`, receives `GET /ping` with `Origin: https://evil.example`
+- **WHEN** an app that folds `CORSMiddleware` globally, configured with `.oneOf(["https://allowed.example"])`, receives `GET /ping`, a `@Get` route, with `Origin: https://evil.example`
 - **THEN** it answers `200` without `Access-Control-Allow-Origin`
 
 #### Scenario: `.originBased` echoes
@@ -74,12 +74,12 @@ when `allowOrigin` is `.originBased` or `.oneOf`, and SHALL NOT contribute `Vary
 configuration field.
 
 #### Scenario: a listed origin under `.oneOf`
-- **WHEN** `GET /ping` is sent with `Origin: https://allowed.example` under `.oneOf`
+- **WHEN** `GET /ping` is sent with `Origin: https://allowed.example` under `.oneOf(["https://allowed.example"])`
 - **THEN** the response's `Vary` values contain `Origin`
 
 #### Scenario: an invariant policy
 - **WHEN** the policy is `.all`, `.custom("https://a.example")` or `.none`
-- **THEN** `variesByRequestOrigin` is `false`
+- **THEN** each is classed as not varying by request origin, the classification `CORSMiddleware` consults before appending `Vary: Origin`
 
 Pinned by: `Tests/WireMVCMiddlewareTests/CORSConfigurationTests.swift` (`fixedPoliciesDoNotVaryByOrigin`, `originBasedEchoesTheRequestOrigin`, `oneOfEchoesOnlyListedOrigins`), `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`anAllowedOriginGetsTheCORSFields`).
 
@@ -114,7 +114,7 @@ empty, and `Access-Control-Max-Age` (the whole seconds of `maxAge`) when `maxAge
 then pass the responded box to `next`.
 
 #### Scenario: the fixture's preflight
-- **WHEN** `OPTIONS /ping` carries `Origin: https://allowed.example` and `Access-Control-Request-Method: POST`, under `allowMethods: [.get, .post]`, `allowHeaders: [.contentType]`, `maxAge: .seconds(600)`
+- **WHEN** `OPTIONS /ping` carries `Origin: https://allowed.example` and `Access-Control-Request-Method: POST`, under `allowOrigin: .oneOf(["https://allowed.example"])`, `allowMethods: [.get, .post]`, `allowHeaders: [.contentType]`, `allowCredentials: true`, `maxAge: .seconds(600)`
 - **THEN** the response is `204` with `Access-Control-Allow-Methods: GET, POST`, `Access-Control-Allow-Headers` equal to `content-type` ignoring case, `Access-Control-Max-Age: 600`, `Access-Control-Allow-Origin: https://allowed.example` and `Access-Control-Allow-Credentials: true`
 
 Pinned by: `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`aPreflightIsAnsweredWithBothFieldSets`).
