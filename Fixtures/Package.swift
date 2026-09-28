@@ -84,6 +84,18 @@ let package = Package(
             ],
             swiftSettings: proposalSettings
         ),
+        // Link-time regression guards, built by CI's release job: middlewares outside WireMVC in the shapes
+        // that have failed to link in an optimised build (wire-mvc#251), in a library an executable links.
+        .target(
+            name: "ReleaseLinkGuards",
+            dependencies: [.product(name: "WireMVC", package: "wire-mvc")],
+            swiftSettings: proposalSettings
+        ),
+        .executableTarget(
+            name: "ReleaseLinkCheck",
+            dependencies: ["ReleaseLinkGuards"],
+            swiftSettings: proposalSettings
+        ),
         // The full-matrix self-checker: hand-written assembly (no `@WireMVCBootstrap`), serving every
         // route shape on `NIOHTTPServer` and driving each over real HTTP. Runs to completion and exits
         // non-zero on any mismatch, so CI runs it as a program rather than a test.
