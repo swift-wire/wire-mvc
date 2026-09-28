@@ -49,8 +49,8 @@ use site in one file SHALL be matched to a declaration in another.
 - **THEN** `FormBody` is not recorded as a binding
 
 #### Scenario: a user body binding over HTTP
-- **WHEN** the fixture's `@RequestBinding(.body) TextBody` route `POST /pages/ledger` receives body `wed`
-- **THEN** the handler receives `"wed"` and the route answers `201`
+- **WHEN** a route `POST /pages/ledger` declared `@CSVResponse(status: .created)` binds `@TextBody note: String`, with `TextBody` declared `@RequestBinding(.body)` in the app's sources, and receives body `wed`
+- **THEN** the handler receives `"wed"` for `note` and the route answers `201`
 
 Pinned by: `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`acrossFiles`, `recognised`, `nestedDeclaration`, `nonStructDeclarations`, `attributeOnExtensionIsNotSeen`), `Fixtures/Tests/WireMVCBootstrapExampleTests/UserDeclaredResponseModeTests.swift` (`aUserModeCarriesAnAnnotatedStatus`).
 
@@ -72,7 +72,7 @@ taking `reader`, and SHALL NOT use the collecting terminal overload (`collecting
 - **THEN** the source contains `lendingBodyFrom: reader,` and `building: { reader in`, and no `collectingBodyFrom:`
 
 #### Scenario: a streamed digest over HTTP
-- **WHEN** `POST /pages/digest` carries a 4000-byte body to the fixture's `@DigestBody` route
+- **WHEN** `POST /pages/digest` carries a 4000-byte body to a `@JSONResponse` route that returns what its `@DigestBody` binding (a `.readerBody` binding) folds the body into, a `BodyDigest` of `byteCount` and `checksum`
 - **THEN** the response is `200` with `byteCount == 4000` and the checksum of every byte
 
 #### Scenario: an empty body
@@ -95,8 +95,8 @@ as a consuming parameter, so an error the binding throws is mapped before the re
 - **THEN** the response status is `413`
 
 #### Scenario: beside an ordinary bind
-- **WHEN** `POST /pages/digest/report/page` binds `@Path` and `@DigestBody` on a streamed page
-- **THEN** the page contains both the path value and the digest
+- **WHEN** `POST /pages/digest/report/page` binds `@Path label: String` and `@DigestBody` on a streamed page that renders the label and the digest's `byteCount`
+- **THEN** the page contains both `report` and the body's byte count
 
 Pinned by: `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`reducedBodyOnStreamingResponseAllowed`), `Fixtures/Tests/WireMVCBootstrapExampleTests/StreamingRequestTests.swift` (`reducedBodyOnStreamingResponse`, `oversizedBodyMapsOnStreamingResponse`, `reducedBodyBesideOtherBinds`, `oversizedBodyMapsOnScopedStreamingResponse`).
 
@@ -132,7 +132,7 @@ argument, SHALL pass the value to the handler by value, and SHALL call its termi
 `lendingBodyFrom: reader` rather than the collecting overload (`collectingBodyFrom:`).
 
 #### Scenario: a multipart stream
-- **WHEN** `@RequestBinding(.bodyStream, stream: "MultipartParts") struct Upload` is used as `@Upload parts: consuming S`
+- **WHEN** `@RequestBinding(.bodyStream, stream: "MultipartParts") struct Upload` is used as `@Upload parts: consuming S` on a route named `receive`
 - **THEN** the source contains `let parts = MultipartParts(request: request, reader: reader)` and `receive(parts: parts)`, and contains no `MultipartParts<`
 
 #### Scenario: the lending overload for a lent stream
@@ -183,7 +183,7 @@ terminal SHALL emit `try <name>.validateRequest()` immediately after constructin
 the handler call. No other binding SHALL be given a validation step.
 
 #### Scenario: the order of the three statements
-- **WHEN** a route lends `@Upload parts: consuming S`
+- **WHEN** a route named `receive` lends `@Upload parts: consuming S`, with `Upload` declared `stream: "MultipartParts"`
 - **THEN** `let parts = MultipartParts(request: request, reader: reader)` precedes `try parts.validateRequest()`, which precedes `receive(parts: parts)`
 
 #### Scenario: ordinary bindings
