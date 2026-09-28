@@ -57,7 +57,7 @@ so holds no tests with the trait off. No other target SHALL reference a trait.
 
 #### Scenario: the ServerTransport trait build
 - **WHEN** CI runs `swift test --traits ServerTransport` at the repository root
-- **THEN** the log contains `Suite "WireMVCServerTransport" passed`
+- **THEN** the tests in the `WireMVCServerTransportTests` target, which compile only with the trait on, run rather than compiling to zero tests, and pass
 
 #### Scenario: the fixtures enable the other two
 - **WHEN** the Fixtures package builds with `NIOHTTPServer` and `Elementary` enabled on its wire-mvc dependency
