@@ -28,8 +28,8 @@ Pinned by: `Sources/WireMVCLogging/RequestLogging.swift` and `Sources/WireMVCTas
 `WireMVCLogMetadata.requestID` SHALL be the string `"request-id"`.
 
 #### Scenario: reading the id back off the logger
-- **WHEN** `WhoAmIController` reads `logger[metadataKey: WireMVCLogMetadata.requestID]` under `WireMVCLogging`
-- **THEN** the value equals the request's injected `WireMVCRequest.id`
+- **WHEN** a request-scoped type under `WireMVCLogging` injects the unkeyed `Logger` and `WireMVCRequest.id`, and reads `logger[metadataKey: WireMVCLogMetadata.requestID]`
+- **THEN** the value equals the injected `WireMVCRequest.id`
 
 Pinned by: `Fixtures/Sources/WireMVCExample/main.swift` (the `WireMVCLogging` check, run by the `BuildAndRun` job in `.github/workflows/build.yml`) pins the scenario, reading the key through the constant. That the constant is the literal `"request-id"` is pinned by nothing yet.
 
@@ -39,7 +39,7 @@ copy of `logger` with `result[metadataKey: key] = .string(value)` set for every 
 
 #### Scenario: an app-side field on the logger
 - **WHEN** `TenantLogFields.tenant` contributes `"public"` to `WireMVCLogMetadata.stringEntries` at key `"tenant"`
-- **THEN** the request logger `WhoAmIController` injects carries `tenant` metadata equal to `"public"`
+- **THEN** the unkeyed `Logger` a request-scoped type injects carries `tenant` metadata equal to `"public"`
 
 Pinned by: `Fixtures/Sources/WireMVCExample/TenantLogMetadata.swift` and `Fixtures/Sources/WireMVCExample/main.swift` (the `WireMVCLogMetadata.stringEntries` check, run by the `BuildAndRun` job in `.github/workflows/build.yml`).
 
@@ -74,7 +74,7 @@ When neither rule above yields an id, `correlationID(from:)` SHALL return `UUID(
 each call.
 
 #### Scenario: two bare requests
-- **WHEN** `WireMVCExample` sends two `GET /whoami` requests with neither header, under `WireMVCLogging`
+- **WHEN** two requests carrying neither header reach a request-scoped type that injects `WireMVCRequest.id`, under `WireMVCLogging`
 - **THEN** each injected `WireMVCRequest.id` is non-empty and the two differ
 
 Pinned by: `Fixtures/Sources/WireMVCExample/main.swift` (the `WireMVCLogging` check, run by the `BuildAndRun` job in `.github/workflows/build.yml`).
@@ -109,7 +109,7 @@ Pinned by: `Fixtures/Sources/WireMVCExample/main.swift` (the `WireMVCLogging` ch
 
 #### Scenario: the library's field and the app's field together
 - **WHEN** `WireMVCLogging` contributes `request-id` and the app's `TenantLogFields` contributes `tenant`
-- **THEN** the logger `WhoAmIController` injects carries both entries
+- **THEN** the unkeyed `Logger` a request-scoped type injects carries both entries
 
 Pinned by: `Fixtures/Sources/WireMVCExample/main.swift` (the `WireMVCLogging` and `WireMVCLogMetadata.stringEntries` checks, run by the `BuildAndRun` job in `.github/workflows/build.yml`).
 
@@ -119,8 +119,8 @@ producer `wireMVCTaskLocalApplicationLogger()`, which returns `Logger.current` a
 constructs the binding.
 
 #### Scenario: a logger bound around the bootstrap
-- **WHEN** `WireMVCTaskLocalExample` builds the graph inside `withLogger(probeLogger(marker: "bootstrap"))`
-- **THEN** the app-scoped binding holds the `bootstrap` logger, which the request logger does not show
+- **WHEN** an app builds the graph inside `withLogger(bootstrapLogger)` and serves requests inside `withLogger(serveLogger)`
+- **THEN** `@Inject(WireMVCApplication.logger)` resolves to `bootstrapLogger`, and the request logger's base is `serveLogger`, not `bootstrapLogger`
 
 Pinned by: nothing yet. `Fixtures/Sources/WireMVCTaskLocalExample/main.swift` checks only that the request logger shows the serve-time marker, and nothing in the fixture reads `WireMVCApplication.logger`, which is tracked in https://github.com/swift-wire/wire-mvc/issues/228.
 
@@ -132,8 +132,8 @@ WireMVCTaskLocalRequestLogging` whose unkeyed `@Provides` `requestLogger(fields:
 constructs it.
 
 #### Scenario: a logger bound around serving
-- **WHEN** `WireMVCTaskLocalExample` serves inside `withLogger(probeLogger(marker: "serve", runtimeID: "runtime-42"))` and `GET /probe` reads the injected logger
-- **THEN** its `probe-marker` metadata is `serve`, not `bootstrap`, and its `runtime.request.id` metadata is `runtime-42`
+- **WHEN** an app builds the graph inside `withLogger` of a logger whose `probe-marker` metadata is `bootstrap`, serves inside `withLogger` of a logger whose `probe-marker` metadata is `serve` and `runtime.request.id` metadata is `runtime-42`, and a request-scoped type injects the unkeyed `Logger`
+- **THEN** the injected logger's `probe-marker` metadata is `serve`, not `bootstrap`, and its `runtime.request.id` metadata is `runtime-42`
 
 Pinned by: nothing yet. `Fixtures/Sources/WireMVCTaskLocalExample/main.swift` asserts it when run, but CI builds that executable in the `Build fixtures` step and does not run it.
 
@@ -143,12 +143,12 @@ Pinned by: nothing yet. `Fixtures/Sources/WireMVCTaskLocalExample/main.swift` as
 metadata and whatever the app contributes.
 
 #### Scenario: no minted id on the logger
-- **WHEN** the app provides `WireMVCRequest.id` from `Logger.current[metadataKey: "runtime.request.id"]` and a client sends `GET /probe` with no `X-Request-Id`
-- **THEN** the logger's metadata keys are exactly `probe-marker` and `runtime.request.id`
+- **WHEN** an app serves inside `withLogger` of a logger whose only metadata keys are `probe-marker` and `runtime.request.id`, contributes nothing to `WireMVCLogMetadata.stringEntries`, and provides `WireMVCRequest.id` from `Logger.current[metadataKey: "runtime.request.id"]`, and a request with no `X-Request-Id` reaches a request-scoped type that injects the unkeyed `Logger`
+- **THEN** the injected logger's metadata keys are exactly `probe-marker` and `runtime.request.id`
 
 #### Scenario: an inbound `X-Request-Id` under the task-local target
-- **WHEN** the same app receives `GET /probe` with `X-Request-Id: abc-123`
-- **THEN** the injected id is still `runtime-42`
+- **WHEN** the same app serves inside `withLogger` of a logger whose `runtime.request.id` metadata is `runtime-42`, and receives a request carrying `X-Request-Id: abc-123`
+- **THEN** the injected `WireMVCRequest.id` is `runtime-42`, not `abc-123`
 
 Pinned by: nothing yet. `Fixtures/Sources/WireMVCTaskLocalExample/main.swift` asserts both scenarios when run, but CI builds that executable in the `Build fixtures` step and does not run it, which is tracked in https://github.com/swift-wire/wire-mvc/issues/203. The fixture does not check the metadata keys on the `X-Request-Id` request, which is tracked in https://github.com/swift-wire/wire-mvc/issues/228.
 
