@@ -89,8 +89,8 @@ result SHALL be discarded.
 - **THEN** it contains `let wireMVCScopeTeardown = wireMVCScopeEntry._wireScopeTeardown`, `defer {` and `_ = await wireMVCScopeTeardown()`
 
 #### Scenario: `@Teardown` fires once per request
-- **WHEN** `WhoAmIController` injects a `@Scoped(seed: HTTPRequest.self)` `RequestResource` whose `@Teardown func close()` increments a probe, and the example sends two `GET /whoami` requests
-- **THEN** the probe reads at least `2`
+- **WHEN** a `@Scoped(seed: HTTPRequest.self) @Controller("/whoami")` injects a `@Scoped(seed: HTTPRequest.self)` `RequestResource` whose `@Teardown func close()` increments a counter, and two `GET /whoami` requests are served
+- **THEN** the counter reads at least `2`
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`scopedControllerConstructsPerRequestViaScopeEntry`), `Fixtures/Sources/WireMVCExample/main.swift` (the `@Teardown on a @Scoped binding` check, run by the `Run end-to-end example` step of the `BuildAndRun` job in `.github/workflows/build.yml`). The ordering of teardown before the send and the skip on a throwing entry are pinned by nothing yet.
 
@@ -111,7 +111,7 @@ A scoped controller's request-scoped dependencies SHALL be constructed from each
 its `@Singleton` dependencies SHALL resolve to the one app-scoped instance.
 
 #### Scenario: two requests to `/whoami`
-- **WHEN** the example sends `GET /whoami?who=ada` and `GET /whoami?who=grace`
+- **WHEN** a `@Scoped(seed: HTTPRequest.self) @Controller("/whoami")` injects a request-scoped `RequestInfo` whose `path` is its seed's `request.path`, and a `@Singleton` `UserStore`, and receives `GET /whoami?who=ada` and `GET /whoami?who=grace`
 - **THEN** both answer `200`, each `RequestInfo.path` is its own request's path, and both resolve the `@Singleton` `UserStore`
 
 Pinned by: `Fixtures/Sources/WireMVCExample/main.swift` (the `@Scoped(seed:) @Controller` check, run by the `BuildAndRun` job in `.github/workflows/build.yml`). That both requests receive the same `UserStore` instance is pinned by nothing yet: `UserStore` is stateless, so the check cannot tell one instance from two.
@@ -124,8 +124,8 @@ In a WireMVC application, a sibling controller seeded on the same type SHALL the
 request-scoped bindings constructed or torn down by another controller's requests.
 
 #### Scenario: two controllers sharing the `HTTPRequest` seed
-- **WHEN** the example serves two `GET /whoami` requests and then one `GET /other`, where only `OtherController` reaches `OtherResource` and only `WhoAmIController` reaches `RequestResource`
-- **THEN** `OtherResource`'s teardown probe is `0` after the `/whoami` requests and `1` after `/other`, and `RequestResource`'s probe is unchanged by `/other`
+- **WHEN** `@Scoped(seed: HTTPRequest.self)` controllers `@Controller("/whoami") WhoAmIController` and `@Controller("/other") OtherController` are served, only `WhoAmIController` reaches the request-scoped `RequestResource` and only `OtherController` reaches `OtherResource`, each resource's `@Teardown` increments its own counter, and the app serves two `GET /whoami` requests and then one `GET /other`
+- **THEN** `OtherResource`'s teardown counter is `0` after the `/whoami` requests and `1` after `/other`, and `RequestResource`'s counter is unchanged by `/other`
 
 Pinned by: `Fixtures/Sources/WireMVCExample/main.swift` (the `@Scoped per-root reachability` check, run by the `BuildAndRun` job in `.github/workflows/build.yml`).
 
