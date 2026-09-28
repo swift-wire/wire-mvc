@@ -31,7 +31,7 @@ Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`c
 returns `.json(body(e), status: status)` and otherwise returns `nil`.
 
 #### Scenario: a user that is not found
-- **WHEN** `UsersController` declares `@ErrorResponse(UserStore.NotFound.self, .notFound, { _ in APIError(message: "user not found") })` and a client requests `GET /users/999`
+- **WHEN** `UsersController` declares `@ErrorResponse(UserStore.NotFound.self, .notFound, { _ in APIError(message: "user not found") })`, and a client requests `GET /users/999` from its `@Get("/{id}")` route, which throws `UserStore.NotFound` for an unknown id
 - **THEN** the response is `404` and its JSON body decodes to `APIError(message: "user not found")`
 
 Pinned by: `Fixtures/Sources/WireMVCExample/main.swift` (the `GET /users/999` check, run by the `Run end-to-end example` step of the `BuildAndRun` job in `.github/workflows/build.yml`).
@@ -116,7 +116,7 @@ and controller declare no `@ErrorResponse`.
 - **THEN** its route's chain contains `(wireMVCError is TenantMissing ? WireMVCOutcome.status(.badRequest) : nil)`
 
 #### Scenario: over the wire
-- **WHEN** `GET /hello/tenant` throws `TenantMissing` and neither its route nor `HelloController` maps it
+- **WHEN** the root declares `@ErrorResponse(TenantMissing.self, .badRequest)`, and `GET /hello/tenant` throws `TenantMissing` while neither its route nor `HelloController` maps it
 - **THEN** the response is `400`
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`globalErrorResponseFoldsIntoEveryRoute`), `Fixtures/Tests/WireMVCBootstrapExampleTests/WithTestServerTests.swift` (`globalErrorTierMapsToBadRequest`), `.github/workflows/build.yml` (`BuildAndRun`, step `Run @WireMVCBootstrap example (boot, probe, stop)`).
@@ -135,7 +135,7 @@ mapping and before the catch-all. A route with no bindings SHALL NOT include it.
 - **THEN** its witness contains `errorMapping: { wireMVCError in` and does not contain `as? WireMVCBindingError`
 
 #### Scenario: malformed input over the wire
-- **WHEN** `POST /users` arrives with `Content-Type: text/plain`, and again with the body `{bad`
+- **WHEN** `POST /users`, a route that binds a `@JSONBody` parameter and declares no catch-all, arrives with `Content-Type: text/plain`, and again as `application/json` with the body `{bad`
 - **THEN** the responses are `415` and `422`
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`controllerScopeStatusShorthandCoversRoute`, `noBindsRouteGainsCatchForErrorResponse`), `Fixtures/Sources/WireMVCExample/main.swift` (the `415` and `422` checks, run by the `BuildAndRun` job in `.github/workflows/build.yml`). `controllerScopeStatusShorthandCoversRoute` asserts only that the element is present; its position after the typed mappings and before the catch-all is pinned by nothing yet.
@@ -197,7 +197,7 @@ outcome. A throw from the drain itself SHALL be mapped through `errorMapping` un
 threw, in which case the route's error SHALL be the one mapped.
 
 #### Scenario: a refusal mapped by the global tier
-- **WHEN** `GET /hello/refused/Ada` passes a middleware that contributes `x-stamp: middleware` and a deferred `Set-Cookie`, and the handler throws `TenantMissing`, which the root maps to `400`
+- **WHEN** `GET /hello/refused/Ada` passes a middleware that contributes `x-stamp: middleware` and a deferred `Set-Cookie: greeted=<name>; Path=/` built from the name the handler records, and the handler records `Ada` and then throws `TenantMissing`, which the root maps to `400`
 - **THEN** the response is `400` carrying `x-stamp: middleware` and `Set-Cookie: greeted=Ada; Path=/`
 
 Pinned by: `Fixtures/Tests/WireMVCBootstrapExampleTests/WithTestServerTests.swift` (`middlewareContributionsSurviveAMappedRefusal`), `Tests/WireMVCResponsesTests/ResponsesTests.swift` (`aDeferredContributionRunsOnceWhenALaterOneThrows`, `aMappedErrorStillCarriesTheContributions`). Precedence of the route error over a failed drain is pinned by nothing yet.
