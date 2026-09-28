@@ -164,7 +164,7 @@ closure SHALL run exactly once, after `building` has returned or thrown and befo
 written.
 
 #### Scenario: a session cookie read from what the handler did
-- **WHEN** `StampMiddleware` registers an `onSend` that reads the name the handler recorded, and `GET /hello/stamped/Ada` is served
+- **WHEN** a route's middleware registers an `onSend` that returns `.append(.setCookie, "greeted=<name>; Path=/")` for the name the handler recorded, or nothing if none was recorded, and the handler serving `GET /hello/stamped/Ada` records `Ada`
 - **THEN** the response carries `Set-Cookie: greeted=Ada; Path=/`
 
 Pinned by: `Fixtures/Tests/WireMVCBootstrapExampleTests/WithTestServerTests.swift` (`middlewareContributionsBeatRouteConstantsAndSeeTheHandler`), `Tests/WireMVCResponsesTests/ResponsesTests.swift` (`aSucceedingDrainRunsOnceAndReachesTheResponse`).
@@ -195,7 +195,7 @@ whichever outcome is sent, the built one or the one `errorMapping` returned.
 - **THEN** the closure ran once and the `401` carries `x-deferred: late`
 
 #### Scenario: over the wire
-- **WHEN** `GET /hello/refused/Ada` folds `StampMiddleware` and throws an error the composition root maps to `400`
+- **WHEN** `GET /hello/refused/Ada` folds a middleware that contributes `.set(x-stamp, "middleware")` and registers an `onSend` returning `.append(.setCookie, "greeted=<name>; Path=/")` for the name the handler recorded, and its handler records `Ada` and then throws an error the composition root maps to `400`
 - **THEN** the `400` carries `x-stamp: middleware` and `Set-Cookie: greeted=Ada; Path=/`
 
 Pinned by: `Tests/WireMVCResponsesTests/ResponsesTests.swift` (`aSucceedingDrainRunsOnceAndReachesTheResponse`, `aMappedErrorStillCarriesTheContributions`, `theLateFoldMatchesOneResolvedCall`, `aMiddlewareContributionWinsOverTheRoutesOwn`, `aSucceedingDrainReachesTheStreamedHead`), `Fixtures/Tests/WireMVCBootstrapExampleTests/WithTestServerTests.swift` (`middlewareContributionsBeatRouteConstantsAndSeeTheHandler`, `middlewareContributionsSurviveAMappedRefusal`), `Fixtures/Tests/WireMVCBootstrapExampleTests/HTMLResponseOverTheWireTests.swift` (`globalMiddlewareContributesToAStreamedHead`).
