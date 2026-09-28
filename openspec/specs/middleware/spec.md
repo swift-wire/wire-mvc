@@ -45,11 +45,11 @@ its box with `route: nil`, and a matched route with no parameters SHALL report a
 `RouteContext` with empty `pathParameters`.
 
 #### Scenario: one controller-scope fold on two routes
-- **WHEN** a controller-scope middleware reports `peekedRoute?.template` and requests go to `/ping` and `/ping/echo/other`
+- **WHEN** `@Controller("/ping")` declares `@Get` and `@Get("/echo/{name}")`, carries a controller-scope middleware that reports `peekedRoute?.template`, and requests go to `/ping` and `/ping/echo/other`
 - **THEN** it reports `/ping` and `/ping/echo/{name}` respectively
 
 #### Scenario: the global tier
-- **WHEN** a global middleware reports whether `peekedRoute` is `nil` for `/ping`, `/ping/echo/world`, `/gated` and `/no/such/route`
+- **WHEN** a global middleware reports whether `peekedRoute` is `nil` for a request to a route with no parameters, one to a route with a path parameter, one another global middleware answers itself, and one no route matches
 - **THEN** it reports `nil` for all four
 
 #### Scenario: no route versus no parameters
@@ -65,7 +65,7 @@ pass that box to `next`. Called on a box that is already `responded`, both SHALL
 box without writing.
 
 #### Scenario: a route-scope admin gate
-- **WHEN** `DELETE /users/99` arrives without `x-admin: true` on a route carrying `@Middleware(RequireAdminKeys.factory)`, whose middleware calls `next(input.responding { … HTTPResponse(status: .forbidden) … })`
+- **WHEN** `DELETE /users/99` arrives without `x-admin: true` on a `@Controller("/users")` route `@Delete("/{id}") @ResponseStatus(.noContent)` carrying `@Middleware(RequireAdminKeys.factory)`, whose middleware forwards the box when `x-admin` is `true` and otherwise calls `next(input.responding { … HTTPResponse(status: .forbidden) … })`
 - **THEN** the response is `403` and the handler does not run
 
 #### Scenario: the gate forwards
@@ -80,7 +80,7 @@ outcome's header fields through `WireMVCResponseHeaders.resolved(returned:middle
 it. `responding(_:)` SHALL hand the raw sender to its closure and SHALL NOT drain the registry.
 
 #### Scenario: a gate's 401 carries a global contribution
-- **WHEN** a gate answers `GET /gated` with `respondingWith` and a global middleware contributed `x-stamp: global`
+- **WHEN** a gate answers `GET /gated` with `respondingWith(.status(.unauthorized, headerFields: [.wwwAuthenticate: #"Bearer realm="fixture""#]))` and a global middleware ahead of it contributed `x-stamp: global`
 - **THEN** the response is `401` carrying both the gate's `WWW-Authenticate: Bearer realm="fixture"` and `x-stamp: global`
 
 Pinned by: `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`aGateResponseCarriesContributedFields`). The raw `responding(_:)` discarding the registry is pinned by nothing yet.
@@ -184,7 +184,7 @@ with `wireMVCDoubles` bound above the fold.
 
 #### Scenario: three factory middleware on a served controller
 - **WHEN** `UsersController` carries `@Middleware(RequestLogMiddlewareKeys.factory)`, `@Middleware(SessionMiddlewareKeys.factory)` and `@Middleware(AuditMiddlewareKeys.factory)`
-- **THEN** the request-log and audit probes each count at least one request after the example has driven its routes
+- **THEN** the request-log and audit middleware each run for at least one request served to `UsersController`'s routes
 
 #### Scenario: a mock-consuming factory under a keyed harness
 - **WHEN** `Audit`, the `@Factory` behind `AuditKeys.factory`, declares `@Inject var backend: any NoteBackend` and a `TestingKey` carries `@BindType(NoteBackend.self, MockNoteBackend.self)`
@@ -216,7 +216,7 @@ roles, as the [swift-wire adapter-annotations](https://github.com/swift-wire/swi
 
 #### Scenario: a reordered middleware
 - **WHEN** `AuditMiddleware<Sender, Reader, Ctx>` is declared `@MiddlewareFactory(.responseSender, .reader, .requestContext)` and folded on `UsersController`
-- **THEN** the example builds, and its audit probe counts at least one request
+- **THEN** the fold compiles, and the middleware runs for at least one request served to `UsersController`'s routes
 
 Pinned by: `Fixtures/Sources/WireMVCExample/AuditMiddleware.swift` and `Fixtures/Sources/WireMVCExample/main.swift` (the `@MiddlewareFactory` check, run by the `BuildAndRun` job in `.github/workflows/build.yml`).
 
@@ -262,7 +262,7 @@ and call `inner.handle`.
 
 #### Scenario: a non-transforming access log
 - **WHEN** `AccessLog<Ctx, Reader, Sender>` declares `typealias NextInput = Input` and is the root's `@Middleware(AccessLogKeys.factory)`
-- **THEN** the `WireMVCBootstrapExample` fixture builds and serves
+- **THEN** the app whose root carries it builds, its global chain meeting `GlobalMiddlewareHandler`'s constraints
 
 Pinned by: `Fixtures/Sources/WireMVCBootstrapExample/AccessLog.swift` (built by the `Build fixtures` step of the `BuildAndRun` job in `.github/workflows/build.yml`).
 
@@ -272,15 +272,15 @@ contributions SHALL reach the response, for a matched route, for the `@NotFound`
 fallback, and for a 405 answered by `registerMethodNotAllowed`.
 
 #### Scenario: the boot probe
-- **WHEN** CI boots `WireMVCBootstrapExample` and requests `/hello/ci` and `/nope`
+- **WHEN** a root's global `@Middleware(AccessLogKeys.factory)` prints `access: <method> <path>` for each request it sees, and the served app receives `GET /hello/ci`, a matched route, and `GET /nope`, which no route matches
 - **THEN** the server log contains `access: GET /hello/ci` and `access: GET /nope`
 
 #### Scenario: an authored `@NotFound` carries the global contribution
-- **WHEN** the `WireMVCBootstrapExample` test server, whose root carries `@Middleware(AccessLogKeys.factory)` and a `@NotFound` handler, receives `GET /no/such/route`
+- **WHEN** an app whose root carries `@Middleware(AccessLogKeys.factory)`, a global middleware that contributes `x-served-by: wire-mvc`, and a `@NotFound` handler receives `GET /no/such/route`
 - **THEN** the response is `404` carrying `x-served-by: wire-mvc`
 
 #### Scenario: synthesised 404 and 405
-- **WHEN** the fallback fixture receives `GET /no/such/route` and `DELETE /ping`
+- **WHEN** an app whose root declares no `@NotFound` and carries a global middleware that contributes `x-stamp: global`, and whose only route at `/ping` is a `@Get`, receives `GET /no/such/route` and `DELETE /ping`
 - **THEN** the responses are `404` and `405` (with `Allow: GET`), each carrying `x-stamp: global`
 
 Pinned by: `.github/workflows/build.yml` (`BuildAndRun`, step `Run @WireMVCBootstrap example (boot, probe, stop)`), `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`matchedRouteCarriesTheGlobalHeader`, `synthesisedNotFoundCarriesTheGlobalHeader`, `aMethodNotAllowedCarriesTheGlobalHeader`), `Fixtures/Tests/WireMVCBootstrapExampleTests/WithTestServerTests.swift` (`globalContributionReachesTheNotFoundFallback`).
@@ -291,7 +291,7 @@ introspection route, through a generated `registerIntrospection<Builder>(into:at
 global-middleware proxy, and SHALL NOT be folded around other routes.
 
 #### Scenario: the guard fires on `/wiring` only
-- **WHEN** CI boots `WireMVCBootstrapExample`, whose `mountIntrospectionAt` carries `@Middleware(IntrospectionGuardKeys.factory)`, and requests `/hello/ci` and `/wiring`
+- **WHEN** a root's `mountIntrospectionAt` returns `"/wiring"` and carries `@Middleware(IntrospectionGuardKeys.factory)`, a middleware that prints `introspection-guard: <path>` for each request it sees, and the served app receives `/hello/ci` and `/wiring`
 - **THEN** the log contains `introspection-guard: /wiring` and no `introspection-guard: /hello` line
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`guardedIntrospectionFoldsGuardMiddleware`), `.github/workflows/build.yml` (`BuildAndRun`, step `Run @WireMVCBootstrap example (boot, probe, stop)`).
