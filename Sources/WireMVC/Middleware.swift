@@ -38,6 +38,13 @@ where
     /// the raw `sending` reader/sender; the public destructures (`withPendingContents` / `withContents`)
     /// unwrap them — and route terminals take them `consuming`, which accepts a `sending` argument, so the
     /// wrapping is invisible everywhere outside this file.
+    ///
+    /// `@usableFromInline` because a middleware in another module can destroy the box: one that throws
+    /// before handing it to `next` drops it, and the box's layout being fragile, the destroy the compiler
+    /// emits there reaches for this enum's metadata accessor directly. Internal, that accessor has hidden
+    /// visibility in an optimised build, and the middleware's module fails to link. `@usableFromInline`
+    /// exports it without adding the enum to the box's public surface.
+    @usableFromInline
     enum Storage: ~Copyable {
         case pending(
             request: HTTPRequest,
