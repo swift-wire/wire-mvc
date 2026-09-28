@@ -46,8 +46,8 @@ catch-all SHALL reach the handler undecoded. On Hummingbird a bound path paramet
 handler exactly as it appeared in the request path.
 
 #### Scenario: proposal-native
-- **WHEN** the typed client requests a todo whose id is `does not exist`, `a%zz` or `a/b`
-- **THEN** the repository behind the handler is asked for exactly that id
+- **WHEN** a route binding `@Path id: String` is called through the generated typed client, which percent-encodes the id, with `does not exist`, `a%zz` or `a/b`
+- **THEN** the handler receives exactly that id
 
 #### Scenario: proposal-native, catch-all remainder
 - **WHEN** `GET /files/{path*}` is registered and `GET /files/a%2Fb/c` is requested
@@ -120,7 +120,7 @@ writes a streamed response body, which `WireMVCServerTransport` produces from in
 - **THEN** the response body is `abc-123`
 
 #### Scenario: the bridge itself
-- **WHEN** a transport call runs inside `TracingProbe.$traceID.withValue("abc-123")` and the WireMVC handler streams three lines reading it
+- **WHEN** a transport call runs inside `TracingProbe.$traceID.withValue("abc-123")` and the WireMVC handler streams three lines, the `n`th written as `<n>:<traceID>\n` from the value it reads
 - **THEN** the body is `1:abc-123\n2:abc-123\n3:abc-123\n`
 
 Pinned by: the bridged runtimes are pinned in two halves, and no single test runs a WireMVC handler behind real host middleware. The bridge half, a `ServerTransport` closure calling a WireMVC handler over a mock transport with no host, is pinned by `Tests/WireMVCServerTransportTests/AdapterTests.swift` (`taskLocalContextReachesTheHandlerThroughTheBridge`, `taskLocalContextSurvivesIntoAStreamedBody`). The host half, real host middleware dispatching to a raw `ServerTransport` closure with no WireMVC graph, is pinned by [HummingbirdExample AmbientContextTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/HummingbirdExample/Tests/HummingbirdExampleTests/AmbientContextTests.swift) (`taskLocalContextSetByHostMiddlewareReachesTheHandler`, `taskLocalContextSurvivesWhenTheHandlerProducesTheBytes`) and [VaporExample AmbientContextTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/VaporExample/Tests/VaporExampleTests/AmbientContextTests.swift) (`taskLocalContextSetByHostMiddlewareReachesTheHandler`, `taskLocalContextSurvivesWhenTheHandlerProducesTheBytes`). The proposal-native runtime is pinned by nothing yet: `Fixtures/Sources/WireMVCTaskLocalExample/main.swift` exercises it when run, and CI builds it without running it.
