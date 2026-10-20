@@ -235,15 +235,21 @@ jobs:
         # so a whole-package build dies there with "no such module 'Testing'" whatever the rest does.
         # These five are the default-trait libraries a consumer links; the trait-gated adapters
         # (`WireMVCServerTransport`, `WireMVCElementary`) are not cross-compiled here.
-        #
-        # The fixtures are not cross-compiled either: they serve on NIOHTTPServer, and swift-http-server
-        # at b31b98d did not compile for the musl target on 6.4.0 — `NIOHTTPServer+HTTP1_1.swift`
-        # failed region isolation ("sending 'iterator' risks causing data races") for
-        # aarch64-swift-linux-musl while building for glibc and macOS. The revision
-        # `Fixtures/Package.resolved` now pins includes upstream's "Fix musl build" (swift-http-server
-        # #138), not yet tried here; when it builds, `Fixtures/` is the deployable shape to add back.
         run: |
           for product in WireMVC WireMVCRouter WireMVCMiddleware WireMVCLogging WireMVCTaskLocalLogging; do
+            swift build -c release --swift-sdk aarch64-swift-linux-musl --product "$product"
+          done
+      - name: Cross-compile the fixture servers for ARM64 Linux
+        # The fixtures' executables are the deployable shape: a wire-mvc app serving on NIOHTTPServer.
+        # They were left out while swift-http-server did not compile for musl — its
+        # `NIOHTTPServer+HTTP1_1.swift` tripped a region-isolation false positive that depends on type
+        # resilience (swiftlang/swift#92476), so the static SDK build failed where glibc and macOS
+        # passed. Upstream worked around it in swift-http-server #138, which the revision
+        # `Fixtures/Package.resolved` pins includes. Product by product, so that only the servers are
+        # built and not the fixtures' other targets.
+        working-directory: Fixtures
+        run: |
+          for product in WireMVCExample WireMVCBootstrapExample WireMVCTaskLocalExample WireMVCFallbackExample; do
             swift build -c release --swift-sdk aarch64-swift-linux-musl --product "$product"
           done
 
