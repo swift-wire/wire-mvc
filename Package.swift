@@ -35,7 +35,7 @@ let proposalSettings: [SwiftSetting] = [
 
 let package = Package(
     name: "wire-mvc",
-    platforms: [.macOS(.v26)],
+    platforms: [.macOS(.v27)],
     products: [
         .library(name: "WireMVC", targets: ["WireMVC"]),
         // The batteries-included router for the native (proposal-server) path — a concrete
@@ -119,7 +119,13 @@ let package = Package(
             traits: ["UnstableAsyncStreaming"]
         ),
         .package(url: "https://github.com/apple/swift-http-types.git", from: "1.6.0"),
-        .package(url: "https://github.com/apple/swift-collections.git", from: "1.6.0"),
+        // Held below 1.7: swift-collections 1.7 marks the container APIs swift-async-algorithms 1.1.5's
+        // `AsyncStreaming` uses (`RangeReplaceableContainer`, `append(moving:from:)`) as macOS 27-only, so
+        // 1.1.5 no longer compiles against it. async-algorithms 1.1.6 fixes that, but the 0.2.x proposal
+        // pins 1.1.5 exactly (as this package does above). Lift the bound when the proposal moves to a
+        // line that admits 1.1.6 or later. Here rather than only in Package.resolved because a consumer
+        // that resolves fresh would otherwise pick up 1.7 and fail to build.
+        .package(url: "https://github.com/apple/swift-collections.git", "1.6.0"..<"1.7.0"),
         .package(url: "https://github.com/swift-server/swift-http-server.git", branch: "main"),
         .package(url: "https://github.com/swift-server/swift-service-lifecycle.git", from: "2.0.0"),
         // 1.14 is where the task-local logger (`withLogger` / `Logger.current`) lands, which

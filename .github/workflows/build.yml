@@ -224,11 +224,11 @@ jobs:
     # toolchain it was built for, so these two literals move together — and together with
     # `.swift-version`, since the cross-compile should check the toolchain the package is developed on.
     container:
-      image: swift:6.4.0-noble
+      image: swift:6.4.1-noble
     steps:
       - uses: actions/checkout@v6
       - name: Install Static Linux SDK
-        run: swift sdk install https://download.swift.org/swift-6.4.0-release/static-sdk/swift-6.4.0-RELEASE/swift-6.4.0-RELEASE_static-linux-0.1.0.artifactbundle.tar.gz --checksum 47d2fd89eebfdf9eb4d536b6710414297f755c17926cdebc4742c08982b40a9e
+        run: swift sdk install https://download.swift.org/swift-6.4.1-release/static-sdk/swift-6.4.1-RELEASE/swift-6.4.1-RELEASE_static-linux-0.1.0.artifactbundle.tar.gz --checksum cef5592d7430ed3c5ae1ddda479849c6f5252bd94a5723db1559f984caf38a7c
       - name: Cross-compile the shipping products for ARM64 Linux
         # Product by product rather than a whole-package `swift build`, because the package also holds
         # `WireMVCTesting`, which imports swift-testing — and the static SDK ships no `Testing` module,
@@ -237,10 +237,11 @@ jobs:
         # (`WireMVCServerTransport`, `WireMVCElementary`) are not cross-compiled here.
         #
         # The fixtures are not cross-compiled either: they serve on NIOHTTPServer, and swift-http-server
-        # (at the revision `Fixtures/Package.resolved` pins) does not compile for the musl target on
-        # 6.4.0 — `NIOHTTPServer+HTTP1_1.swift` fails region isolation ("sending 'iterator' risks
-        # causing data races") for aarch64-swift-linux-musl while building for glibc and macOS. That is
-        # upstream's to fix; when it is, `Fixtures/` is the deployable shape to add back.
+        # at b31b98d did not compile for the musl target on 6.4.0 — `NIOHTTPServer+HTTP1_1.swift`
+        # failed region isolation ("sending 'iterator' risks causing data races") for
+        # aarch64-swift-linux-musl while building for glibc and macOS. The revision
+        # `Fixtures/Package.resolved` now pins includes upstream's "Fix musl build" (swift-http-server
+        # #138), not yet tried here; when it builds, `Fixtures/` is the deployable shape to add back.
         run: |
           for product in WireMVC WireMVCRouter WireMVCMiddleware WireMVCLogging WireMVCTaskLocalLogging; do
             swift build -c release --swift-sdk aarch64-swift-linux-musl --product "$product"

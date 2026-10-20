@@ -37,7 +37,7 @@ Traits decide what the package resolves — `NIOHTTPServer` above is what makes 
 available. They are off by default so that a consumer serving no HTML, and not on NIO, resolves
 neither. See <doc:PackageTraits>.
 
-WireMVC requires a Swift 6.4 toolchain and targets macOS 26 or Linux.
+WireMVC requires a Swift 6.4 toolchain and targets macOS 27 or Linux.
 
 ## A controller that serves
 

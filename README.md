@@ -143,7 +143,7 @@ package struct AppBootstrap {
 }
 ```
 
-Requires a Swift 6.4 toolchain; targets macOS 26 and Linux.
+Requires a Swift 6.4 toolchain; targets macOS 27 and Linux.
 
 ## Features
 

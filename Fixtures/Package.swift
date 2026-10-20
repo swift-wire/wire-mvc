@@ -31,7 +31,7 @@ let proposalSettings: [SwiftSetting] = [
 
 let package = Package(
     name: "wire-mvc-fixtures",
-    platforms: [.macOS(.v26)],
+    platforms: [.macOS(.v27)],
     dependencies: [
         // The framework under test, with the NIO test support switched on — that trait is what gives
         // `WireMVCTesting` the `NIOHTTPServer: WireMVCTestServer` conformance and the `.swiftHttpServer`
