@@ -1,5 +1,5 @@
 {
-  "originHash" : "d0d2bf5ad388a6d08773abab6b251e259d4d88adc9e63a3c9315b6ffe8ca2a7e",
+  "originHash" : "1385eea5f526730807e9c14c6adea555b360da4e6a7e3a1a46959ac839c92bf0",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -114,7 +114,7 @@
       "location" : "https://github.com/swift-server/swift-http-server.git",
       "state" : {
         "branch" : "main",
-        "revision" : "b31b98d1a2dd6e2d25dcfe974b6d9788946f61cd"
+        "revision" : "d2a4723d47fc2d867f1ce0b9726d0c00548bb85d"
       }
     },
     {

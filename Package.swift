@@ -35,7 +35,7 @@ let proposalSettings: [SwiftSetting] = [
 
 let package = Package(
     name: "wire-mvc",
-    platforms: [.macOS(.v26)],
+    platforms: [.macOS(.v27)],
     products: [
         .library(name: "WireMVC", targets: ["WireMVC"]),
         // The batteries-included router for the native (proposal-server) path — a concrete

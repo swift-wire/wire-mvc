@@ -237,10 +237,11 @@ jobs:
         # (`WireMVCServerTransport`, `WireMVCElementary`) are not cross-compiled here.
         #
         # The fixtures are not cross-compiled either: they serve on NIOHTTPServer, and swift-http-server
-        # (at the revision `Fixtures/Package.resolved` pins) does not compile for the musl target on
-        # 6.4.0 — `NIOHTTPServer+HTTP1_1.swift` fails region isolation ("sending 'iterator' risks
-        # causing data races") for aarch64-swift-linux-musl while building for glibc and macOS. That is
-        # upstream's to fix; when it is, `Fixtures/` is the deployable shape to add back.
+        # at b31b98d did not compile for the musl target on 6.4.0 — `NIOHTTPServer+HTTP1_1.swift`
+        # failed region isolation ("sending 'iterator' risks causing data races") for
+        # aarch64-swift-linux-musl while building for glibc and macOS. The revision
+        # `Fixtures/Package.resolved` now pins includes upstream's "Fix musl build" (swift-http-server
+        # #138), not yet tried here; when it builds, `Fixtures/` is the deployable shape to add back.
         run: |
           for product in WireMVC WireMVCRouter WireMVCMiddleware WireMVCLogging WireMVCTaskLocalLogging; do
             swift build -c release --swift-sdk aarch64-swift-linux-musl --product "$product"
