@@ -46,6 +46,12 @@ let package = Package(
         ),
         .package(url: "https://github.com/apple/swift-http-types.git", from: "1.6.0"),
         .package(url: "https://github.com/apple/swift-collections.git", from: "1.6.0"),
+        // Package.resolved holds this at b31b98d: main after it raises `NIOHTTPServer`'s availability to macOS 27
+        // (swift-http-server#143), which this package's macOS 26 floor cannot serve on, and reshapes the
+        // graceful-shutdown configuration and `sendAndFinish`. So `swift package update` must leave it there
+        // (re-pin it by hand if a bulk update moves it). It is not a `revision:` here or in wire-mvc's manifest
+        // because SwiftPM rejects two different revision-based requirements for one package, and downstream
+        // roots name it `branch: "main"`. Lift the hold when wire-mvc adopts the new main.
         .package(url: "https://github.com/swift-server/swift-http-server.git", branch: "main"),
         .package(url: "https://github.com/swift-server/swift-service-lifecycle.git", from: "2.0.0"),
         // The task-local example calls `withLogger` directly, so this package needs 1.14 in its own right.

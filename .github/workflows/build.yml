@@ -224,11 +224,11 @@ jobs:
     # toolchain it was built for, so these two literals move together — and together with
     # `.swift-version`, since the cross-compile should check the toolchain the package is developed on.
     container:
-      image: swift:6.4.0-noble
+      image: swift:6.4.1-noble
     steps:
       - uses: actions/checkout@v6
       - name: Install Static Linux SDK
-        run: swift sdk install https://download.swift.org/swift-6.4.0-release/static-sdk/swift-6.4.0-RELEASE/swift-6.4.0-RELEASE_static-linux-0.1.0.artifactbundle.tar.gz --checksum 47d2fd89eebfdf9eb4d536b6710414297f755c17926cdebc4742c08982b40a9e
+        run: swift sdk install https://download.swift.org/swift-6.4.1-release/static-sdk/swift-6.4.1-RELEASE/swift-6.4.1-RELEASE_static-linux-0.1.0.artifactbundle.tar.gz --checksum cef5592d7430ed3c5ae1ddda479849c6f5252bd94a5723db1559f984caf38a7c
       - name: Cross-compile the shipping products for ARM64 Linux
         # Product by product rather than a whole-package `swift build`, because the package also holds
         # `WireMVCTesting`, which imports swift-testing — and the static SDK ships no `Testing` module,
