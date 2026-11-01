@@ -20,13 +20,13 @@ import WireMVC
 /// paths that ask for one.
 private struct RouteEchoHandler: HTTPServerRequestHandler {
     typealias RequestContext = WireMVCContext<InProcessRequestContext>
-    typealias Reader = InProcessReader
+    typealias Reader = WireMVCRequestReader<InProcessReader>
     typealias ResponseSender = InProcessResponseSender
 
     func handle(
         request: HTTPRequest,
         requestContext: consuming WireMVCContext<InProcessRequestContext>,
-        reader: consuming sending InProcessReader,
+        reader: consuming sending WireMVCRequestReader<InProcessReader>,
         responseSender: consuming sending InProcessResponseSender
     ) async throws {
         var received = UniqueArray<UInt8>()
@@ -62,7 +62,7 @@ private final class WriteProgress: Sendable {
 /// Streams three chunks, counting the writes it has completed so a reader can observe how far ahead it got.
 private struct ChunkedHandler: HTTPServerRequestHandler {
     typealias RequestContext = WireMVCContext<InProcessRequestContext>
-    typealias Reader = InProcessReader
+    typealias Reader = WireMVCRequestReader<InProcessReader>
     typealias ResponseSender = InProcessResponseSender
 
     let progress: WriteProgress
@@ -70,7 +70,7 @@ private struct ChunkedHandler: HTTPServerRequestHandler {
     func handle(
         request: HTTPRequest,
         requestContext: consuming WireMVCContext<InProcessRequestContext>,
-        reader: consuming sending InProcessReader,
+        reader: consuming sending WireMVCRequestReader<InProcessReader>,
         responseSender: consuming sending InProcessResponseSender
     ) async throws {
         var writer = try await responseSender.send(HTTPResponse(status: .ok))

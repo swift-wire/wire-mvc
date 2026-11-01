@@ -35,16 +35,17 @@ private final class RecordingService: Service, Sendable {
 
 /// Answers 200 to anything — the suite is about services, not routing.
 /// Serves under the courier, like every real WireMVC handler: `runSuite` serves on a
-/// `WireMVCContextServer`, so the handler it is given sees `WireMVCContext<…>` as its context.
+/// `WireMVCContextServer`, so the handler it is given sees `WireMVCContext<…>` as its context and
+/// `WireMVCRequestReader<…>` as its reader.
 private struct OKHandler: HTTPServerRequestHandler {
     typealias RequestContext = WireMVCContext<InProcessRequestContext>
-    typealias Reader = InProcessReader
+    typealias Reader = WireMVCRequestReader<InProcessReader>
     typealias ResponseSender = InProcessResponseSender
 
     func handle(
         request: HTTPRequest,
         requestContext: consuming WireMVCContext<InProcessRequestContext>,
-        reader: consuming sending InProcessReader,
+        reader: consuming sending WireMVCRequestReader<InProcessReader>,
         responseSender: consuming sending InProcessResponseSender
     ) async throws {
         try await responseSender.sendAndFinish(HTTPResponse(status: .ok))

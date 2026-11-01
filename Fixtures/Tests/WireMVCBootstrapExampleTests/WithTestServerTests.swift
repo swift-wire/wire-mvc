@@ -35,6 +35,20 @@ struct WithTestServerTests {
         }
     }
 
+    /// A response larger than the socket buffer arrives whole, every time, from a route that never reads its
+    /// request. The server hands a connection back to its keep-alive loop only once the request's end has
+    /// been read, and closing it instead dropped whatever of the response was still queued: fetched twenty
+    /// times, a four-mebibyte body came back cut short on some of them, at a different length each time.
+    @Test func aLargeResponseArrivesWholeFromARouteThatNeverReadsItsRequest() async throws {
+        try await withClient { client in
+            for _ in 0..<20 {
+                let response = try await client.get("/hello/bulk")
+                #expect(response.status == 200)
+                #expect(response.body.count == HelloController<RealGreeter>.bulkSize)
+            }
+        }
+    }
+
     /// An unmatched path hits the `@NotFound` `@RawRoute` fallback — a 404 with the handler's body.
     @Test func notFoundFallbackServes() async throws {
         try await withClient { client in

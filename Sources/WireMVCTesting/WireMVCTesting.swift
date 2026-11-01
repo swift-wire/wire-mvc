@@ -223,7 +223,7 @@ public enum WireMVCTesting {
         ModeServer.ResponseSender: ~Copyable,
         ModeServer.ResponseSender.Writer: ~Copyable,
         Handler.RequestContext == WireMVCContext<ModeServer.RequestContext>,
-        Handler.Reader == ModeServer.Reader,
+        Handler.Reader == WireMVCRequestReader<ModeServer.Reader>,
         Handler.ResponseSender == ModeServer.ResponseSender
     {
         // The whole serving window is marked active, so the generated keyed dispatch will resolve doubles for
