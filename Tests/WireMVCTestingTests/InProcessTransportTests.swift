@@ -22,13 +22,13 @@ import WireMVC
 /// takes the raw path (`send` then incremental writes); everything else takes the one-shot path.
 private struct EchoHandler: HTTPServerRequestHandler {
     typealias RequestContext = WireMVCContext<InProcessRequestContext>
-    typealias Reader = InProcessReader
+    typealias Reader = WireMVCRequestReader<InProcessReader>
     typealias ResponseSender = InProcessResponseSender
 
     func handle(
         request: HTTPRequest,
         requestContext: consuming WireMVCContext<InProcessRequestContext>,
-        reader: consuming sending InProcessReader,
+        reader: consuming sending WireMVCRequestReader<InProcessReader>,
         responseSender: consuming sending InProcessResponseSender
     ) async throws {
         // `collect(into:maximumSize:)` — the growing overload `WireMVCRequest.collectBody` uses. The
@@ -64,13 +64,13 @@ private struct EchoHandler: HTTPServerRequestHandler {
 /// server aborts the connection instead.
 private struct SilentHandler: HTTPServerRequestHandler {
     typealias RequestContext = WireMVCContext<InProcessRequestContext>
-    typealias Reader = InProcessReader
+    typealias Reader = WireMVCRequestReader<InProcessReader>
     typealias ResponseSender = InProcessResponseSender
 
     func handle(
         request: HTTPRequest,
         requestContext: consuming WireMVCContext<InProcessRequestContext>,
-        reader: consuming sending InProcessReader,
+        reader: consuming sending WireMVCRequestReader<InProcessReader>,
         responseSender: consuming sending InProcessResponseSender
     ) async throws {}
 }

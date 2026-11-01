@@ -42,6 +42,22 @@ package struct HelloController<G: Greeter> {
         try await responseSender.sendAndFinish(HTTPResponse(status: .ok), buffer: &body)
     }
 
+    /// The size of `GET /hello/bulk`'s body — four mebibytes, far more than a socket buffer holds, so the
+    /// response is still being written when the handler returns.
+    package static var bulkSize: Int { 4 << 20 }
+
+    // A response larger than the socket buffer, from a route that never reads its request — the shape of
+    // every route serving a file. It proves the server's connection outlives the handler until the response
+    // is written: an unread request used to end the connection with the response's tail still queued.
+    @Get("/bulk")
+    @RawRoute
+    package func bulk<Sender: HTTPResponseSender & ~Copyable & SendableMetatype>(
+        responseSender: consuming Sender
+    ) async throws where Sender.Writer: ~Copyable {
+        var body = UniqueArray<UInt8>(copying: [UInt8](repeating: 0x2A, count: Self.bulkSize))
+        try await responseSender.sendAndFinish(HTTPResponse(status: .ok), buffer: &body, trailer: nil)
+    }
+
     // Response headers, both sources at once: a route-scope constant, and a computed field returned in a
     // labelled response tuple that also picks the status. The constant is `.append`ed so the two `Vary`
     // values stay separate field lines rather than folding.

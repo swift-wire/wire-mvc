@@ -115,19 +115,26 @@ public struct WireMVCContext<Base: HTTPServerCapability.RequestContext & ~Copyab
 /// can only observe).
 ///
 /// Always present, even with no global middleware: one runtime concept beats two emission shapes, and the
-/// cost is a single allocation per request.
+/// cost is two allocations per request — the registry, and the request body the reader shares.
+///
+/// It also puts the reader on: the route below is handed a ``WireMVCRequestReader`` over the server's, and
+/// once it returns, whatever of the request body it left unread is read here — see
+/// `RequestBodyDraining.swift` for what an unread body costs.
 public struct WireMVCContextHandler<
     Inner: HTTPServerRequestHandler,
-    Base: HTTPServerCapability.RequestContext & ~Copyable
+    Base: HTTPServerCapability.RequestContext & ~Copyable,
+    BaseReader: AsyncReader & ~Copyable
 >: HTTPServerRequestHandler
 where
     Inner.RequestContext == WireMVCContext<Base>,
-    Inner.Reader: ~Copyable,
+    Inner.Reader == WireMVCRequestReader<BaseReader>,
     Inner.ResponseSender: ~Copyable,
-    Inner.ResponseSender.Writer: ~Copyable
+    Inner.ResponseSender.Writer: ~Copyable,
+    BaseReader.ReadElement == UInt8,
+    BaseReader.FinalElement == HTTPFields?
 {
     public typealias RequestContext = Base
-    public typealias Reader = Inner.Reader
+    public typealias Reader = BaseReader
     public typealias ResponseSender = Inner.ResponseSender
 
     let inner: Inner
@@ -139,21 +146,28 @@ where
     public func handle(
         request: HTTPRequest,
         requestContext: consuming Base,
-        reader: consuming sending Inner.Reader,
+        reader: consuming sending BaseReader,
         responseSender: consuming sending Inner.ResponseSender
     ) async throws {
         let courier = WireMVCContext(base: requestContext, responseHeaders: ResponseHeaderRegistry())
-        try await inner.handle(
-            request: request,
-            requestContext: courier,
-            reader: reader,
-            responseSender: responseSender
-        )
+        let body = RequestBody(reader)
+        do {
+            try await inner.handle(
+                request: request,
+                requestContext: courier,
+                reader: WireMVCRequestReader(body),
+                responseSender: responseSender
+            )
+        } catch {
+            await body.drain()
+            throw error
+        }
+        await body.drain()
     }
 }
 
-/// Presents a real `HTTPServer` as one whose `RequestContext` is the courier, putting the courier on
-/// inside `serve(handler:)`.
+/// Presents a real `HTTPServer` as one whose `RequestContext` is the courier and whose `Reader` is a
+/// ``WireMVCRequestReader``, putting both on inside `serve(handler:)`.
 ///
 /// This is the reason a `@WireMVCBootstrap` needs no edit: `createServer()` and
 /// `createRouteBuilder(for:)` are written generically over `Server`/`Server.RequestContext`, so handing
@@ -170,7 +184,7 @@ where
     Base.ResponseSender.Writer: ~Copyable
 {
     public typealias RequestContext = WireMVCContext<Base.RequestContext>
-    public typealias Reader = Base.Reader
+    public typealias Reader = WireMVCRequestReader<Base.Reader>
     public typealias ResponseSender = Base.ResponseSender
 
     /// The server underneath. Exposed so a caller that needs to describe the *real* server — the test
