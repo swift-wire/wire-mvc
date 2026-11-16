@@ -63,7 +63,8 @@ resolution the codegen does not do. Use an inline closure.
 
 ## Global mappings
 
-An `@ErrorResponse` on the `@WireMVCBootstrap` composition root applies to every route in the
-application, including the fallback. It is the same annotation meaning the same thing, with the
-scope set by placement — as `@Middleware` and `@ResponseHeader` are. See
+An `@ErrorResponse` on the `@WireMVCBootstrap` composition root applies to every typed route in the
+application, including a typed `@NotFound` fallback, which consults it after its own entries. A raw
+route maps nothing, so a `@RawRoute` fallback does not. It is the same annotation meaning the same
+thing, with the scope set by placement — as `@Middleware` and `@ResponseHeader` are. See
 <doc:TheCompositionRoot>.

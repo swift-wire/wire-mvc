@@ -732,25 +732,6 @@ struct RouteContributorGenerationTests {
         )
     }
 
-    /// A `@NotFound` handler that isn't `@RawRoute` is diagnosed — there's no matched route to
-    /// decode/encode against, so the fallback must write the response directly.
-    @Test func notFoundHandlerMustBeRaw() {
-        let source = """
-            @Singleton
-            @WireMVCBootstrap
-            struct AppBootstrap {
-                func createServer() throws -> NIOHTTPServer { fatalError() }
-                @NotFound
-                @JSONResponse
-                func handleNotFound() -> Greeting { fatalError() }
-            }
-            """
-        let rendered = generateRouteContributors(files: WireMVCBuiltIns.declarationFiles + [("App.swift", source)])
-        #expect(
-            rendered.diagnostics.contains { if case .notFoundNotRaw = $0.message { return true } else { return false } }
-        )
-    }
-
     @Test func scopedControllerConstructsPerRequestViaScopeEntry() {
         // A `@Scoped(seed:)` controller is a bridge proxy: its witness constructs the controller fresh
         // per request from the proxy's `_wireEnterScope` thunk (seeded by the request), then dispatches

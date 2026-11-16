@@ -249,7 +249,7 @@ jobs:
         # built and not the fixtures' other targets.
         working-directory: Fixtures
         run: |
-          for product in WireMVCExample WireMVCBootstrapExample WireMVCTaskLocalExample WireMVCFallbackExample; do
+          for product in WireMVCExample WireMVCBootstrapExample WireMVCTaskLocalExample WireMVCFallbackExample WireMVCTypedFallbackExample; do
             swift build -c release --swift-sdk aarch64-swift-linux-musl --product "$product"
           done
 

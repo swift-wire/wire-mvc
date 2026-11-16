@@ -53,9 +53,18 @@ struct RouteBlockGenerator {
     /// which the composition root resolved and passed in. Innermost wins, as `@Middleware` and
     /// `@ErrorResponse` do.
     var codingExpression: String {
-        guard let reference = routeCoding ?? controllerCoding else { return "wireMVCAppCoding" }
+        guard let reference = routeCoding ?? controllerCoding else { return appCodingExpression }
         return "self.\(codingProxyField(for: reference))"
     }
+    /// What a route with no `@Coding` of its own, and none on its controller, encodes and decodes with. A
+    /// witness is handed the app's coding as its `wireMVCAppCoding` parameter. The `@NotFound` fallback is
+    /// registered in the generated entry instead, where there is no such parameter, so it names a local that
+    /// entry binds.
+    var appCodingExpression = "wireMVCAppCoding"
+    /// The expression a typed handler is called through when it is not a controller's — the `@NotFound`
+    /// fallback's `bootstrap` local. `nil` for every route, which dispatches on ``subjectExpression``'s usual
+    /// choice.
+    var subjectOverride: String?
     /// Set for a `@Scoped(seed:)` controller (the seed type): its routes construct the controller fresh
     /// per request from the proxy's `_wireEnterScope` thunk, rather than calling the held `_wireSubject`.
     /// `nil` for an app-scoped (`@Singleton`) controller. Set at the start of `routeBlocks`.
@@ -84,7 +93,8 @@ struct RouteBlockGenerator {
     /// scoped controller *or any variant witness* (which reconstructs the subject per request), else the held
     /// subject field (`self._wireSubject`) for a production app-`@Singleton` controller.
     var subjectExpression: String {
-        scopedSeedType == nil && keyedScopeEntry == nil ? "self.\(subjectAccessor)" : scopeEntryLocalName
+        if let subjectOverride { return subjectOverride }
+        return scopedSeedType == nil && keyedScopeEntry == nil ? "self.\(subjectAccessor)" : scopeEntryLocalName
     }
 
     /// The `create` argument a mock-consuming variant factory's fold entry threads — the per-request doubles
@@ -227,7 +237,7 @@ struct RouteBlockGenerator {
     ///
     /// Split out of `routeBlock` for length, along the seam the rest of this file already follows — the
     /// response half is its own concern (see `ResponseCodegen.swift`).
-    private mutating func responseMode(
+    mutating func responseMode(
         of function: FunctionDeclSyntax,
         controllerResponseHeaders: [ResponseHeaderEntry]
     ) -> (staticHeaders: [ResponseHeaderEntry], mode: ResolvedResponseMode?)? {
@@ -269,7 +279,7 @@ struct RouteBlockGenerator {
     ///
     /// The choice is the mode's `terminal`, read off its declaration — not a test for the two annotation
     /// names this generator used to know.
-    private mutating func responseEmission(
+    mutating func responseEmission(
         of function: FunctionDeclSyntax,
         call: String,
         staticHeaders: [ResponseHeaderEntry],
@@ -377,7 +387,7 @@ struct RouteBlockGenerator {
     /// The terminal the register closure ends in — one call shape for both tiers, differing only in which
     /// runtime terminal it names and what its `building` closure returns. Split out of `routeBlock` to keep
     /// it within the body-length budget; the choice is `emission`'s and nothing else here reads it.
-    private func terminalBody(
+    func terminalBody(
         emission: ResponseEmission,
         hasBody: Bool,
         streamsBody: Bool,
@@ -405,7 +415,7 @@ struct RouteBlockGenerator {
 extension RouteBlockGenerator {
     /// The `let <name> = try await <Binding><<Type>>.bind(...)` lines and the handler call argument
     /// list, one entry per handler parameter.
-    fileprivate mutating func parameterBindings(
+    mutating func parameterBindings(
         of function: FunctionDeclSyntax,
         path: String,
         hasBody: Bool
@@ -540,7 +550,7 @@ extension RouteBlockGenerator {
     /// The `@ErrorResponse` tiers a route's terminal consults, innermost first: the route's own, then the
     /// controller's, then the Bootstrap's global default. Order *is* the rule — the fold
     /// takes the first match — so this is one place rather than a concatenation repeated at each call.
-    fileprivate mutating func tieredErrorMappings(
+    mutating func tieredErrorMappings(
         of function: FunctionDeclSyntax,
         controller: [ErrorMapping]
     ) -> [ErrorMapping] {
@@ -558,7 +568,7 @@ extension RouteBlockGenerator {
     ///   references a name that is not in scope.
     /// - `reader`: a route that collects its body *or* streams it. The two tiers differ in what happens to
     ///   the reader, not in whether it is named.
-    fileprivate func registerClosureParameters(
+    func registerClosureParameters(
         hasBinds: Bool,
         hasBody: Bool,
         streamsBody: Bool
@@ -570,7 +580,7 @@ extension RouteBlockGenerator {
         )
     }
 
-    fileprivate func routeHasBody(_ function: FunctionDeclSyntax) -> Bool {
+    func routeHasBody(_ function: FunctionDeclSyntax) -> Bool {
         for param in function.signature.parameterClause.parameters {
             if let binding = binding(from: param.attributes), readsRequestBody(binding.wrapper) {
                 return true

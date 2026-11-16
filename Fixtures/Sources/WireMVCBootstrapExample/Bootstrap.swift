@@ -81,7 +81,7 @@ package struct AppBootstrap {
     package func mountIntrospectionAt() -> String? { "/wiring" }
 
     // The fallback for unmatched requests — a `@RawRoute` handler that writes the response
-    // itself. Being a Bootstrap method it's DI-capable (it could use `self.config`); the generated `@main`
+    // itself (a typed one is `WireMVCTypedFallbackExample`'s). Being a Bootstrap method it's DI-capable (it could use `self.config`); the generated `@main`
     // registers it via `registerNotFound`, before `finalize()`, so it's a real route (the global tiers
     // fold into it). Without it, the plugin would synthesise a plain 404.
     //

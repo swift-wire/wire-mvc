@@ -226,7 +226,11 @@ public func generateRouteContributors(
     let declared = scanDeclaredExtensions(in: parsed)
     let discoveredBindings = declared.bindings
     let discoveredModes = declared.modes
-    var composition = analyzeComposedInputs(parsed)
+    var composition = analyzeComposedInputs(
+        parsed,
+        discoveredBindings: discoveredBindings,
+        discoveredModes: discoveredModes
+    )
     var located = composition.diagnostics + declared.diagnostics
     // The generated `@main`/`.wiremvc()` entry calls `Wire.bootstrap()`, so the consumer needs `import Wire`;
     // a test consumer's `.wiremvc()` suite-trait factory adds `Testing` + `WireMVCTesting` (a program consumer
@@ -379,7 +383,11 @@ private struct ComposedInputs {
 
 /// One pass over the parsed sources, gathering ``ComposedInputs`` — split out of `generateRouteContributors`
 /// so the orchestration reads as a short pipeline.
-private func analyzeComposedInputs(_ parsed: [(path: String, tree: SourceFileSyntax)]) -> ComposedInputs {
+private func analyzeComposedInputs(
+    _ parsed: [(path: String, tree: SourceFileSyntax)],
+    discoveredBindings: [String: DeclaredRequestBinding],
+    discoveredModes: [String: DeclaredResponseMode]
+) -> ComposedInputs {
     var result = ComposedInputs()
     var readBootstrap = false
     for file in parsed {
@@ -394,7 +402,12 @@ private func analyzeComposedInputs(_ parsed: [(path: String, tree: SourceFileSyn
         result.bootstrapConverter = converter
         var reader = RouteBlockGenerator(subjectAccessor: "", factoryKeys: [], globalErrorMappings: [])
         result.globalErrorMappings = reader.errorMappings(from: bootstrap.attributes, scopeLabel: "bootstrap")
-        let notFound = renderNotFoundRegistration(bootstrap: bootstrap)
+        let notFound = renderNotFoundRegistration(
+            bootstrap: bootstrap,
+            discoveredBindings: discoveredBindings,
+            discoveredModes: discoveredModes,
+            globalErrorMappings: result.globalErrorMappings
+        )
         result.notFoundRegistration = notFound.registration
         for diagnostic in reader.diagnostics + notFound.diagnostics {
             result.diagnostics.append(

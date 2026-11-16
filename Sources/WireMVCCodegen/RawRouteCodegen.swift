@@ -4,7 +4,7 @@
 import SwiftSyntax
 
 // The raw-route half of the route codegen: `@RawRoute` parameter binding (type-inferred and by explicit
-// role), the `@NotFound` fallback, and the two places a raw handler is handed something other than the
+// role), the raw `@NotFound` fallback, and the two places a raw handler is handed something other than the
 // register closure's own primitive — the unwrapped request context, and the header-applying sender.
 //
 // Split from RouteCodegen.swift for the same reason ResponseCodegen.swift was: the file is over
@@ -152,16 +152,12 @@ extension RouteBlockGenerator {
         return (callArgs, used)
     }
 
-    /// The `builder.registerNotFound { … }` for a `@NotFound` handler method, called
-    /// through `subjectExpression` (the generated `@main`'s `bootstrap` local — not `self`). In practice
-    /// the method is `@RawRoute` (it writes the response directly); the raw role mapping is reused, so a
-    /// `@NotFound @RawRoute func handleNotFound(request:, responseSender:)` binds exactly like a route.
-    /// `nil` with a diagnostic if the mapping fails (e.g. no response sender).
-    mutating func notFoundRegistration(function: FunctionDeclSyntax, subjectExpression: String) -> String? {
-        guard hasRawRoute(function) else {
-            record(RouteCodegenDiagnostic(.notFoundNotRaw(function.name.text), at: function.name))
-            return nil
-        }
+    /// The `builder.registerNotFound { … }` for a `@NotFound @RawRoute` handler method, called through
+    /// `subjectExpression` (the generated `@main`'s `bootstrap` local — not `self`). The raw role mapping is
+    /// reused, so a `@NotFound @RawRoute func handleNotFound(request:, responseSender:)` binds exactly like a
+    /// route. `nil` with a diagnostic if the mapping fails (e.g. no response sender). The typed fallback is
+    /// `typedNotFoundRegistration`, and `notFoundRegistration` picks between them.
+    mutating func rawNotFoundRegistration(function: FunctionDeclSyntax, subjectExpression: String) -> String? {
         guard let mapping = rawCallArgs(function) else { return nil }
         return emitRegisterClosure(
             registerCall: "builder.registerNotFound",
@@ -175,8 +171,7 @@ extension RouteBlockGenerator {
             parametersName: "_",
             readerName: mapping.used.contains("reader") ? "reader" : "_",
             // The fallback is a raw route like any other, so it binds the registry and wraps its sender —
-            // which is what lets a global middleware's header reach a 404. It must be raw (see
-            // `notFoundNotRaw`), so without this it is the one response that could never carry one.
+            // which is what lets a global middleware's header reach a 404 the handler writes itself.
             registryLocal: responseHeaderRegistryLocal,
             terminalBody:
                 "\(effectMarkers(of: function))\(subjectExpression).\(function.name.text)(\(mapping.callArgs.joined(separator: ", ")))"
@@ -217,7 +212,7 @@ extension RouteBlockGenerator {
     ///   `Ctx: HTTPServerCapability.RequestContext` would otherwise silently accept the courier.
     /// - `responseSender` is wrapped so contributed header fields reach a response the handler writes
     ///   itself — there is no outcome to inject them into. Without it a middleware's header vanishes on
-    ///   every raw route, including the `@NotFound` fallback, which must be raw.
+    ///   every raw route, including a raw `@NotFound` fallback.
     ///
     /// `wrapsSender` is decided **per slot**, on both paths, by one question: is this parameter the register
     /// closure's own sender, or a transformed one a middleware pins? A transformed slot names a compound type
