@@ -43,6 +43,19 @@ one generated entry that calls `createServer()`.
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`testEntryNeverCallsCreateServer`).
 
+### Requirement: The suite factory runs the `@main`'s build sequence
+The generated suite factory SHALL inline the build sequence the `@main` runs, specified in
+[composition-root](../composition-root/spec.md), from `Wire.bootstrap` to `wrapGlobalMiddleware`, so a
+suite exercises the app's real router, middleware fold, error tiers and fallbacks on whichever
+transport it runs. Within that sequence only the server line SHALL differ. The factory SHALL hand the
+served handler to `WireMVCTesting.runSuite` in place of `WireMVC.serve`.
+
+#### Scenario: the same root rendered both ways
+- **WHEN** the test entry and the `@main` are rendered for `@Singleton @WireMVCBootstrap struct AppBootstrap` declaring `func createServer() throws -> NIOHTTPServer`
+- **THEN** their lines from `let graph = try await Wire.bootstrap()` to `let wireMVCServed = graph._WireGlobalMiddleware_AppBootstrap.wrapGlobalMiddleware(handler)` are the same except `let server = WireMVCContextServer(mode.makeTestServer())`, and the test entry ends with `try await WireMVCTesting.runSuite(mode, on: server, handler: wireMVCServed, services: wireMVCServices, servicePolicy: services, runTests: runTests)`
+
+Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`bootstrapGeneratesTestServerEntry`, `bootstrapEntryGeneratesMain`).
+
 ### Requirement: The mode carries the server and the client that reaches it
 `WireMVCTestMode<Server>` SHALL hold a server factory, a client factory and a default services policy.
 `.inProcess` SHALL build an `InProcessServer` with default services `.skip`. `.server(_:)` SHALL require
