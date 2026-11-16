@@ -155,7 +155,7 @@ Pinned by: `Tests/WireMVCCodegenTests/EffectMarkerTests.swift` (`plain`, `throwi
 ### Requirement: A controller's routes register in declaration order
 The generated witness SHALL emit one `builder.register` call per route in the order the route
 functions are declared in the controller body. The order of controllers within the generated file
-is specified in build-plugins-and-routegen-cli.
+is specified in [build-plugins-and-routegen-cli](../build-plugins-and-routegen-cli/spec.md).
 
 #### Scenario: two routes on one controller
 - **WHEN** `@Controller("/todos")` declares `@Get("/{id}")` and then `@Get("/{id}/raw")`
