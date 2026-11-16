@@ -27,7 +27,9 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
     case errorResponseUnresolvedMapping(String)
     case errorResponseDuplicateType(type: String, scope: String)
     case errorResponseCatchAllNotLast(scope: String)
-    case notFoundNotRaw(String)
+    case notFoundWithoutResponse(String)
+    case notFoundPathBinding(String, parameter: String)
+    case notFoundRouteCoding(String)
     case globalMiddlewareUnsupportedArgument(String)
     case multipleTestingKeys(String, first: String)
     case redundantCodingOverride(String, scope: String)
@@ -84,8 +86,12 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
             "@ErrorResponse maps '\(type)' more than once at \(scope) scope — each error type needs a distinct mapping at a scope (a route entry overrides a controller entry for the same type)"
         case .errorResponseCatchAllNotLast(let scope):
             "the @ErrorResponse Swift.Error catch-all must be the last error entry at \(scope) scope — a mapping listed after it can never be reached"
-        case .notFoundNotRaw(let name):
-            "@NotFound handler '\(name)' must be @RawRoute — the fallback writes the response directly (no matched route to decode/encode against). Add @RawRoute and take the response sender."
+        case .notFoundWithoutResponse(let name):
+            "@NotFound handler '\(name)' does not say how it responds — annotate it with a response mode (e.g. @JSONResponse(status: .notFound) or @ResponseStatus(.notFound)), return a (status:headers:) tuple, or mark it @RawRoute to write the response itself"
+        case .notFoundPathBinding(let name, let parameter):
+            "@NotFound handler '\(name)' binds '@Path \(parameter)', but the fallback answers requests that matched no route, so there is no template and no path parameter to bind — read the path off the request with a @RawRoute handler, or drop the binding"
+        case .notFoundRouteCoding(let name):
+            "@Coding on the @NotFound handler '\(name)' is not supported — the fallback encodes and decodes with the app's coding, so put @Coding on the @WireMVCBootstrap type instead"
         case .multipleTestingKeys(let reference, let first):
             "the keyed test harness serves one TestingKey per target, and '\(first)' is already this target's key — a suite passing '\(reference)' would be served '\(first)''s variant graph instead, silently. Move '\(reference)' to its own test target, or fold its @BindType markers into '\(first)'. (Serving several variants from one target is deferred — see swift-wire/swift-wire#336.)"
         case .redundantCodingOverride(let reference, let scope):
@@ -158,7 +164,9 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
         case .errorResponseUnresolvedMapping: id = "errorResponseUnresolvedMapping"
         case .errorResponseDuplicateType: id = "errorResponseDuplicateType"
         case .errorResponseCatchAllNotLast: id = "errorResponseCatchAllNotLast"
-        case .notFoundNotRaw: id = "notFoundNotRaw"
+        case .notFoundWithoutResponse: id = "notFoundWithoutResponse"
+        case .notFoundPathBinding: id = "notFoundPathBinding"
+        case .notFoundRouteCoding: id = "notFoundRouteCoding"
         case .globalMiddlewareUnsupportedArgument: id = "globalMiddlewareUnsupportedArgument"
         case .multipleTestingKeys: id = "multipleTestingKeys"
         case .redundantCodingOverride: id = "redundantCodingOverride"

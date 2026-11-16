@@ -415,13 +415,19 @@ func middlewareFactoryConstructions(
     return (constructions, diagnostics)
 }
 
-/// The `builder.registerNotFound { … }` for a `@WireMVCBootstrap`'s fallback: the
-/// `@NotFound` method rendered through the raw-route machinery (subject = the `@main`'s `bootstrap`
-/// local), or a synthesised plain 404 when none is declared. The fallback is registered before
-/// `finalize()`, so it's a real route the global tiers fold into. Any `@NotFound` diagnostics are
-/// surfaced through `diagnostics`.
+/// The `builder.registerNotFound { … }` for a `@WireMVCBootstrap`'s fallback: the `@NotFound` method,
+/// raw or typed, called through the generated entry's `bootstrap` local, or a synthesised plain 404 when
+/// none is declared. The fallback is registered before `finalize()`, so it's a real route the global tiers
+/// fold into. Any `@NotFound` diagnostics are surfaced through `diagnostics`.
+///
+/// `discoveredBindings` and `discoveredModes` are what a typed fallback's parameters and response
+/// annotation are read against, exactly as a route's are; `globalErrorMappings` is the Bootstrap's own
+/// `@ErrorResponse` tier, which a typed fallback consults after its route-scope entries.
 func renderNotFoundRegistration(
-    bootstrap: ControllerDeclaration
+    bootstrap: ControllerDeclaration,
+    discoveredBindings: [String: DeclaredRequestBinding] = [:],
+    discoveredModes: [String: DeclaredResponseMode] = [:],
+    globalErrorMappings: [ErrorMapping] = []
 ) -> (registration: String, diagnostics: [RouteCodegenDiagnostic]) {
     // Binds the context and resolves, like every other route: a global `@Middleware` contributing a header
     // must reach the 404 too, and this is the fallback *most* apps get — the authored `@NotFound` is the
@@ -439,12 +445,26 @@ func renderNotFoundRegistration(
     guard let notFound = bootstrap.functions.first(where: hasNotFoundAttribute) else {
         return (synth404, [])
     }
-    var generator = RouteBlockGenerator(subjectAccessor: "", factoryKeys: [], globalErrorMappings: [])
+    var generator = RouteBlockGenerator(
+        subjectAccessor: "",
+        factoryKeys: [],
+        discoveredBindings: discoveredBindings,
+        discoveredModes: discoveredModes,
+        globalErrorMappings: globalErrorMappings
+    )
     guard let registration = generator.notFoundRegistration(function: notFound, subjectExpression: "bootstrap")
     else {
         return (synth404, generator.diagnostics)
     }
-    return (registration, generator.diagnostics)
+    // A typed fallback reads the app's coding off a local, bound here rather than inside the closure so the
+    // closure captures a `Sendable` value instead of the graph. Bound only when the fallback reads it — an
+    // unread local is a warning in generated code the consumer cannot silence.
+    guard registration.contains(RouteBlockGenerator.notFoundCodingLocal) else {
+        return (registration, generator.diagnostics)
+    }
+    let coding =
+        "let \(RouteBlockGenerator.notFoundCodingLocal) = \(bootstrapAppCodingExpression(bootstrap: bootstrap))"
+    return (coding + "\n" + registration, generator.diagnostics)
 }
 
 /// The `builder.registerMethodNotAllowed { … }` every bootstrap app gets — the `405` sibling of

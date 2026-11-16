@@ -208,6 +208,40 @@ let package = Package(
             swiftSettings: proposalSettings,
             plugins: [.plugin(name: "WireMVCBuildPlugin", package: "wire-mvc")]
         ),
+        // A third `@WireMVCBootstrap` app, whose `@NotFound` is **typed** (`@JSONResponse`) rather than raw or
+        // synthesised — so the fallback goes through the same terminal a route does, with no template.
+        .executableTarget(
+            name: "WireMVCTypedFallbackExample",
+            dependencies: [
+                .product(name: "WireMVC", package: "wire-mvc"),
+                .product(name: "WireMVCRouter", package: "wire-mvc"),
+                .product(name: "Wire", package: "swift-wire"),
+                .product(name: "HTTPAPIs", package: "swift-http-api-proposal"),
+                .product(name: "HTTPTypes", package: "swift-http-types"),
+                .product(name: "NIOHTTPServer", package: "swift-http-server"),
+                .product(name: "Logging", package: "swift-log"),
+                .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
+            ],
+            swiftSettings: proposalSettings,
+            plugins: [.plugin(name: "WireMVCBuildPlugin", package: "wire-mvc")]
+        ),
+        .testTarget(
+            name: "WireMVCTypedFallbackExampleTests",
+            dependencies: [
+                "WireMVCTypedFallbackExample",
+                .product(name: "WireMVCTesting", package: "wire-mvc"),
+                .product(name: "WireMVC", package: "wire-mvc"),
+                .product(name: "WireMVCRouter", package: "wire-mvc"),
+                .product(name: "Wire", package: "swift-wire"),
+                .product(name: "HTTPAPIs", package: "swift-http-api-proposal"),
+                .product(name: "HTTPTypes", package: "swift-http-types"),
+                .product(name: "NIOHTTPServer", package: "swift-http-server"),
+                .product(name: "Logging", package: "swift-log"),
+                .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
+            ],
+            swiftSettings: proposalSettings,
+            plugins: [.plugin(name: "WireMVCBuildPlugin", package: "wire-mvc")]
+        ),
         .testTarget(
             name: "WireMVCBootstrapExampleTests",
             dependencies: [

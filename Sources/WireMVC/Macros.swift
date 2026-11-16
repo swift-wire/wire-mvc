@@ -142,11 +142,26 @@ public let wireMVCBootstrapAlias = WireAdapterAnnotationV1(
 public macro WireMVCBootstrap() = #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
 
 /// Marks a method on the `@WireMVCBootstrap` composition root as the **fallback** handler for unmatched
-/// requests (any method, any path) — the router dispatches to it instead of its built-in 404. It uses
-/// the same annotations a route handler does (in practice `@RawRoute`, to write the response directly);
-/// `@Path` is unavailable (there's no matched template). The generated `@main` registers it via
-/// `registerNotFound` *before* `finalize()`, so it's a real route — the global middleware/error tiers
-/// fold into it, and being DI-capable it can use the Bootstrap's `@Inject`ed deps. If
+/// requests (any method, any path) — the router dispatches to it instead of its built-in 404.
+///
+/// It takes the annotations a route handler does, in either of a route's two forms:
+///
+/// - **Typed** — a response annotation (`@JSONResponse(status: .notFound)`, `@ResponseStatus(.notFound)`,
+///   `@HTMLResponse`, or a mode declared with `@ResponseMode`), or a `(status:headers:)` tuple return. The
+///   response goes through the same terminal a route's does, so it states its `Content-Length`, carries
+///   what a global `@Middleware` contributed, and maps a throw through the handler's own `@ErrorResponse`
+///   entries and then the composition root's. `@Query`, `@Header` and body bindings bind as they do on a
+///   route; `@Path` is a diagnostic, because an unmatched request has no template to bind it from. The
+///   handler encodes with the app's coding; a `@Coding` on the method itself is a diagnostic.
+/// - **Raw** — `@RawRoute`, writing the response itself through the sender, with no encoding and no error
+///   mapping.
+///
+/// The bare form states no response mode, and is a diagnostic: name the response, or mark it raw. Answer
+/// with a 404 status deliberately — a bare `@JSONResponse` means `200`, which is what a single-page app's
+/// fallback wants and an API's does not.
+///
+/// The generated `@main` registers it via `registerNotFound` *before* `finalize()`, so it's a real route —
+/// the global middleware tier wraps it, and being DI-capable it can use the Bootstrap's `@Inject`ed deps. If
 /// no method carries `@NotFound`, the plugin synthesises a plain 404 fallback (still fold-able). A
 /// **marker** — it expands to nothing; the plugin reads it.
 @attached(peer)

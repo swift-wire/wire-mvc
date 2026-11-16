@@ -156,8 +156,10 @@ struct GlobalMiddlewareHeaderTests {
         }
     }
 
-    /// The `@NotFound` fallback must be `@RawRoute`, so before the sender wrapper it was the one response
-    /// that could never carry a global header — exactly where CORS or a security header is wanted.
+    /// This app's `@NotFound` fallback is `@RawRoute`, so it writes its own head and has no outcome for a
+    /// contribution to land in. Before the sender wrapper it was the one response that could never carry a
+    /// global header — exactly where CORS or a security header is wanted. The typed fallback is
+    /// `WireMVCTypedFallbackExample`'s.
     @Test func globalContributionReachesTheNotFoundFallback() async throws {
         try await withClient { client in
             let response = try await client.get("/no/such/route")

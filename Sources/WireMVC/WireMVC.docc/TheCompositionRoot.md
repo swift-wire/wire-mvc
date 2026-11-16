@@ -27,10 +27,8 @@ struct AppBootstrap {
     func mountIntrospectionAt() -> String? { "/wiring" }
 
     /// Optional: the app's own fallback. Without one, a plain 404 is synthesised.
-    @NotFound @RawRoute
-    func noRoute<Sender: HTTPResponseSender & ~Copyable>(
-        request: HTTPRequest, responseSender: consuming sending Sender
-    ) async throws { … }
+    @NotFound @JSONResponse(status: .notFound)
+    func noRoute() -> Problem { Problem(detail: "no route matches this request") }
 }
 ```
 
@@ -62,6 +60,34 @@ In order, and worth reading once because the rest follows from it:
 Step 5 is the one worth pausing on. A fallback is the response nobody declares, and therefore the
 easiest place to lose the header fields a global middleware contributed. Registering it as a real
 route rather than as a special case is what stops that being a per-application mistake.
+
+## Writing the fallback
+
+A `@NotFound` method is written the way a route is, in either of a route's two forms.
+
+**Typed**, as above, with a response annotation or a `(status:headers:)` tuple return. It is
+emitted through the same terminal a route is, so it keeps that terminal's guarantees with no
+template behind it: the body is encoded with the app's coding, the response states its
+`Content-Length`, and a throw maps through the method's own `@ErrorResponse` entries and then the
+composition root's. `@Query`, `@Header` and body bindings work as they do on a route. `@Path` is a
+build error — an unmatched request has no template to bind it from — and so is a `@Coding` on the
+method, since the fallback has only the app's coding to read.
+
+**Raw**, with `@RawRoute`, when the fallback should write the response itself:
+
+```swift
+@NotFound @RawRoute
+func noRoute<Sender: HTTPResponseSender & ~Copyable>(
+    request: HTTPRequest, responseSender: consuming sending Sender
+) async throws { … }
+```
+
+A raw fallback maps no errors and states no length unless it writes one, exactly like any other
+raw route. A method marked `@NotFound` with neither form says nothing about how it responds, and
+is a build error.
+
+Say the status. A bare `@JSONResponse` answers `200`, which is right for a single-page app that
+serves its shell for every unknown path and wrong for an API.
 
 ## The pre-graph step
 
