@@ -15,6 +15,28 @@ Documentation: [TheCompositionRoot](../../../Sources/WireMVC/WireMVC.docc/TheCom
 
 ## Requirements
 
+### Requirement: The root's program entry is a generated `@main` type
+For a program consumer, WireMVCRouteGen SHALL emit the root's entry as `@main struct
+_WireMVCBootstrapEntry` whose `static func main() async throws` runs the build sequence below and
+serves with `WireMVC.serve`. "The generated entry" in this spec means that type. For a test consumer
+WireMVCRouteGen SHALL instead emit a `.wiremvc(_:)` suite factory that inlines the same build sequence
+from `Wire.bootstrap` to `wrapGlobalMiddleware`. Within that sequence only the server line differs: the
+suite creates its server from its mode, not from `createServer()`. Outside it, the suite calls
+`prepare()` through `WireMVCTesting.preparedOnce` and hands the served handler to
+`WireMVCTesting.runSuite` rather than `WireMVC.serve`. Which form is emitted, and the
+suite factory itself, are specified in testing-harness; the file the entry is written to is specified
+in build-plugins-and-routegen-cli.
+
+#### Scenario: the program entry
+- **WHEN** the entry is rendered for `@Singleton @WireMVCBootstrap struct AppBootstrap`
+- **THEN** it begins `@main`, `struct _WireMVCBootstrapEntry {`, `static func main() async throws {`
+
+#### Scenario: the suite factory shares the build
+- **WHEN** the test entry is rendered for the same root
+- **THEN** its lines from `let graph = try await Wire.bootstrap()` to `wrapGlobalMiddleware(handler)` match the program entry's except `let server = WireMVCContextServer(mode.makeTestServer())`
+
+Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`bootstrapEntryGeneratesMain`, `bootstrapGeneratesTestServerEntry`).
+
 ### Requirement: `@WireMVCBootstrap` lifts the root's peers onto a global-middleware proxy
 The package SHALL declare `wireMVCBootstrapAlias` as a `WireAdapterAnnotationV1` for annotation
 `WireMVCBootstrap` with capability `.liftsPeersToProxy(proxyTypePrefix: "_WireGlobalMiddleware_",
@@ -41,7 +63,8 @@ Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`g
 ### Requirement: Only the first root in the input is composed
 WireMVCRouteGen SHALL find `@WireMVCBootstrap` on a `struct`, `class` or `actor` at any nesting depth,
 and SHALL generate the entry, the global-middleware extension, the global `@ErrorResponse` tier and
-the fallback from the first such declaration in input order only.
+the fallback from the first such declaration in input order only. Every later root is ignored without
+a diagnostic (https://github.com/swift-wire/wire-mvc/issues/202).
 
 #### Scenario: two roots
 - **WHEN** two files each declare a `@WireMVCBootstrap` type
@@ -49,10 +72,11 @@ the fallback from the first such declaration in input order only.
 
 Pinned by: nothing yet.
 
-### Requirement: `createServer()` supplies the server, wrapped for request context
+### Requirement: `createServer()` supplies the server, which the entry wraps in `WireMVCContextServer`
 The root SHALL declare `createServer()`. The generated entry SHALL bind `let server =
 WireMVCContextServer(bootstrap.createServer())`, prefixing the call with `try` exactly when
-`createServer` is declared `throws`.
+`createServer` is declared `throws`. `WireMVCContextServer` and the per-request courier it puts on are
+specified in [response-headers](../response-headers/spec.md).
 
 #### Scenario: a throwing factory
 - **WHEN** the root declares `func createServer() throws -> NIOHTTPServer`
