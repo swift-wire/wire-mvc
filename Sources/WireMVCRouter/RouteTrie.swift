@@ -226,7 +226,8 @@ enum RouteResolution: Sendable, Equatable {
     case matched(index: Int, parameters: [String: Substring])
     /// The path named a node carrying routes, but none for this method. Answered `405` with `Allow`.
     ///
-    /// `allowed` is deduplicated and sorted, so the header is deterministic for a given registration set
+    /// `allowed` includes `HEAD` wherever it includes `GET`, since a `GET` route answers `HEAD` too. It is
+    /// deduplicated and sorted, so the header is deterministic for a given registration set
     /// rather than dependent on the order routes happened to be registered in.
     case methodNotAllowed(allowed: [HTTPRequest.Method])
     /// Nothing matched the path at all. Answered `404`.
@@ -257,7 +258,32 @@ struct FrozenRouteTrie: Sendable {
     let trailingSlash: TrailingSlashPolicy
     let nodes: [Node]
 
+    /// Resolve a request, answering `HEAD` from the path's `GET` route when it has no `HEAD` route of its own.
+    ///
+    /// RFC 9110 §9.3.2 has `HEAD` answered exactly as `GET` would be, without the content, and §9.1 expects
+    /// a server that serves `GET` on a resource to serve `HEAD` on it too. So a `HEAD` is first resolved as
+    /// itself — an explicit `@Head` route wins wherever the usual precedence would let it — and only a
+    /// request that matches no `HEAD` route is resolved again as `GET`. Hummingbird, Vapor, axum and Go's
+    /// `net/http` all imply `HEAD` the same way.
+    ///
+    /// The body is not the router's concern: a `GET` handler answering a `HEAD` writes its response as it
+    /// always does, and `WireMVCResponseSender` — which every route on the native path is handed — keeps
+    /// the head and drops the body, because it sees the request's method too.
+    ///
+    /// The second walk is paid only by a `HEAD` with no `HEAD` route; a `GET` resolves exactly as before.
     func resolve(method: HTTPRequest.Method, path: String) -> RouteResolution {
+        let resolution = resolveExactly(method: method, path: path)
+        guard method == .head else { return resolution }
+        if case .matched = resolution { return resolution }
+        let asGet = resolveExactly(method: .get, path: path)
+        if case .matched = asGet { return asGet }
+        // Neither matched. The two walks reach the same node, so either `methodNotAllowed` carries the same
+        // `Allow`; `notFound` stays `notFound`.
+        return resolution
+    }
+
+    /// Resolve `method` against the registered routes and nothing else — no implied methods.
+    private func resolveExactly(method: HTTPRequest.Method, path: String) -> RouteResolution {
         let requestPath = Self.stripQuery(path)
         // Checked before splitting, because splitting is what erases the distinction: omitting empty
         // segments is why `/users/` ever looked like `/users`.
@@ -342,7 +368,8 @@ struct FrozenRouteTrie: Sendable {
         return .methodNotAllowed(allowed: Self.allowedMethods(of: routes))
     }
 
-    /// The distinct methods registered at a node, in a stable order.
+    /// The distinct methods registered at a node, in a stable order — with `HEAD` wherever `GET` is, since
+    /// ``resolve(method:path:)`` answers it there.
     ///
     /// The walk is greedy and does not backtrack — a literal child wins over the parameter edge and the
     /// search never returns — so these are the methods of the node the path actually reached, which is
@@ -357,6 +384,10 @@ struct FrozenRouteTrie: Sendable {
         var allowed: [HTTPRequest.Method] = []
         for route in routes where seen.insert(route.method).inserted {
             allowed.append(route.method)
+        }
+        // An `Allow` that omitted it would tell a client the method is refused on a path that serves it.
+        if seen.contains(.get), seen.insert(.head).inserted {
+            allowed.append(.head)
         }
         return allowed.sorted { $0.rawValue < $1.rawValue }
     }

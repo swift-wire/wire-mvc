@@ -23,13 +23,13 @@ import WireMVC
 private struct EchoHandler: HTTPServerRequestHandler {
     typealias RequestContext = WireMVCContext<InProcessRequestContext>
     typealias Reader = WireMVCRequestReader<InProcessReader>
-    typealias ResponseSender = InProcessResponseSender
+    typealias ResponseSender = WireMVCResponseSender<InProcessResponseSender>
 
     func handle(
         request: HTTPRequest,
         requestContext: consuming WireMVCContext<InProcessRequestContext>,
         reader: consuming sending WireMVCRequestReader<InProcessReader>,
-        responseSender: consuming sending InProcessResponseSender
+        responseSender: consuming sending WireMVCResponseSender<InProcessResponseSender>
     ) async throws {
         // `collect(into:maximumSize:)` — the growing overload `WireMVCRequest.collectBody` uses. The
         // capped `collect(into:)` treats the buffer's *initial* free capacity as a hard limit, so an empty
@@ -65,13 +65,13 @@ private struct EchoHandler: HTTPServerRequestHandler {
 private struct SilentHandler: HTTPServerRequestHandler {
     typealias RequestContext = WireMVCContext<InProcessRequestContext>
     typealias Reader = WireMVCRequestReader<InProcessReader>
-    typealias ResponseSender = InProcessResponseSender
+    typealias ResponseSender = WireMVCResponseSender<InProcessResponseSender>
 
     func handle(
         request: HTTPRequest,
         requestContext: consuming WireMVCContext<InProcessRequestContext>,
         reader: consuming sending WireMVCRequestReader<InProcessReader>,
-        responseSender: consuming sending InProcessResponseSender
+        responseSender: consuming sending WireMVCResponseSender<InProcessResponseSender>
     ) async throws {}
 }
 

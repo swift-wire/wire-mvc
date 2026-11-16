@@ -94,6 +94,11 @@ and why; each item was additive and testable through `RouteTrie`/`FrozenRouteTri
    context crosses the bridge intact on the path WireMVC uses (swift-wire's
    RemainingSurfaceWork.md).
    A 405 that matched the native path would be one more item on the *for* side, not a reason on its own.
+   **`HEAD` is implied by `GET`** ([#261](https://github.com/swift-wire/wire-mvc/issues/261)). A `HEAD` with
+   no `HEAD` route on the reached node resolves to the node's `GET` route, so `Allow` lists `HEAD` wherever
+   it lists `GET`; an explicit `HEAD` route is found first and wins. The router only picks the route: the
+   body is withheld by `WireMVCResponseSender`, the sender every native route is handed, because what a
+   server does with body bytes on a `HEAD` response varies by server and protocol.
 2. ~~**Full precedence.**~~ **Shipped, in two halves.**
 
    The half that was separable is done, and it was hiding a silent defect rather than a missing feature.

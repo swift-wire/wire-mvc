@@ -365,6 +365,25 @@ extension ServerTransportRouteBuilder {
             } onCancel: {
                 task.cancel()
             }
+            // The host's router decides whether a `HEAD` reaches a `GET` route; this bridge does not route.
+            // What it can guarantee is that a response to a `HEAD` reaches the host without a body, as the
+            // native path's `WireMVCResponseSender` guarantees there: the head keeps the length the `GET`
+            // would have stated, and a streaming handler is cancelled rather than left producing bytes that
+            // nothing reads.
+            if request.method == .head {
+                switch start {
+                case .complete(var head, let responseBytes):
+                    head.stateLengthIfAbsent(responseBytes.count)
+                    return (head, nil)
+                case let .streaming(head):
+                    task.cancel()
+                    return (head, nil)
+                case let .failed(error):
+                    throw error
+                case .finishedWithoutResponse:
+                    return (HTTPResponse(status: .internalServerError), nil)
+                }
+            }
             switch start {
             case let .complete(head, responseBytes):
                 return (head, responseBytes.isEmpty ? nil : HTTPBody(Data(responseBytes)))

@@ -145,6 +145,16 @@ public struct TestClient: Sendable {
         }
     }
 
+    /// The host and port a live mode's server is bound to, or `nil` for `.inProcess`, which has no socket.
+    ///
+    /// For a test that has to speak HTTP below `URLSession`. Some properties of a response are invisible
+    /// through it — whether a `HEAD` response really carried no body, or a connection stayed usable for the
+    /// next request — because `URLSession` hides framing by design. A raw socket to this address sees them.
+    public var loopbackAddress: (host: String, port: Int)? {
+        guard case let .loopback(host, port, _) = transport else { return nil }
+        return (host, port)
+    }
+
     /// This client's address over a **fresh** session — the isolation boundary for a `withClient` scope.
     ///
     /// Per *suite* is not enough, which was established by measurement rather than reasoning: tests inside a

@@ -61,6 +61,18 @@ final class MockTransport: ServerTransport, @unchecked Sendable {
         return (HTTPResponse(status: .notFound), [])
     }
 
+    /// A `HEAD` the way Vapor's router delivers one: dispatched to the path's `GET` registration, with the
+    /// request still saying `HEAD`. The bridge does not route, so this is the shape it has to answer.
+    func sendHeadToGetRoute(_ path: String) async throws -> (HTTPResponse, HTTPBody?) {
+        let requestSegments = Self.segments(path)
+        for registration in registrations where registration.method == .get {
+            guard let params = Self.match(template: registration.template, path: requestSegments) else { continue }
+            let request = HTTPRequest(method: .head, scheme: nil, authority: nil, path: path)
+            return try await registration.handler(request, nil, .init(pathParameters: params))
+        }
+        return (HTTPResponse(status: .notFound), nil)
+    }
+
     /// Like `send`, but returns the response `HTTPBody` **uncollected** so a test can pull chunks
     /// incrementally — collecting (as `send` does) would hang on an unbounded streamed body.
     func sendStreaming(
@@ -585,6 +597,39 @@ struct AdapterTests {
 
         let (miss, _) = try await transport.send(.get, "/nope")
         #expect(miss.status == .notFound)
+    }
+
+    /// A response to a `HEAD` reaches the host with no body, whatever the route wrote. The host's router
+    /// decides whether a `HEAD` reaches a `GET` route; once one does, the bridge withholds the body and keeps
+    /// the length the `GET` would have stated, as the native path's `WireMVCResponseSender` does.
+    @Test
+    func aHeadReachesTheHostWithoutABody() async throws {
+        let transport = MockTransport()
+        try WireMVCServerTransport.apply(TestGraph(), to: transport)
+
+        let (get, _) = try await transport.sendStreaming(.get, "/hello")
+        let (response, body) = try await transport.sendHeadToGetRoute("/hello")
+        #expect(response.status == get.status)
+        #expect(response.headerFields == get.headerFields)
+        #expect(body == nil)
+    }
+
+    /// A streaming route answering a `HEAD` sends its head and no body, and its handler is cancelled rather
+    /// than left producing events nothing will read.
+    @Test
+    func aHeadToAStreamingRouteCancelsTheProducer() async throws {
+        let source = CountingEventSource()
+        let transport = MockTransport()
+        try WireMVCServerTransport.apply(StreamingGraph(source: source), to: transport)
+
+        let (response, body) = try await transport.sendHeadToGetRoute("/events")
+        #expect(response.status == .ok)
+        #expect(body == nil)
+        // Settled first: an event already being produced when the cancellation landed may still be counted.
+        try await Task.sleep(for: .milliseconds(50))
+        let before = await source.producedCount
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(await source.producedCount == before, "the handler kept producing after the HEAD was answered")
     }
 
     /// A middleware's contributed header field reaches the response **through the bridge**.

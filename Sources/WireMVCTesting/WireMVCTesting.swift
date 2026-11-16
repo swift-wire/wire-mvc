@@ -224,7 +224,7 @@ public enum WireMVCTesting {
         ModeServer.ResponseSender.Writer: ~Copyable,
         Handler.RequestContext == WireMVCContext<ModeServer.RequestContext>,
         Handler.Reader == WireMVCRequestReader<ModeServer.Reader>,
-        Handler.ResponseSender == ModeServer.ResponseSender
+        Handler.ResponseSender == WireMVCResponseSender<ModeServer.ResponseSender>
     {
         // The whole serving window is marked active, so the generated keyed dispatch will resolve doubles for
         // requests this suite drives — and only for those. See ``WireMVCTesting/harnessIsActive``.

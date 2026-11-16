@@ -106,7 +106,7 @@ struct SynthesisedMissFramingTests {
     func synthesisedMethodNotAllowedStatesZeroLengthBesideAllow() async throws {
         let response = try await head(for: .post, path: "/users")
         #expect(response?.status == .methodNotAllowed)
-        #expect(response?.headerFields[.allow] == "GET")
+        #expect(response?.headerFields[.allow] == "GET, HEAD")
         #expect(response?.headerFields[.contentLength] == "0")
     }
 }

@@ -153,6 +153,13 @@ public macro WireMVCBootstrap() = #externalMacro(module: "WireMVCMacros", type: 
 public macro NotFound() = #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
 
 // ── HTTP verb markers (peer, no-op — read by `@Controller`) ──
+//
+// `HEAD` needs no marker to be served: the router answers a `HEAD` from the path's `@Get` route, with the
+// `GET`'s status and header fields and no body (RFC 9110 §9.3.2). `@Head` is for the route whose `HEAD`
+// should differ from its `GET` — one that can state a length or a validator without computing the body — and
+// it beats the implied answer wherever the usual route precedence lets it match. A `@Head` handler's body is
+// withheld like any other `HEAD` response's, so the natural shape is a bodiless one: `@ResponseStatus`, or a
+// `(status:headers:)` tuple.
 
 @attached(peer)
 public macro Get(_ path: String) = #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
@@ -174,6 +181,10 @@ public macro Patch() = #externalMacro(module: "WireMVCMacros", type: "RouteMarke
 public macro Delete(_ path: String) = #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
 @attached(peer)
 public macro Delete() = #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
+@attached(peer)
+public macro Head(_ path: String) = #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
+@attached(peer)
+public macro Head() = #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
 
 /// Marks a type as a request binding, and states what the code generator must do for it.
 ///

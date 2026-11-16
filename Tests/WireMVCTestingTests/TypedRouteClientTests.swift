@@ -21,13 +21,13 @@ import WireMVC
 private struct RouteEchoHandler: HTTPServerRequestHandler {
     typealias RequestContext = WireMVCContext<InProcessRequestContext>
     typealias Reader = WireMVCRequestReader<InProcessReader>
-    typealias ResponseSender = InProcessResponseSender
+    typealias ResponseSender = WireMVCResponseSender<InProcessResponseSender>
 
     func handle(
         request: HTTPRequest,
         requestContext: consuming WireMVCContext<InProcessRequestContext>,
         reader: consuming sending WireMVCRequestReader<InProcessReader>,
-        responseSender: consuming sending InProcessResponseSender
+        responseSender: consuming sending WireMVCResponseSender<InProcessResponseSender>
     ) async throws {
         var received = UniqueArray<UInt8>()
         _ = try await reader.collect(into: &received, maximumSize: 1_000_000)
@@ -63,7 +63,7 @@ private final class WriteProgress: Sendable {
 private struct ChunkedHandler: HTTPServerRequestHandler {
     typealias RequestContext = WireMVCContext<InProcessRequestContext>
     typealias Reader = WireMVCRequestReader<InProcessReader>
-    typealias ResponseSender = InProcessResponseSender
+    typealias ResponseSender = WireMVCResponseSender<InProcessResponseSender>
 
     let progress: WriteProgress
 
@@ -71,7 +71,7 @@ private struct ChunkedHandler: HTTPServerRequestHandler {
         request: HTTPRequest,
         requestContext: consuming WireMVCContext<InProcessRequestContext>,
         reader: consuming sending WireMVCRequestReader<InProcessReader>,
-        responseSender: consuming sending InProcessResponseSender
+        responseSender: consuming sending WireMVCResponseSender<InProcessResponseSender>
     ) async throws {
         var writer = try await responseSender.send(HTTPResponse(status: .ok))
         for chunk in ["one", "two"] {

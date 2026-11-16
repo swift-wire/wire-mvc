@@ -42,7 +42,7 @@ struct FallbackTests {
         try await withClient { client in
             let response = try await client.delete("/ping")
             #expect(response.status == 405)
-            #expect(response.head?.headerFields[.allow] == "GET")
+            #expect(response.head?.headerFields[.allow] == "GET, HEAD")
         }
     }
 
@@ -57,7 +57,7 @@ struct FallbackTests {
         try await withClient { client in
             let response = try await client.delete("/ping")
             #expect(response.status == 405)
-            #expect(response.head?.headerFields[.allow] == "GET")
+            #expect(response.head?.headerFields[.allow] == "GET, HEAD")
             #expect(response.head?.headerFields[.init("x-stamp")!] == "global")
         }
     }
