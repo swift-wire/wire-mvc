@@ -52,7 +52,7 @@ served handler to `WireMVCTesting.runSuite` in place of `WireMVC.serve`.
 
 #### Scenario: the same root rendered both ways
 - **WHEN** the test entry and the `@main` are rendered for `@Singleton @WireMVCBootstrap struct AppBootstrap` declaring `func createServer() throws -> NIOHTTPServer`
-- **THEN** their lines from `let graph = try await Wire.bootstrap()` to `let wireMVCServed = graph._WireGlobalMiddleware_AppBootstrap.wrapGlobalMiddleware(handler)` are the same except `let server = WireMVCContextServer(mode.makeTestServer())`, and the test entry ends with `try await WireMVCTesting.runSuite(mode, on: server, handler: wireMVCServed, services: wireMVCServices, servicePolicy: services, runTests: runTests)`
+- **THEN** both run the same steps from `Wire.bootstrap` to `wrapGlobalMiddleware`, except that the test entry wraps `mode.makeTestServer()` in `WireMVCContextServer` where the `@main` wraps `createServer()`, and the test entry then passes the wrapped handler and the graph's services to `WireMVCTesting.runSuite`
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`bootstrapGeneratesTestServerEntry`, `bootstrapEntryGeneratesMain`).
 
