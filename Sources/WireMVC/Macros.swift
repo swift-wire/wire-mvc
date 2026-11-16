@@ -291,6 +291,32 @@ public macro HTMLResponse() = #externalMacro(module: "WireMVCMacros", type: "Rou
 public macro HTMLResponse(status: HTTPResponse.Status) =
     #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
 
+/// The route answers with a file's bytes, honouring `Range`. The handler returns a ``WireMVCFile``:
+///
+///     @Get("/media/{id}")
+///     @FileResponse
+///     @ErrorResponse(WireMVCFileError.self, .notFound)
+///     func media(@Path id: String, @Header("Range") range: String?, @Header("If-Range") ifRange: String?)
+///         throws -> WireMVCFile
+///     {
+///         try WireMVCFile(path: store.path(of: id), contentType: "video/mp4", range: range, ifRange: ifRange)
+///     }
+///
+/// A streaming route, so the bytes are read and written a chunk at a time — but everything that decides the
+/// head is done when the ``WireMVCFile`` is built, inside the mapped region: a missing file is a throw that
+/// `@ErrorResponse` maps, and a range the file cannot satisfy is a `416` head. The file states its own
+/// status (`206`, `416`) and framing fields (`Content-Length`, `Content-Range`, `Accept-Ranges`, `ETag`,
+/// `Last-Modified`) through ``WireMVCBodyProducer/head``, which win over the route's; its content type is
+/// seeded, so a route's own `@ResponseHeader(.contentType, …)` still beats it. A whole file answers with the
+/// route's status, `200` by default.
+///
+/// The typed client hands back the whole response (`client: .response`), because a file's head says as much
+/// as its bytes. `HEAD` is not answered: the router matches methods exactly, so a `@Get` route serves `GET`
+/// (swift-wire/wire-mvc#261).
+@ResponseMode(.streaming, codec: "WireMVCFileProducer", client: .response)
+@attached(peer)
+public macro FileResponse() = #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
+
 /// The route returns no body; the response carries the given status.
 @ResponseMode(.bodiless)
 @attached(peer)

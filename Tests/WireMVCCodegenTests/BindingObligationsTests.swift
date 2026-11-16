@@ -72,7 +72,11 @@ struct BindingObligationsTests {
                 == DeclaredResponseMode(terminal: .streaming, codec: "WireMVCHTMLProducer", clientBody: .text)
         )
         #expect(WireMVCBuiltIns.modes["ResponseStatus"] == DeclaredResponseMode(terminal: .bodiless, codec: nil))
-        #expect(WireMVCBuiltIns.modes.count == 3, "\(WireMVCBuiltIns.modes.keys.sorted())")
+        #expect(
+            WireMVCBuiltIns.modes["FileResponse"]
+                == DeclaredResponseMode(terminal: .streaming, codec: "WireMVCFileProducer", clientBody: .response)
+        )
+        #expect(WireMVCBuiltIns.modes.count == 4, "\(WireMVCBuiltIns.modes.keys.sorted())")
     }
 
     @Test("the obligations are read, not guessed")

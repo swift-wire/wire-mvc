@@ -198,6 +198,7 @@ it up instead of switching on annotation names:
 | --- | --- | --- | --- |
 | `@JSONResponse` | buffered | `WireMVCJSONCodec` | `.decoded` |
 | `@HTMLResponse` | streaming | `WireMVCHTMLProducer` | `.text` |
+| `@FileResponse` | streaming | `WireMVCFileProducer` | `.response` |
 | `@ResponseStatus` | bodiless | — | — |
 | `@CSVResponse` (a fixture, declared outside WireMVC) | buffered | `CSVCodec` | `.decoded` |
 
@@ -212,6 +213,9 @@ does belong to the codec, and `WireMVCBodyProducer.contentType` / `WireMVCRespon
 `(bytes, contentType)` return still carry it. It is what the *client* does with the body: `.decoded` (through
 the mode's own codec) or `.text` (undecoded). Two cases, not an open set, because there genuinely are two —
 markup is not decodable and `some HTML` is not nameable, so `@HTMLResponse`'s client hands back a `String`.
+A third, `.response`, came with `@FileResponse` (#259): a file is neither decodable nor text, and its status
+and `Content-Range` are what a test asserts, so its client hands back the whole `TestResponse`. Still a closed
+set — what a client can do with a response is decode it, read it as text, or hand it over.
 
 **`@ResponseStatus` became a mode too**, with a `.bodiless` terminal. It was going to stay a special case;
 making it an instance means the generator has **no annotation-name test left anywhere** — recognition, the

@@ -425,6 +425,75 @@ binding, the handler call, the header drain — so all of it maps through the sa
 `@JSONResponse` route uses. That is not a nicety: it is what makes the streaming tier's error handling equal
 to the buffered tier's *up to the first byte*, which is as far as any streaming design can go.
 
+## File bodies: a producer that decides the head
+
+`@FileResponse` (swift-wire/wire-mvc#259) is the tier's second shipped mode, and the first whose body
+decides part of its own head. A file answering `Range` sends `206` with `Content-Range` for a part, `416`
+for a range it cannot satisfy, and always knows its `Content-Length`. None of that is the route's to say —
+it is not known until the request's `Range` has been read against the file — and before this a streaming
+route's status could come only from the annotation or the response tuple.
+
+**What was added: `WireMVCBodyProducer.head`.** A requirement, defaulted to `WireMVCBodyHead.route` (no
+status, no fields), so `WireMVCHTMLProducer` and every producer written before it are unchanged. A
+requirement rather than an extension member because the terminal reads it through the generic `Producer`,
+where an extension member would statically dispatch to the default.
+
+**Where it is applied: `WireMVCStreamingOutcome.send`, last.** By then the terminal has folded everything
+else onto `headerFields` — `@ResponseHeader` constants, the handler's returned fields, middleware
+contributions — and seeded the producer's `contentType`. The body's head goes over all of it: a stated
+status replaces the route's, and each stated field name replaces every line of that name. One site, after
+the fold, is what makes the precedence a single rule rather than a position in four tiers.
+
+**Why the body wins, when everywhere else innermost-wins favours the route.** The fields a body states
+describe the bytes. A `206` whose `Content-Range` a middleware rewrote, or a `Content-Length` a route
+constant contradicts, is a malformed response, not a preference — and a route that wants a different
+validator or length is asking for a different body. `Content-Type` stays outside this, seeded as before,
+because a media type is the author's to restate and framing is not.
+
+**Considered and rejected: returning a status from the handler.** The response tuple already carries a
+`status:`, and a handler could compute the range itself and return `(.partialContent, headers, file)`. That
+puts RFC 9110's range rules in every handler, where they would be got wrong per route; and the tuple's
+fields fold *under* middleware, so a contribution could still overwrite `Content-Range`. The value that knows
+the bytes is the one that should say what they are.
+
+**Everything that can fail is in the initialiser.** `WireMVCFile.init` opens the file, `fstat`s it, refuses
+anything not regular, and resolves `Range` and `If-Range` — inside the handler, so inside `building`, so
+inside the mapped region. A missing file is a `WireMVCFileError` an `@ErrorResponse` maps; an unsatisfiable
+range is a `416` head with an empty body. What is left for `writeBody` is `pread`ing bytes known to be
+there, from the descriptor opened at construction, so a rename or unlink in between does not change what is
+sent. The one post-head failure left is a file that *shrinks* while being sent: the producer throws
+`WireMVCFileError.truncated` rather than finishing short of its stated length, which drops the writer
+unfinished — the proposal's abort, and the honest signal for a body that broke its promise.
+
+**POSIX, not `FileHandle`.** FoundationEssentials has no `FileHandle`, and the core builds on Linux against
+FoundationEssentials alone. `open`/`fstat`/`pread`/`close` exist on Darwin, Glibc and Musl; the only
+platform difference is the modification-time member (`st_mtimespec` on Darwin, `st_mtim` elsewhere). The
+descriptor is a small class closed in `deinit`, so `WireMVCFile` stays an ordinary copyable value — it can
+sit in a response tuple — while the descriptor is closed exactly once, including for a response abandoned
+before its body ran. `Last-Modified` is formatted by hand (civil-from-days), so no date formatter is needed
+either.
+
+**The range rules, where RFC 9110 leaves a choice.** A malformed field is ignored rather than refused (§14.2
+allows it), and that includes `last-pos < first-pos`, which §14.1.1 calls invalid rather than
+unsatisfiable. Several ranges are ignored and the whole file sent: `multipart/byteranges` is a different
+body that nothing using WireMVC has needed. `bytes=-0` and any range of an empty file are unsatisfiable.
+Positions too large for `Int64` saturate, so they read as past the end. `If-Range` uses strong comparison for
+an entity tag (a weak one never matches) and exact equality with `Last-Modified` for a date. These differ
+from silo-server's `FileServing.ByteRange`, which this was modelled on, in four places: it answered `416` to
+`last-pos < first-pos`, ignored `bytes=-0` instead of refusing it, matched `bytes=` case-sensitively, and had
+no `If-Range`.
+
+**The typed client hands back the whole response** — a third `WireMVCResponseClientBody` case, `.response`,
+beside `.decoded` and `.text`. A file is neither decodable into its return type (a `WireMVCFile` is an open
+descriptor, not a value that crosses the wire) nor text, and what a test of it asserts is the status and
+`Content-Range` as much as the bytes. `.text` would also have mangled any body that is not UTF-8.
+
+**Not done here.** `HEAD`: the router matches methods exactly, so `HEAD` to a `@Get` route is answered `405`
+with `Allow: GET` — measured against the fixture over `NIOHTTPServer`, not inferred; tracked as
+swift-wire/wire-mvc#261. Conditional `304`s
+(`If-None-Match`, `If-Modified-Since`): the validators are stated so a client or cache can use them, but not
+evaluated.
+
 ## How it is pinned
 
 The tier is exercised at two levels below the codegen, in `Fixtures`. Package settings mirror

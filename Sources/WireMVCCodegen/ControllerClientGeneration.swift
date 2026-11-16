@@ -46,7 +46,7 @@ struct ClientRoute {
     /// The full `{name}`-template path, controller prefix included.
     let pathTemplate: String
     let parameters: [ClientRouteParameter]
-    /// The handler's body type, `nil` for a bodiless route, a `.text` mode, or a raw one.
+    /// The handler's body type, `nil` for a bodiless route, a `.text` or `.response` mode, or a raw one.
     let responseType: String?
     /// A `@RawRoute`: the shim returns `TestResponse` and applies no status rule.
     let isRaw: Bool
@@ -57,6 +57,10 @@ struct ClientRoute {
 
     /// The mode hands back undecoded text — `@HTMLResponse`, and any other mode declared `client: .text`.
     var isText: Bool { mode?.clientBody == .text }
+
+    /// The mode hands back the whole response — `@FileResponse`, and any other mode declared
+    /// `client: .response`.
+    var isWholeResponse: Bool { mode?.clientBody == .response }
 }
 
 /// One binding on a typed route, as the generated method exposes it.
@@ -140,7 +144,13 @@ private func renderClientMethod(_ route: ClientRoute) -> String {
     let signature = signatureParts.joined(separator: ", ")
     let generics = route.isRaw ? "<WireMVCRawReturn: ~Copyable>" : ""
     let returns =
-        if route.isRaw { " -> WireMVCRawReturn" } else if route.isText { " -> String" } else {
+        if route.isRaw {
+            " -> WireMVCRawReturn"
+        } else if route.isText {
+            " -> String"
+        } else if route.isWholeResponse {
+            " -> TestResponse"
+        } else {
             route.responseType.map { " -> \($0)" } ?? ""
         }
 
@@ -178,6 +188,11 @@ private func renderClientMethod(_ route: ClientRoute) -> String {
     var body: String
     if route.isRaw {
         // The raw route owns its response, so the shim forwards the handler's return untouched.
+        body = "return \(call)"
+    } else if route.isWholeResponse {
+        // The whole response, by the mode's own declaration — a file's status and `Content-Range` are what a
+        // test asserts. `routeResponse` has already thrown for a non-2xx, so a `416` arrives as
+        // `WireMVCRouteError` like any other refusal.
         body = "return \(call)"
     } else if route.isText {
         // Undecoded, by the mode's own declaration — `routeResponse` has already thrown for a non-2xx.
@@ -413,7 +428,7 @@ func clientRoutes(
             wireMethod: verb.method,
             pathTemplate: pathTemplate,
             parameters: parameters,
-            responseType: (returnsValue && mode?.clientBody != .text) ? returnType : nil,
+            responseType: (returnsValue && mode?.clientBody == .decoded) ? returnType : nil,
             isRaw: false,
             mode: mode
         )
