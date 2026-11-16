@@ -4,17 +4,18 @@ How a handler's return value becomes a response, and the three ways to set a hea
 
 ## Overview
 
-A route's response annotation says how the return value is encoded. Three ship, and all three are
+A route's response annotation says how the return value is encoded. Four ship, and all four are
 declared through the same extension point a response mode declared outside WireMVC uses.
 
 ```swift
 @Get("/{id}") @JSONResponse             func get(…) async throws -> Todo
 @Get("/page") @HTMLResponse             func page(…) async throws -> some HTML
+@Get("/media/{id}") @FileResponse       func media(…) throws -> WireMVCFile
 @Delete("/{id}") @ResponseStatus(.noContent) func delete(…) async throws
 ```
 
 `@JSONResponse` encodes an `Encodable` return as a JSON body, with an optional status.
-`@ResponseStatus` is the bodiless form. `@HTMLResponse` streams.
+`@ResponseStatus` is the bodiless form. `@HTMLResponse` and `@FileResponse` stream.
 
 ## Streaming is a contract, not an optimisation
 
@@ -26,6 +27,55 @@ it truncates the response instead.
 
 HTML support lives behind the `Elementary` trait, and WireMVC's core depends on no HTML library:
 the annotation names a convention, resolved in your own module. See <doc:PackageTraits>.
+
+## Serving a file
+
+`@FileResponse` answers with a file's bytes and honours `Range`. The handler returns a
+`WireMVCFile`, built from a path, a media type, and the request's `Range` and `If-Range` values,
+which it binds as ordinary headers:
+
+```swift
+@Get("/media/{id}")
+@FileResponse
+@ErrorResponse(WireMVCFileError.self, .notFound)
+func media(
+    @Path id: String,
+    @Header("Range") range: String?,
+    @Header("If-Range") ifRange: String?
+) throws -> WireMVCFile {
+    try WireMVCFile(path: library.path(of: id), contentType: "video/mp4", range: range, ifRange: ifRange)
+}
+```
+
+Building the `WireMVCFile` opens the file and resolves the request against it, so everything that
+decides the head happens before the head is sent. A missing file is a `WireMVCFileError` thrown from
+the initialiser, mapped like any other error. A single satisfiable range answers `206` with
+`Content-Range`; a range the file cannot satisfy answers `416` with `Content-Range: bytes */size`;
+an `If-Range` that does not match the file's `ETag` or `Last-Modified` sends the whole file. A
+malformed `Range`, or one asking for several ranges, is ignored and the whole file is sent — a
+`multipart/byteranges` body is not offered.
+
+**The file's head wins over the route's.** It states its own status for a part or a refusal, and
+its own `Content-Length`, `Content-Range`, `Accept-Ranges`, `ETag` and `Last-Modified`, replacing
+any field of the same name from `@ResponseHeader`, a returned tuple or middleware: those fields
+describe the bytes, so a different value would be a malformed response, not a preference. Every
+other field folds in as usual, and the media type is *seeded*, so a route's own
+`@ResponseHeader(.contentType, …)` still beats it. A whole file answers with the route's status.
+
+The body is read and written a chunk at a time, from the descriptor opened when the value was
+built — a file renamed or unlinked after that is still the one sent. A file that shrinks while it
+is being sent aborts the response rather than finishing short of its `Content-Length`.
+
+What it does not do: answer `HEAD` (the router matches methods exactly, so a `@Get` route serves
+`GET` only — swift-wire/wire-mvc#261), and answer `304` to `If-None-Match` or `If-Modified-Since` — the validators are stated
+so a client or cache can use them, and a route that wants `304` checks the request before building
+the file.
+
+The typed client hands back the whole response, status and fields included, because a file's
+head says as much as its bytes.
+
+The same mechanism is open to any streaming mode: a `WireMVCBodyProducer` that knows its own status
+or framing states it through `head`, and the default leaves the route's untouched.
 
 ## Constant headers
 

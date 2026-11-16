@@ -39,6 +39,20 @@ public protocol WireMVCBodyProducer {
     /// `RequestBodySendable.sendBody` already returns `(bytes, contentType)` together for the same reason.
     var contentType: String? { get }
 
+    /// The parts of the response head this body decides, rather than the route — ``WireMVCBodyHead/route``
+    /// for a body that leaves the head entirely to the route, which is what every producer did before this
+    /// existed and what the default says.
+    ///
+    /// A requirement rather than an extension member so a conformer's own value is what the terminal reads
+    /// through the generic `Producer`; the extension below supplies the default.
+    ///
+    /// It exists for a body whose bytes are only known *as a range of something*: a file answering
+    /// `Range` sends `206` and `Content-Range` for a part, `416` for a range it cannot satisfy, and states
+    /// `Content-Length` because it knows it. None of that is the route's to say, because none of it is
+    /// known until the request's `Range` field has been read against the file — so it is read off the body,
+    /// once, when the head is built.
+    var head: WireMVCBodyHead { get }
+
     consuming func writeBody<W: CallerAsyncWriter & ~Copyable & ~Escapable>(
         into writer: consuming W,
         terminatedBy trailer: HTTPFields?
@@ -49,6 +63,53 @@ extension WireMVCBodyProducer {
     /// Defaulted, so a producer whose bytes have no single content type — server-sent events framed by the
     /// route, a raw stream — simply says nothing and lets the route's own `@ResponseHeader` stand.
     public var contentType: String? { nil }
+
+    /// Defaulted to ``WireMVCBodyHead/route``, so a producer that says nothing about the head — HTML, a
+    /// framed stream — leaves the route's status and fields exactly as they were.
+    public var head: WireMVCBodyHead { .route }
+}
+
+/// What a ``WireMVCBodyProducer`` decides about the response head: a status, and header fields.
+///
+/// **It describes the bytes, so it wins.** Applied after every other contributor has folded —
+/// `@ResponseHeader` constants, the handler's returned fields, middleware contributions — a stated status
+/// replaces the route's, and each stated field replaces every line of the same name. The rule is the one a
+/// content type would want if a route could not name its own, and here it cannot be otherwise: a `206`
+/// whose `Content-Range` a middleware overwrote, or a `Content-Length` a route constant contradicted, is a
+/// malformed response rather than a preference. A route that wants a different validator or length is
+/// asking for a different body, and says so by building one.
+///
+/// `Content-Type` is the exception, and stays where it was: ``WireMVCBodyProducer/contentType`` is
+/// *seeded*, so a route's own `@ResponseHeader(.contentType, …)` still beats it. A media type is the
+/// author's to restate; framing is not.
+public struct WireMVCBodyHead: Sendable, Equatable {
+    /// The status the body requires, or `nil` to answer with the route's.
+    public var status: HTTPResponse.Status?
+
+    /// Fields the body requires. Each name here replaces that name's lines from every other contributor.
+    public var headerFields: HTTPFields
+
+    public init(status: HTTPResponse.Status? = nil, headerFields: HTTPFields = HTTPFields()) {
+        self.status = status
+        self.headerFields = headerFields
+    }
+
+    /// Nothing decided: the route's status and fields stand.
+    public static let route = WireMVCBodyHead()
+
+    /// The head with this body's decisions applied over the route's.
+    func applied(
+        over status: HTTPResponse.Status,
+        _ fields: HTTPFields
+    ) -> (status: HTTPResponse.Status, headerFields: HTTPFields) {
+        guard !headerFields.isEmpty else { return (self.status ?? status, fields) }
+        var resolved = fields
+        // Every line of a stated name goes, then the stated lines go in — so a body stating one value for a
+        // field another contributor appended twice leaves exactly the body's.
+        for name in Set(headerFields.map(\.name)) { resolved[name] = nil }
+        resolved.append(contentsOf: headerFields)
+        return (self.status ?? status, resolved)
+    }
 }
 
 /// A response whose head is sent up front and whose body is then streamed by a ``WireMVCBodyProducer``.
@@ -98,7 +159,9 @@ public struct WireMVCStreamingOutcome<Producer: WireMVCBodyProducer> {
         if fields[.contentType] == nil, let contentType = producer.contentType {
             fields[.contentType] = contentType
         }
-        let writer = try await sender.send(HTTPResponse(status: status, headerFields: fields))
+        // Last, over everything above — see ``WireMVCBodyHead`` for why the body's own head wins.
+        let head = producer.head.applied(over: status, fields)
+        let writer = try await sender.send(HTTPResponse(status: head.status, headerFields: head.headerFields))
         try await producer.writeBody(into: writer, terminatedBy: trailer)
     }
 }

@@ -32,15 +32,20 @@ public enum WireMVCResponseTerminal: Sendable {
 
 /// What the generated typed client hands back for this mode.
 ///
-/// Two cases, not an open set, because there are genuinely two: either the body decodes back into the type
-/// the handler returned, or it does not decode at all and the client hands back text. The second exists for
-/// markup — an `@HTMLResponse` handler returns `some HTML`, an opaque type the client could not name even if
-/// markup were decodable, and what a test wants to assert on is the markup itself.
+/// A closed set, because there are three things a client can do with a response: decode the body back into
+/// the type the handler returned; hand back the body as text, for markup — an `@HTMLResponse` handler
+/// returns `some HTML`, an opaque type the client could not name even if markup were decodable, and what a
+/// test wants to assert on is the markup itself; or hand back the whole response, for a body whose head
+/// carries meaning the bytes do not — a file's `206` and `Content-Range`.
 public enum WireMVCResponseClientBody: Sendable {
     /// `Codec<ReturnType>.decodeResponseBody(…)` — the client gets the handler's own return type back.
     case decoded
     /// The response body as a `String`, undecoded.
     case text
+    /// The whole response — status, header fields and body bytes — undecoded. For a body whose meaning is
+    /// carried by its head as much as its bytes: a file answers `200` or `206` with a `Content-Range`, and a
+    /// test of it asserts both. `@FileResponse` declares it.
+    case response
 }
 
 /// States what a response-mode annotation *is*, on the macro declaration that introduces it.

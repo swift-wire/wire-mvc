@@ -25,6 +25,7 @@ public enum DeclaredResponseTerminal: String, Sendable {
 public enum DeclaredResponseClientBody: String, Sendable {
     case decoded
     case text
+    case response
 }
 
 /// One response mode, as its macro declaration states it.
