@@ -45,6 +45,10 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
     case bodyStreamOnStreamingResponse(String)
     case multipleResponseAnnotations(String, annotations: String)
     case bindingMissingSendConformance(binding: String, conformance: String)
+    case requestBodyLimitNotPositive(String, scope: String)
+    case requestBodyLimitDuplicate(scope: String)
+    case requestBodyLimitWithoutBody(String)
+    case requestBodyLimitOnRawRoute(String)
 
     public var message: String {
         switch self {
@@ -118,6 +122,14 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
             "the status on @\(annotation)(status:) for '\(route)' is never used — the response tuple returns a status, and a returned status wins. Drop the argument and keep the bare @\(annotation), which is what names the response mode."
         case .responseHeaderOnRawRoute(let route):
             "@ResponseHeader does not apply to the @RawRoute handler '\(route)' — a raw handler writes its own response head, so nothing here could set the field for it. Set it on the HTTPResponse the handler sends."
+        case .requestBodyLimitNotPositive(let value, let scope):
+            "@RequestBodyLimit(\(value)) at \(scope) scope accepts no body at all — the limit is a number of bytes, and it must be positive"
+        case .requestBodyLimitDuplicate(let scope):
+            "@RequestBodyLimit is written more than once at \(scope) scope — a scope states one limit; keep the one that is meant"
+        case .requestBodyLimitWithoutBody(let route):
+            "@RequestBodyLimit on '\(route)' limits a request body the route never reads — it has no body binding (@JSONBody, @BytesBody, or any @RequestBinding(.body), .readerBody or .bodyStream binding). Remove it, or bind the body"
+        case .requestBodyLimitOnRawRoute(let route):
+            "@RequestBodyLimit does not apply to the @RawRoute handler '\(route)' — a raw handler reads the body itself, so nothing here reads it under the limit. Collect it with WireMVCRequest.collectBody(of:from:maximumSize:) in the handler"
         case .globalMiddlewareUnsupportedArgument(let reference):
             "global @Middleware on a @WireMVCBootstrap root must be factory-form (@Middleware(Key), a generic-over-box @Factory @MiddlewareFactory) — a by-type or keyed-binding middleware ('\(reference)') is concrete over a fixed box and can't compose in the global chain (the router is fixed on its box type). Write it generic (factory-form), or scope it to a @Controller."
         }
@@ -176,6 +188,10 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
         case .bodyStreamOnStreamingResponse: id = "bodyStreamOnStreamingResponse"
         case .multipleResponseAnnotations: id = "multipleResponseAnnotations"
         case .bindingMissingSendConformance: id = "bindingMissingSendConformance"
+        case .requestBodyLimitNotPositive: id = "requestBodyLimitNotPositive"
+        case .requestBodyLimitDuplicate: id = "requestBodyLimitDuplicate"
+        case .requestBodyLimitWithoutBody: id = "requestBodyLimitWithoutBody"
+        case .requestBodyLimitOnRawRoute: id = "requestBodyLimitOnRawRoute"
         }
         return MessageID(domain: "WireMVC", id: id)
     }

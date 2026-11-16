@@ -902,6 +902,7 @@ struct RouteContributorGenerationTests {
                                 responseSender: responseSender,
                                 responseHeaders: wireMVCResponseHeaderDrain,
                                 collectingBodyFrom: reader,
+                                request: request,
                                 building: { requestBody in
                                     let scope = try await Path<String>.bind(name: "scope", request: request, pathParameters: pathParameters, body: requestBody, coding: wireMVCAppCoding)
                                     let query = try await Query<String>.bind(name: "q", request: request, pathParameters: pathParameters, body: requestBody, coding: wireMVCAppCoding)

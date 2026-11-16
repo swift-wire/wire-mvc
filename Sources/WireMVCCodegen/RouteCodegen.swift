@@ -186,6 +186,8 @@ struct RouteBlockGenerator {
         let controllerErrorMappings = errorMappings(from: controller.attributes, scopeLabel: "controller")
         // Controller-scope `@ResponseHeader` constants cover every route; a route naming the same field wins.
         let controllerResponseHeaders = responseHeaderEntries(from: controller.attributes, scopeLabel: "controller")
+        // Controller-scope `@RequestBodyLimit` covers every route that reads a body; a route's own wins.
+        let controllerBodyLimit = requestBodyLimit(from: controller.attributes, scopeLabel: "controller")
         controllerCoding = codingKey(from: controller.attributes)?.reference
         var blocks: [String] = []
         for function in controller.functions {
@@ -214,7 +216,8 @@ struct RouteBlockGenerator {
                 prefix: pathPrefix,
                 controllerMiddleware: controllerMiddleware,
                 controllerErrorMappings: controllerErrorMappings,
-                controllerResponseHeaders: controllerResponseHeaders
+                controllerResponseHeaders: controllerResponseHeaders,
+                controllerBodyLimit: controllerBodyLimit
             ) {
                 blocks.append(block)
             }
@@ -299,7 +302,8 @@ struct RouteBlockGenerator {
         prefix: String,
         controllerMiddleware: [String],
         controllerErrorMappings: [ErrorMapping],
-        controllerResponseHeaders: [ResponseHeaderEntry]
+        controllerResponseHeaders: [ResponseHeaderEntry],
+        controllerBodyLimit: String?
     ) -> String? {
         let path = joinPath(prefix, verb.path ?? "")
         // Caught here rather than left to the router's startup precondition: the template is a literal in
@@ -315,6 +319,7 @@ struct RouteBlockGenerator {
                     RouteCodegenDiagnostic(.responseHeaderOnRawRoute(function.name.text), at: function.name)
                 )
             }
+            diagnoseRequestBodyLimitOnRawRoute(function)
             return rawRouteBlock(function: function, verb: verb, path: path, middleware: middleware)
         }
         // Tier order is application order: controller entries first, the route's after, so the route's
@@ -329,6 +334,11 @@ struct RouteBlockGenerator {
         guard let streamsBody = validatedBodyObligations(of: function, hasBody: hasBody, mode: mode) else {
             return nil
         }
+        let bodyLimit = effectiveRequestBodyLimit(
+            of: function,
+            controllerLimit: controllerBodyLimit,
+            readsBody: hasBody || streamsBody
+        )
         guard let (binds, callArgs) = parameterBindings(of: function, path: path, hasBody: hasBody)
         else { return nil }
         let hasBinds = !binds.isEmpty
@@ -353,6 +363,7 @@ struct RouteBlockGenerator {
             emission: emission,
             hasBody: hasBody,
             streamsBody: streamsBody,
+            bodyLimit: bodyLimit,
             binds: binds,
             errorMappings: errorMappings,
             foldThreadsDoubles: foldThreadsDoubles
@@ -381,6 +392,7 @@ struct RouteBlockGenerator {
         emission: ResponseEmission,
         hasBody: Bool,
         streamsBody: Bool,
+        bodyLimit: String?,
         binds: [String],
         errorMappings: [ErrorMapping],
         foldThreadsDoubles: Bool
@@ -391,6 +403,7 @@ struct RouteBlockGenerator {
             named: emission.terminalFunction,
             hasBody: hasBody,
             streamsBody: streamsBody,
+            bodyLimit: bodyLimit,
             binds: binds,
             outcome: emission.outcome,
             scopeEntryPreamble: preamble,

@@ -236,19 +236,49 @@ extension RequestBound {
     }
 }
 
-/// Collects the request body off the streaming reader into bytes, consuming the reader. The witness
-/// calls this once per request (only for routes with a body binding) and hands the result to every
-/// binding's `bind`.
+/// Reading the request body for the generated terminals: the size limit, and the collection every collecting
+/// (`.body`) binding goes through.
 public enum WireMVCRequest {
+    /// The most a route collects of a request body unless it says otherwise with `@RequestBodyLimit`.
+    ///
+    /// A collected body is held in memory whole before any binding sees it, so this is a memory bound as much
+    /// as a policy, and it is deliberately modest. A route that takes uploads raises it for itself.
+    public static let defaultMaximumBodySize = 1_000_000
+
+    /// Refuse a request whose `Content-Length` already says its body is longer than `maximumSize`.
+    ///
+    /// Nothing is read: a server should not receive 25 MB to refuse it. A request with no `Content-Length`
+    /// (a chunked body), or one stating a length within the limit, passes, and is held to the limit while it
+    /// is read instead — the field is a claim, and the read is what enforces it. A value that is not a decimal
+    /// number is left to the read for the same reason; rejecting malformed framing is the server's job.
+    public static func refuseDeclaredLength(
+        of request: HTTPRequest,
+        over maximumSize: Int
+    ) throws(WireMVCBindingError) {
+        guard let declared = request.headerFields[.contentLength].flatMap({ Int($0) }) else { return }
+        if declared > maximumSize { throw .bodyTooLarge(maximumSize: maximumSize) }
+    }
+
+    /// Collect the request body off the streaming reader into bytes, consuming the reader. The witness calls
+    /// this once per request (only for routes with a body binding) and hands the result to every binding's
+    /// `bind`.
+    ///
+    /// A body longer than `maximumSize` is ``WireMVCBindingError/bodyTooLarge(maximumSize:)`` — 413, so the
+    /// client knows to send less rather than something else. A reader that fails for any other reason is
+    /// ``WireMVCBindingError/malformedBody``, as it always was.
     public static func collectBody<Reader: AsyncReader & ~Copyable>(
         _ reader: consuming Reader,
-        maximumSize: Int = 1_000_000
+        maximumSize: Int = defaultMaximumBodySize
     ) async throws -> [UInt8]
     where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields? {
         var buffer = UniqueArray<UInt8>()
         do {
             _ = try await reader.collect(into: &buffer, maximumSize: maximumSize)
         } catch {
+            // `collect(into:maximumSize:)` reports the limit as its own error type, on the `second` side of
+            // the `EitherError` it throws; the reader's own failures are on the `first`. That is the one
+            // distinction the caller needs, so it is the one drawn.
+            if case .second = error { throw WireMVCBindingError.bodyTooLarge(maximumSize: maximumSize) }
             throw WireMVCBindingError.malformedBody
         }
         let span = buffer.span
@@ -258,6 +288,18 @@ public enum WireMVCRequest {
             bytes.append(span[index])
         }
         return bytes
+    }
+
+    /// Collect the body of `request`, refusing it before a byte is read when its `Content-Length` is over the
+    /// limit — the form the generated collecting terminals call.
+    public static func collectBody<Reader: AsyncReader & ~Copyable>(
+        of request: HTTPRequest,
+        from reader: consuming Reader,
+        maximumSize: Int = defaultMaximumBodySize
+    ) async throws -> [UInt8]
+    where Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields? {
+        try refuseDeclaredLength(of: request, over: maximumSize)
+        return try await collectBody(reader, maximumSize: maximumSize)
     }
 }
 
@@ -271,16 +313,24 @@ public enum WireMVCBindingError: Error {
     case headerTypeMismatch(String, String)
     case unsupportedMediaType
     case malformedBody
+    /// The request body is longer than the route accepts — stated so by its `Content-Length`, or found so
+    /// while reading it. `maximumSize` is the limit it broke, in bytes.
+    ///
+    /// Not ``malformedBody``: a body can be well-formed and still too long, and the two ask the client for
+    /// different things. 422 says "send something else"; 413 says "send less".
+    case bodyTooLarge(maximumSize: Int)
 
     /// The status the generated witness sends for this failure. `@JSONBody`'s content-type rules
-    /// land here: 415 for a contradictory `Content-Type`, 422 for a malformed body; missing/
-    /// mismatched path/query/header values are 400.
+    /// land here: 415 for a contradictory `Content-Type`, 422 for a malformed body, 413 for a body longer
+    /// than the route's limit; missing/mismatched path/query/header values are 400.
     public var status: HTTPResponse.Status {
         switch self {
         case .unsupportedMediaType:
             return .unsupportedMediaType  // 415
         case .malformedBody:
             return .unprocessableContent  // 422
+        case .bodyTooLarge:
+            return .contentTooLarge  // 413
         case .missingPathParameter, .pathParameterTypeMismatch,
             .missingQueryParameter, .queryParameterTypeMismatch,
             .missingHeader, .headerTypeMismatch:
@@ -477,5 +527,36 @@ extension JSONBody: RequestBound where T: Decodable {
         } catch {
             throw WireMVCBindingError.malformedBody  // 422
         }
+    }
+}
+
+/// `@BytesBody name: [UInt8]` — the request body as it arrived, for a route whose body *is* the payload: an
+/// image, an archive, a file to store.
+///
+/// `.body`, like ``JSONBody``: the terminal collects the body for it, under the route's limit — the default
+/// ``WireMVCRequest/defaultMaximumBodySize``, or what `@RequestBodyLimit` raises it to — so an oversized
+/// upload is a 413 before the handler runs.
+///
+/// No content-type rule. What the bytes are is the route's business, and a route that cares checks
+/// `@Header("Content-Type")` or the bytes themselves; a binding that guessed would refuse the clients that
+/// send `application/octet-stream` for everything.
+///
+/// An empty body binds `[]` rather than being absent — the request-streaming tier's rule, that an empty body
+/// is one that ends at once. So an optional `[UInt8]?` parameter is never `nil`; write the non-optional form.
+@RequestBinding(.body)
+@propertyWrapper
+public struct BytesBody<T> {
+    public var wrappedValue: T
+    public init(wrappedValue: T) { self.wrappedValue = wrappedValue }
+}
+
+extension BytesBody: RequestBound where T == [UInt8] {
+    public static func bind(
+        name: String,
+        request: HTTPRequest,
+        pathParameters: [String: Substring],
+        body: [UInt8]?
+    ) async throws -> [UInt8] {
+        body ?? []
     }
 }

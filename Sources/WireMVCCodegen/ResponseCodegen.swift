@@ -234,6 +234,7 @@ extension RouteBlockGenerator {
         named terminal: String,
         hasBody: Bool,
         streamsBody: Bool,
+        bodyLimit: String? = nil,
         binds: [String],
         outcome: String,
         scopeEntryPreamble: String,
@@ -271,9 +272,22 @@ extension RouteBlockGenerator {
         // The parameter is deliberately named `reader`, shadowing the register closure's own. Every
         // `bindReader` expression already spells `reader: reader`, so the shadow is what makes the bind
         // resolve to the lent one with no change to how binds are rendered.
-        let readerArgument =
-            streamsBody
-            ? "\nlendingBodyFrom: reader," : (hasBody ? "\ncollectingBodyFrom: reader," : "")
+        //
+        // Either body shape hands the terminal the request too, so it can refuse a `Content-Length` over the
+        // limit before reading, and a route's `@RequestBodyLimit` as `maximumBodySize:`. A collected body
+        // always takes the request — its terminal applies the default limit when the route names none. A
+        // lent one takes both only when the route names a limit, which selects the overload that wraps the
+        // reader; without one the binding sees the reader unwrapped, exactly as before.
+        let limitArgument = bodyLimit.map { "\nmaximumBodySize: \($0)," } ?? ""
+        let readerArgument: String
+        if streamsBody {
+            readerArgument =
+                "\nlendingBodyFrom: reader," + (bodyLimit == nil ? "" : "\nrequest: request,\(limitArgument)")
+        } else if hasBody {
+            readerArgument = "\ncollectingBodyFrom: reader,\nrequest: request,\(limitArgument)"
+        } else {
+            readerArgument = ""
+        }
         let buildingParameter = streamsBody ? " reader in" : (hasBody ? " requestBody in" : "")
         return """
             \(scopeEntryPreamble)try await \(terminal)(
