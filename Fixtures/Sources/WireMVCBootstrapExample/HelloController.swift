@@ -58,6 +58,23 @@ package struct HelloController<G: Greeter> {
         try await responseSender.sendAndFinish(HTTPResponse(status: .ok), buffer: &body, trailer: nil)
     }
 
+    // An explicit `HEAD` route, for the reason one is ever worth writing: `HEAD /hello/bulk` would otherwise
+    // be answered by `bulk` above, which builds four mebibytes only for the sender to drop them. This states
+    // the same length without building anything — and it beats the `HEAD` the router would imply.
+    @Head("/bulk")
+    package func bulkProbe() -> (status: HTTPResponse.Status, headers: HTTPFields) {
+        (.ok, [.contentLength: String(Self.bulkSize), .init("x-answered-by")!: "bulkProbe"])
+    }
+
+    // A mapped refusal that carries a body, so a `HEAD` reaching it shows the body withheld on the error path
+    // as well as the served one.
+    @Get("/explained")
+    @JSONResponse
+    @ErrorResponse(TenantMissing.self, .unprocessableContent, { _ in Greeting(message: "no tenant") })
+    package func explained() throws -> Greeting {
+        throw TenantMissing()
+    }
+
     // Response headers, both sources at once: a route-scope constant, and a computed field returned in a
     // labelled response tuple that also picks the status. The constant is `.append`ed so the two `Vary`
     // values stay separate field lines rather than folding.

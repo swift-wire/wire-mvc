@@ -16,14 +16,22 @@ means. The table is what falls out of that.
 | Duplicate route registration | fatal at startup | fatal at startup | logged, last wins |
 | Catch-all `{name*}` | supported | refused at registration | refused at registration |
 | Ambient (task-local) context in a handler | yes | yes | yes |
+| `HEAD` to a path with only a `GET` route | answered by the `GET` route, no body | `404` unless the router opts in | answered by the `GET` route, no body |
 
 Rows 1, 2 and 6 are pinned by tests in all three runtimes of
 [wire-mvc-examples](https://github.com/swift-wire/wire-mvc-examples); rows 3 and 4 are read from
-each host's router source; row 5 is enforced by this package.
+each host's router source; row 5 is enforced by this package. Row 7's native half is pinned by
+this package's fixtures; its other two halves are read from each host's source and not yet pinned
+by a test. Hummingbird generates a `HEAD` endpoint for each `GET` only when the application builds its
+`Router` with `.autoGenerateHeadEndpoints`; without it a `HEAD` is a method mismatch, which Hummingbird
+answers `404`. Vapor's responder sends a `HEAD` with no `HEAD` route to the path's `GET` route. Either
+way WireMVC does not route a `HEAD` on the bridge, but once a host delivers one to a route — with the
+request still saying `HEAD`, as both do — the bridge sends the head alone, with the `Content-Length`
+the `GET` would state. An explicit `@Head` route registers as a `HEAD` route on every runtime.
 
 ## Two kinds of difference
 
-**Convention** — rows 1 to 4. Each runtime behaves the way its own ecosystem expects, and that is
+**Convention** — rows 1 to 4, and 7. Each runtime behaves the way its own ecosystem expects, and that is
 the point of collating rather than owning. A Hummingbird application answering Hummingbird's
 `404` is correct, and imposing WireMVC's `405` on it would be the wrong kind of consistency.
 Nothing here is a defect.

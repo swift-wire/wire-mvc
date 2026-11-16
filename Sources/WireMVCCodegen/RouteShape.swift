@@ -17,6 +17,7 @@ func routeVerbMethod(for attributeName: String) -> String? {
     case "Put": return ".put"
     case "Patch": return ".patch"
     case "Delete": return ".delete"
+    case "Head": return ".head"
     default: return nil
     }
 }

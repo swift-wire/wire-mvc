@@ -147,7 +147,8 @@ where
 /// The immutable, servable router — *is* the proposal's `HTTPServerRequestHandler`. Resolves the
 /// request path through the frozen trie (binary-searched literal children) and dispatches the matched
 /// method's handler, answers `405` with `Allow` when the path exists but the method does not, or falls
-/// back to `404`.
+/// back to `404`. A `HEAD` with no `HEAD` route is dispatched to the path's `GET` route; withholding that
+/// response's body is the sender's job, not the router's.
 public struct FrozenTrieRouter<
     RequestContext: HTTPServerCapability.RequestContext & ~Copyable,
     Reader: AsyncReader & ~Copyable & SendableMetatype,

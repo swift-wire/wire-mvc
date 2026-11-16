@@ -80,7 +80,7 @@ struct RouteTrieTests {
         // told a client its URL was wrong when its URL was right.
         var trie = RouteTrie()
         _ = trie.insert(method: .get, path: "/users")
-        #expect(trie.freeze().resolve(method: .post, path: "/users") == .methodNotAllowed(allowed: [.get]))
+        #expect(trie.freeze().resolve(method: .post, path: "/users") == .methodNotAllowed(allowed: [.get, .head]))
     }
 
     @Test func allowedMethodsAreDeduplicatedAndSorted() {
@@ -91,7 +91,7 @@ struct RouteTrieTests {
         _ = trie.insert(method: .post, path: "/users")
         _ = trie.insert(method: .get, path: "/users")
         _ = trie.insert(method: .delete, path: "/users")
-        #expect(trie.freeze().resolve(method: .put, path: "/users").allowed == [.delete, .get, .post])
+        #expect(trie.freeze().resolve(method: .put, path: "/users").allowed == [.delete, .get, .head, .post])
     }
 
     @Test func anInteriorNodeIsNotFoundRatherThanMethodNotAllowed() {
@@ -109,7 +109,7 @@ struct RouteTrieTests {
         var trie = RouteTrie()
         _ = trie.insert(method: .get, path: "/users/me")
         _ = trie.insert(method: .delete, path: "/users/{id}")
-        #expect(trie.freeze().resolve(method: .delete, path: "/users/me") == .methodNotAllowed(allowed: [.get]))
+        #expect(trie.freeze().resolve(method: .delete, path: "/users/me") == .methodNotAllowed(allowed: [.get, .head]))
     }
 
     @Test func prefixWithoutRouteReturnsNil() {
@@ -521,5 +521,82 @@ struct RouteTrieTests {
         var trie = RouteTrie()
         _ = trie.insert(method: .get, path: "/users")
         #expect(trie.freeze(trailingSlash: .strict).resolve(method: .get, path: "/nope") == .notFound)
+    }
+}
+
+/// `HEAD` (RFC 9110 §9.3.2): answered from the path's `GET` route when the path has no `HEAD` route, and
+/// listed in `Allow` wherever `GET` is. Before this the trie matched methods exactly, so a `HEAD` to a
+/// `GET`-only path was a 405 whose `Allow: GET` told the client `HEAD` was refused there.
+@Suite("RouteTrie — HEAD")
+struct RouteTrieHeadTests {
+    @Test func aHeadIsAnsweredByTheGetRoute() {
+        var trie = RouteTrie()
+        let get = trie.insert(method: .get, path: "/users/{id}").index
+        let match = trie.freeze().resolve(method: .head, path: "/users/42")
+        #expect(match.index == get)
+        #expect(match.parameters?["id"].map(String.init) == "42")
+    }
+
+    @Test func anExplicitHeadRouteBeatsTheImpliedOne() {
+        var trie = RouteTrie()
+        _ = trie.insert(method: .get, path: "/files/{name}")
+        let head = trie.insert(method: .head, path: "/files/{name}").index
+        #expect(trie.freeze().resolve(method: .head, path: "/files/a").index == head)
+    }
+
+    @Test func registeringHeadBesideGetIsNotADuplicate() {
+        var trie = RouteTrie()
+        _ = trie.insert(method: .get, path: "/files")
+        #expect(trie.insert(method: .head, path: "/files").index != nil)
+        #expect(trie.insert(method: .head, path: "/files").duplicateOf == "/files")
+    }
+
+    @Test func aHeadReachesACatchAllGetRoute() {
+        var trie = RouteTrie()
+        let get = trie.insert(method: .get, path: "/files/{path*}").index
+        let match = trie.freeze().resolve(method: .head, path: "/files/a/b")
+        #expect(match.index == get)
+        #expect(match.parameters?["path"].map(String.init) == "a/b")
+    }
+
+    @Test func aHeadMatchesAnExplicitHeadCatchAllBeforeTheImpliedGet() {
+        // Resolved as itself first, by the usual precedence, and only then as `GET`: an explicit `HEAD`
+        // catch-all is a `HEAD` route that matches, so it wins over a `GET` at the deeper literal.
+        var trie = RouteTrie()
+        _ = trie.insert(method: .get, path: "/files/a")
+        let head = trie.insert(method: .head, path: "/files/{path*}").index
+        #expect(trie.freeze().resolve(method: .head, path: "/files/a").index == head)
+    }
+
+    @Test func aGetIsNotAnsweredByAHeadRoute() {
+        var trie = RouteTrie()
+        _ = trie.insert(method: .head, path: "/probe")
+        #expect(trie.freeze().resolve(method: .get, path: "/probe") == .methodNotAllowed(allowed: [.head]))
+    }
+
+    @Test func allowListsHeadWhereverGetIsServed() {
+        var trie = RouteTrie()
+        _ = trie.insert(method: .get, path: "/users")
+        _ = trie.insert(method: .post, path: "/users")
+        #expect(trie.freeze().resolve(method: .delete, path: "/users").allowed == [.get, .head, .post])
+    }
+
+    @Test func allowListsHeadOnceWhenItIsAlsoExplicit() {
+        var trie = RouteTrie()
+        _ = trie.insert(method: .get, path: "/users")
+        _ = trie.insert(method: .head, path: "/users")
+        #expect(trie.freeze().resolve(method: .put, path: "/users").allowed == [.get, .head])
+    }
+
+    @Test func aHeadWhereThePathServesNoGetIsMethodNotAllowed() {
+        var trie = RouteTrie()
+        _ = trie.insert(method: .post, path: "/users")
+        #expect(trie.freeze().resolve(method: .head, path: "/users") == .methodNotAllowed(allowed: [.post]))
+    }
+
+    @Test func aHeadToAnUnknownPathIsNotFound() {
+        var trie = RouteTrie()
+        _ = trie.insert(method: .get, path: "/users")
+        #expect(trie.freeze().resolve(method: .head, path: "/nope") == .notFound)
     }
 }

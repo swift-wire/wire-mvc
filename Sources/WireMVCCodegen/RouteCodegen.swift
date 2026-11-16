@@ -325,6 +325,15 @@ struct RouteBlockGenerator {
                 controllerResponseHeaders: controllerResponseHeaders
             )
         else { return nil }
+        // A response to `HEAD` never carries its body, so a `@Head` route declaring one would compute it
+        // only for `WireMVCResponseSender` to drop it — and its typed client would wait on bytes that never
+        // come. A `@Get` route answers `HEAD` already; `@Head` is for the bodiless answer.
+        if verb.method == ".head", let mode, mode.terminal != .bodiless {
+            record(
+                RouteCodegenDiagnostic(.headRouteWithBody(function.name.text, annotation: mode.name), at: function.name)
+            )
+            return nil
+        }
         let hasBody = routeHasBody(function)
         guard let streamsBody = validatedBodyObligations(of: function, hasBody: hasBody, mode: mode) else {
             return nil

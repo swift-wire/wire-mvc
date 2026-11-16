@@ -25,13 +25,13 @@ private struct Doubles: Sendable, Equatable {
 private struct OKHandler: HTTPServerRequestHandler {
     typealias RequestContext = WireMVCContext<InProcessRequestContext>
     typealias Reader = WireMVCRequestReader<InProcessReader>
-    typealias ResponseSender = InProcessResponseSender
+    typealias ResponseSender = WireMVCResponseSender<InProcessResponseSender>
 
     func handle(
         request: HTTPRequest,
         requestContext: consuming WireMVCContext<InProcessRequestContext>,
         reader: consuming sending WireMVCRequestReader<InProcessReader>,
-        responseSender: consuming sending InProcessResponseSender
+        responseSender: consuming sending WireMVCResponseSender<InProcessResponseSender>
     ) async throws {
         try await responseSender.sendAndFinish(HTTPResponse(status: .ok))
     }

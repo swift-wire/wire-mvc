@@ -45,6 +45,7 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
     case bodyStreamOnStreamingResponse(String)
     case multipleResponseAnnotations(String, annotations: String)
     case bindingMissingSendConformance(binding: String, conformance: String)
+    case headRouteWithBody(String, annotation: String)
 
     public var message: String {
         switch self {
@@ -120,6 +121,8 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
             "@ResponseHeader does not apply to the @RawRoute handler '\(route)' — a raw handler writes its own response head, so nothing here could set the field for it. Set it on the HTTPResponse the handler sends."
         case .globalMiddlewareUnsupportedArgument(let reference):
             "global @Middleware on a @WireMVCBootstrap root must be factory-form (@Middleware(Key), a generic-over-box @Factory @MiddlewareFactory) — a by-type or keyed-binding middleware ('\(reference)') is concrete over a fixed box and can't compose in the global chain (the router is fixed on its box type). Write it generic (factory-form), or scope it to a @Controller."
+        case .headRouteWithBody(let name, let annotation):
+            "@Head route '\(name)' declares a body with @\(annotation), but a response to HEAD carries none (RFC 9110 §9.3.2) — the body would be produced only to be discarded. Declare it with @ResponseStatus, or return a (status:headers:) tuple; a HEAD on a @Get route needs no @Head at all"
         }
     }
 
@@ -176,6 +179,7 @@ public enum WireMVCDiagnostic: DiagnosticMessage, Sendable {
         case .bodyStreamOnStreamingResponse: id = "bodyStreamOnStreamingResponse"
         case .multipleResponseAnnotations: id = "multipleResponseAnnotations"
         case .bindingMissingSendConformance: id = "bindingMissingSendConformance"
+        case .headRouteWithBody: id = "headRouteWithBody"
         }
         return MessageID(domain: "WireMVC", id: id)
     }

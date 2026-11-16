@@ -5,7 +5,7 @@ What `@Controller` reads, what it generates, and why the annotations expand to n
 ## Overview
 
 `@Controller` marks a type whose methods are routes. Each `@Get` / `@Post` / `@Put` / `@Patch` /
-`@Delete` member becomes one registration on the route builder, under the controller's optional
+`@Delete` / `@Head` member becomes one registration on the route builder, under the controller's optional
 path prefix.
 
 ```swift
@@ -30,6 +30,35 @@ struct TodosController {
 
 The prefix is optional: `@Controller` with no argument leaves each verb annotation carrying the
 full path, and a verb annotation with no argument routes the prefix itself.
+
+## HEAD comes with GET
+
+Every `@Get` route also answers `HEAD` (RFC 9110 §9.3.2): the router resolves a `HEAD` with no
+`HEAD` route of its own to the path's `GET` route, and `Allow` on a `405` lists `HEAD` wherever it
+lists `GET`. The handler runs as it would for the `GET`, and the response sender every route is
+handed sends the head — status, fields, and the `Content-Length` the `GET` would have stated — and
+withholds the body. That holds for every kind of route: buffered, streamed, an error mapped by
+`@ErrorResponse`, the `@NotFound` fallback, and a `@RawRoute`.
+
+A `@RawRoute` sees `request.method == .head` when it is answering one, and needs to do nothing
+about it — what it writes is dropped. It may check the method to skip work that only produces the
+body, such as reading a file it would otherwise stream.
+
+`@Head` declares a `HEAD` route explicitly, for when the answer should differ from running the
+`GET` — typically to state a length without producing the content. An explicit `@Head` on a path
+beats the implied one. A `HEAD` response has no body, so `@Head` takes no body-carrying response
+annotation: use `@ResponseStatus`, or return a `(status:headers:)` tuple, or write it with
+`@RawRoute`.
+
+```swift
+@Head("/{id}/download")
+func downloadSize(@Path id: String) async throws -> (status: HTTPResponse.Status, headers: HTTPFields) {
+    (.ok, [.contentLength: String(try repository.size(of: id))])
+}
+```
+
+On Hummingbird and Vapor the host's router decides which route a `HEAD` reaches; see
+<doc:WhatDiffersByRuntime>.
 
 ## The annotations expand to nothing
 
