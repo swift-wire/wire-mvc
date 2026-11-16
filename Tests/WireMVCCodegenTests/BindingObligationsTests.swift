@@ -46,18 +46,19 @@ struct BindingObligationsTests {
 
     /// WireMVC's own bindings are found by this scan, not by a table.
     ///
-    /// The invariant that replaced the hardcoded floor: `@Path`, `@Query`, `@Header` and `@JSONBody` state
-    /// their obligations on their own declarations, and a real build reads them because WireMVC is a
-    /// Wire-aware dependency of every consumer. If the attributes were ever dropped, every route binding in
+    /// The invariant that replaced the hardcoded floor: `@Path`, `@Query`, `@Header`, `@JSONBody` and
+    /// `@BytesBody` state their obligations on their own declarations, and a real build reads them because
+    /// WireMVC is a Wire-aware dependency of every consumer. If the attributes were ever dropped, every route binding in
     /// every consumer would stop being recognised — so this asserts the source of truth is annotated, which
     /// is the whole of what the floor used to guarantee, without restating it.
     @Test("WireMVC's own bindings declare their obligations")
     func theBuiltInsAreAnnotated() {
         #expect(WireMVCBuiltIns.bindings["Path"]?.obligations == .path)
         #expect(WireMVCBuiltIns.bindings["JSONBody"]?.obligations == .body)
+        #expect(WireMVCBuiltIns.bindings["BytesBody"]?.obligations == .body)
         #expect(WireMVCBuiltIns.bindings["Query"]?.obligations == [])
         #expect(WireMVCBuiltIns.bindings["Header"]?.obligations == [])
-        #expect(WireMVCBuiltIns.bindings.count == 4, "\(WireMVCBuiltIns.bindings.keys.sorted())")
+        #expect(WireMVCBuiltIns.bindings.count == 5, "\(WireMVCBuiltIns.bindings.keys.sorted())")
     }
 
     /// The same for the response side, so both live next to the tests that depend on them.

@@ -247,6 +247,35 @@ public macro RequestBinding<Transform>(
     stream: String? = nil
 ) = #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
 
+// ── Request body limit (peer, no-op — read by `@Controller`) ──
+
+/// `@RequestBodyLimit(25 * 1024 * 1024)` — the most of a request body this route accepts, in bytes. On the
+/// controller it covers every route that reads a body; on a route it covers that one, and a route entry beats
+/// the controller's. Without either, a collected body is held to ``WireMVCRequest/defaultMaximumBodySize``.
+///
+/// A body over the limit is answered **413 Content Too Large** before the handler runs
+/// (``WireMVCBindingError/bodyTooLarge(maximumSize:)``), in one of two ways:
+///
+/// - **By its `Content-Length`**, when the request states one over the limit. The route reads nothing; what
+///   the server does with the unread body afterwards is what it does after any route — reads up to a mebibyte
+///   of it to keep the connection, and closes the connection if more is left.
+/// - **While it is read**, for a chunked body or one that ran past the length it stated. The read stops at the
+///   limit.
+///
+/// It reaches every kind of body binding. A collecting one (`@JSONBody`, `@BytesBody`, any `.body` binding) is
+/// collected under it. A `.readerBody` or `.bodyStream` binding is handed a ``WireMVCBoundedReader`` that ends
+/// the body at it, so the route's limit holds whatever the binding does — a binding that sets a smaller limit
+/// of its own still enforces that one.
+///
+/// The argument is an ordinary `Int` expression, so a limit the app already names (`Artwork.maximumSize`) is
+/// spelled once. On a controller it cannot name the controller's own members — the compiler resolves the
+/// attribute while resolving the type and reports a circular reference — so keep such a constant elsewhere.
+/// A literal that is not positive is diagnosed; so is the annotation on a route that reads no body, or on a
+/// `@RawRoute`, whose handler reads the body itself. A controller's limit skips both kinds of
+/// route rather than failing them, since it is stating a policy for the routes it can apply to.
+@attached(peer)
+public macro RequestBodyLimit(_ bytes: Int) = #externalMacro(module: "WireMVCMacros", type: "RouteMarkerMacro")
+
 // ── Response markers (peer, no-op — read by `@Controller`) ──
 
 /// The route returns an `Encodable` body, encoded as JSON with the given status (default 200).

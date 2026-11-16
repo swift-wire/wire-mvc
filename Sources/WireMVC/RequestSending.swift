@@ -129,6 +129,19 @@ extension JSONBody: RequestBodySendable where T: Decodable & Encodable {
     }
 }
 
+/// The bytes go as they are. `application/octet-stream` because the binding knows nothing of what they are;
+/// a test that needs the server to see another type sends the request untyped.
+extension BytesBody: RequestBodySendable where T == [UInt8] {
+    public static func sendBody(
+        name: String,
+        value: [UInt8],
+        into request: inout WireMVCOutgoingRequest,
+        coding: WireMVCCoding
+    ) throws -> (bytes: [UInt8], contentType: String) {
+        (value, "application/octet-stream")
+    }
+}
+
 // Optionality is *not* handled here. The generated code calls `Wrapper<T>.bind` / `.bindOptional` on the
 // non-optional underlying type (`RequestBinding.swift:149`), so a binding never sees `T?`; the client half
 // mirrors that by simply not calling `send` for an absent optional. Keeping the split in the same place on

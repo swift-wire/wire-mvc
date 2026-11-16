@@ -229,6 +229,8 @@ public func wireMVCStreamingTerminal<
     responseSender: consuming Sender,
     responseHeaders: consuming ResponseHeaderRegistry,
     collectingBodyFrom reader: consuming sending Reader,
+    request: HTTPRequest,
+    maximumBodySize: Int = WireMVCRequest.defaultMaximumBodySize,
     building: ([UInt8]) async throws -> WireMVCStreamingOutcome<Producer>,
     // `async` because a mapped refusal may still await — and it no longer drains: the registry is owned
     // by this function and resolved onto whichever branch ran, so a middleware's contributed fields reach
@@ -239,7 +241,11 @@ public func wireMVCStreamingTerminal<
 ) async throws where Sender.Writer: ~Copyable, Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields? {
     let wireMVCProduced: Result<WireMVCStreamingOutcome<Producer>, any Error>
     do {
-        let requestBody = try await WireMVCRequest.collectBody(reader)
+        let requestBody = try await WireMVCRequest.collectBody(
+            of: request,
+            from: reader,
+            maximumSize: maximumBodySize
+        )
         wireMVCProduced = .success(try await building(requestBody))
     } catch let wireMVCError {
         wireMVCProduced = .failure(wireMVCError)
@@ -260,4 +266,36 @@ public func wireMVCStreamingTerminal<
         buffered.headerFields = wireMVCResolved(buffered.headerFields, applying: wireMVCDrained.contributions)
         try await buffered.send(on: responseSender)
     }
+}
+
+/// The lending terminal for a streaming route that states `@RequestBodyLimit`: the binding is handed a
+/// ``WireMVCBoundedReader`` that ends the body at the limit, and a request whose `Content-Length` is already
+/// over it is refused before the binding runs.
+///
+/// Both refusals are ``WireMVCBindingError/bodyTooLarge(maximumSize:)`` thrown inside `building`, so they map
+/// to 413 through the same `errorMapping` as every other binding failure — before the head goes out, since
+/// the binding reduces the body before the handler runs.
+public func wireMVCStreamingTerminal<
+    Producer: WireMVCBodyProducer,
+    Sender: HTTPResponseSender & ~Copyable,
+    Reader: AsyncReader & ~Copyable
+>(
+    responseSender: consuming Sender,
+    responseHeaders: consuming ResponseHeaderRegistry,
+    lendingBodyFrom reader: consuming sending Reader,
+    request: HTTPRequest,
+    maximumBodySize: Int,
+    building: (consuming WireMVCBoundedReader<Reader>) async throws -> WireMVCStreamingOutcome<Producer>,
+    errorMapping: (any Error) async throws -> WireMVCOutcome
+) async throws where Sender.Writer: ~Copyable, Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields? {
+    try await wireMVCStreamingTerminal(
+        responseSender: responseSender,
+        responseHeaders: responseHeaders,
+        lendingBodyFrom: reader,
+        building: { (reader: consuming Reader) in
+            try WireMVCRequest.refuseDeclaredLength(of: request, over: maximumBodySize)
+            return try await building(WireMVCBoundedReader(reader, maximumSize: maximumBodySize))
+        },
+        errorMapping: errorMapping
+    )
 }

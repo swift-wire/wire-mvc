@@ -72,6 +72,9 @@ extension WireMVCRequest {
     ///
     /// `state` is `inout` rather than returned per chunk so a binding can accumulate into something that is
     /// not cheap to copy — a hasher, a file handle, a parser's partial state.
+    ///
+    /// A body longer than `maximumSize` stops the walk with ``WireMVCBindingError/bodyTooLarge(maximumSize:)``,
+    /// which the terminal answers 413 — the chunk that crossed the limit is not handed to `consume`.
     public static func streamBody<Reader: AsyncReader & ~Copyable, State: ~Copyable>(
         _ reader: consuming Reader,
         into state: inout State,
@@ -89,7 +92,7 @@ extension WireMVCRequest {
                 // the consume happens before the loop exits, not after it.
                 ended = try await reader.read { buffer, finalElement in
                     total += buffer.count
-                    guard total <= maximumSize else { throw WireMVCBindingError.malformedBody }
+                    guard total <= maximumSize else { throw WireMVCBindingError.bodyTooLarge(maximumSize: maximumSize) }
                     // `nextSpan` rather than a `Buffer`-specific accessor: a container may hold its contents
                     // in several chunks, so one call is not guaranteed to cover the buffer and the walk has
                     // to loop until the index reaches the end.
@@ -110,6 +113,71 @@ extension WireMVCRequest {
                 // wrapper escape would make every reader binding's own errors unmappable — the same
                 // defect a codec that leaks its parser's error type has.
                 try error.unwrap()
+            }
+        }
+    }
+}
+
+// MARK: - A route's body limit, for a binding that reads the body itself
+
+/// A reader that ends a body at a route's limit: it forwards each read to the reader it wraps, counting, and
+/// throws ``WireMVCBindingError/bodyTooLarge(maximumSize:)`` from the read that would carry the body past
+/// `maximumSize`.
+///
+/// It is how `@RequestBodyLimit` reaches a `.readerBody` or `.bodyStream` binding. A collecting route's limit
+/// is an argument to the one collect call the terminal makes; a binding that walks the reader makes its own
+/// calls, and ``RequestBodyReading`` gives it no limit to read. Wrapping the reader enforces the route's limit
+/// on every such binding without changing that public protocol, and leaves a binding that keeps its own,
+/// smaller limit — `streamBody(_:into:maximumSize:consume:)` — free to enforce that one too.
+///
+/// The limit error is thrown as this reader's **own** failure, unwrapped, rather than nested inside an
+/// `EitherError`. A binding that unwraps the error `read` throws — as `streamBody` does, so that the error
+/// reaches `@ErrorResponse` — then hands the terminal a ``WireMVCBindingError`` it maps to 413, where a
+/// nested wrapper would have reached it as an unmappable 500. The cost is that `ReadFailure` is `any Error`.
+public struct WireMVCBoundedReader<Base: AsyncReader & ~Copyable>: AsyncReader, ~Copyable
+where Base.ReadElement == UInt8, Base.FinalElement == HTTPFields? {
+    public typealias ReadElement = UInt8
+    public typealias Buffer = Base.Buffer
+    public typealias ReadFailure = any Error
+    public typealias FinalElement = HTTPFields?
+
+    private var base: Base
+    private var consumed = 0
+    /// The most this reader hands on, in bytes.
+    public let maximumSize: Int
+
+    public init(_ base: consuming Base, maximumSize: Int) {
+        self.base = base
+        self.maximumSize = maximumSize
+    }
+
+    public mutating func read<Return: ~Copyable, Failure: Error>(
+        body consume: (inout Buffer, consuming FinalElement?) async throws(Failure) -> Return
+    ) async throws(EitherError<any Error, Failure>) -> Return {
+        // Copied out and written back rather than updated through `self` inside the closure: the closure runs
+        // during `base.read`, which already holds `self` mutably, so touching another stored property of
+        // `self` from it overlaps that access.
+        var counted = consumed
+        let limit = maximumSize
+        do throws(EitherError<Base.ReadFailure, EitherError<WireMVCBindingError, Failure>>) {
+            typealias Inner = EitherError<WireMVCBindingError, Failure>
+            let result = try await base.read { (buffer, finalElement) async throws(Inner) -> Return in
+                counted += buffer.count
+                guard counted <= limit else { throw .first(.bodyTooLarge(maximumSize: limit)) }
+                do throws(Failure) {
+                    return try await consume(&buffer, finalElement)
+                } catch {
+                    throw .second(error)
+                }
+            }
+            consumed = counted
+            return result
+        } catch {
+            consumed = counted
+            switch error {
+            case .first(let failure): throw .first(failure)
+            case .second(.first(let tooLarge)): throw .first(tooLarge)
+            case .second(.second(let failure)): throw .second(failure)
             }
         }
     }

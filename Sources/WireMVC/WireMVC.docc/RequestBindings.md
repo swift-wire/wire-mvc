@@ -4,7 +4,7 @@ How a handler parameter is filled from the request, and how to add a binding of 
 
 ## Overview
 
-Every handler parameter carries a binding annotation naming where its value comes from. The four
+Every handler parameter carries a binding annotation naming where its value comes from. The
 built-ins cover the ordinary cases:
 
 ```swift
@@ -29,9 +29,38 @@ A decode that fails becomes a client-error status rather than a `500` — the ge
 maps ``WireMVCBindingError`` onto the appropriate 4xx before any of your error mappings are
 consulted. See <doc:ErrorHandling>.
 
+## Bodies, and how much of one a route accepts
+
+``JSONBody`` decodes the body; ``BytesBody`` hands it over as it arrived, for a route whose body *is*
+the payload — an image, an archive, a file to store:
+
+```swift
+@Put("/blobs/{digest}")
+@ResponseStatus(.noContent)
+@RequestBodyLimit(25 * 1024 * 1024)
+func put(@Path digest: String, @BytesBody image: [UInt8]) async throws { … }
+```
+
+A collected body is held in memory whole before any binding sees it, so a route collects at most
+``WireMVCRequest/defaultMaximumBodySize`` — a million bytes — unless it raises that with
+`@RequestBodyLimit`. On the controller the annotation covers every route that reads a body; on a
+route it covers that one, and the route's beats the controller's.
+
+A body over the limit is answered **413 Content Too Large**, before the handler runs. A request
+whose `Content-Length` already says too much is refused without a byte being read; a chunked body,
+or one that runs past the length it stated, is refused when the read reaches the limit. Neither is
+a `422`: a body can be well-formed and still too long, and the two statuses ask the client for
+different things.
+
+The limit reaches a binding that reads the body itself, too. A `.readerBody` or `.bodyStream`
+binding on a route with `@RequestBodyLimit` is handed a ``WireMVCBoundedReader`` that ends the body
+at the limit, so the route's limit holds whatever the binding does — and a binding that keeps a
+smaller limit of its own, through ``WireMVCRequest/streamBody(_:into:maximumSize:consume:)``, still
+enforces that one.
+
 ## The contract
 
-All four are ordinary property wrappers conforming to ``RequestBound``, and the generated witness
+All of them are ordinary property wrappers conforming to ``RequestBound``, and the generated witness
 calls `bind` once per parameter. Nothing about them is special-cased in the macro, which is the
 point: the macro stays a thin, binding-agnostic dispatcher, and a binding you write is used the
 same way the built-ins are.

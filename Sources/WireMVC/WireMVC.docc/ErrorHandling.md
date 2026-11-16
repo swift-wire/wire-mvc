@@ -43,8 +43,8 @@ both a handler throw and a throwing request-scoped binding at scope entry.
 ## The order things are consulted
 
 1. **Binding failures first.** A parameter that fails to decode is mapped by the built-in
-   `WireMVCBindingError` rules, so a malformed body keeps its `415` or `422` rather than being
-   swallowed by a catch-all.
+   `WireMVCBindingError` rules, so a malformed body keeps its `415` or `422`, and a body over the
+   route's limit its `413`, rather than being swallowed by a catch-all.
 2. **Route mappings**, then **controller mappings**, most specific error type first.
 3. **The catch-all**, if declared — a form whose error type is `Swift.Error`. At most one per
    scope, and it must be the last error entry at its scope.

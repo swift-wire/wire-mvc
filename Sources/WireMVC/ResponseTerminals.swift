@@ -141,12 +141,18 @@ public func wireMVCBufferedTerminal<
     responseSender: consuming Sender,
     responseHeaders: consuming ResponseHeaderRegistry,
     collectingBodyFrom reader: consuming sending Reader,
+    request: HTTPRequest,
+    maximumBodySize: Int = WireMVCRequest.defaultMaximumBodySize,
     building: ([UInt8]) async throws -> WireMVCOutcome,
     errorMapping: (any Error) async throws -> WireMVCOutcome
 ) async throws where Sender.Writer: ~Copyable, Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields? {
     let wireMVCProduced: Result<WireMVCOutcome, any Error>
     do {
-        let requestBody = try await WireMVCRequest.collectBody(reader)
+        let requestBody = try await WireMVCRequest.collectBody(
+            of: request,
+            from: reader,
+            maximumSize: maximumBodySize
+        )
         wireMVCProduced = .success(try await building(requestBody))
     } catch let wireMVCError {
         wireMVCProduced = .failure(wireMVCError)
@@ -193,4 +199,36 @@ public func wireMVCBufferedTerminal<
         applying: wireMVCDrained.contributions
     )
     try await wireMVCOutcome.send(on: responseSender)
+}
+
+/// The lending terminal for a buffered route that states `@RequestBodyLimit`: the binding is handed a
+/// ``WireMVCBoundedReader`` that ends the body at the limit, and a request whose `Content-Length` is already
+/// over it is refused before the binding runs. Both refusals are
+/// ``WireMVCBindingError/bodyTooLarge(maximumSize:)``, thrown inside `building`, so they map to 413 like any
+/// other binding failure.
+///
+/// Without the annotation a route takes the overload above, and its binding sees the reader unwrapped — a
+/// streaming binding has always set its own limit, and one that does not need the wrapper pays nothing for it.
+public func wireMVCBufferedTerminal<
+    Sender: HTTPResponseSender & ~Copyable,
+    Reader: AsyncReader & ~Copyable
+>(
+    responseSender: consuming Sender,
+    responseHeaders: consuming ResponseHeaderRegistry,
+    lendingBodyFrom reader: consuming sending Reader,
+    request: HTTPRequest,
+    maximumBodySize: Int,
+    building: (consuming WireMVCBoundedReader<Reader>) async throws -> WireMVCOutcome,
+    errorMapping: (any Error) async throws -> WireMVCOutcome
+) async throws where Sender.Writer: ~Copyable, Reader.ReadElement == UInt8, Reader.FinalElement == HTTPFields? {
+    try await wireMVCBufferedTerminal(
+        responseSender: responseSender,
+        responseHeaders: responseHeaders,
+        lendingBodyFrom: reader,
+        building: { (reader: consuming Reader) in
+            try WireMVCRequest.refuseDeclaredLength(of: request, over: maximumBodySize)
+            return try await building(WireMVCBoundedReader(reader, maximumSize: maximumBodySize))
+        },
+        errorMapping: errorMapping
+    )
 }
