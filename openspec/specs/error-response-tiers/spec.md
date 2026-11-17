@@ -175,7 +175,7 @@ SHALL run inside the same mapped region.
 
 #### Scenario: a scoped controller with a mapping
 - **WHEN** `@Scoped(seed: HTTPRequest.self) @Controller("/me") @ErrorResponse(Unauthenticated.self, .unauthorized) struct Me` is rendered
-- **THEN** the call to `self._wireEnterScope(request)` sits inside the `building:` closure
+- **THEN** the call to `self._wireEnterScope` with the request sits inside the `building:` closure
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`scopedControllerScopeEntryInsideDoWhenMapped`).
 
