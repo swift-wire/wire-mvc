@@ -227,7 +227,7 @@ the registry to its terminal.
 
 #### Scenario: the generated destructure
 - **WHEN** `@Get("/{id}") @JSONResponse func get(@Path id: String)` is generated with no middleware
-- **THEN** the register closure first takes the context's contents (`takeContents()`) and the registry from their `responseHeaders`, before anything else, and the witness constrains `Builder.RequestContext: ~Copyable & ResponseHeaderCarrying`
+- **THEN** the register closure first takes the context's contents (`takeContents()`) and the registry from their `responseHeaders`, before anything else, and the witness requires its builder's `RequestContext` to be `~Copyable & ResponseHeaderCarrying`
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`plainJSONRouteWithPathBinding`), `Tests/WireMVCCodegenTests/ResponseHeaderGenerationTests.swift` (`routeDeclaringNothingStillResolvesMiddlewareContributions`).
 
