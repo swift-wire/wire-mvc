@@ -83,12 +83,12 @@ Pinned by: `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`handsOver
 
 ### Requirement: A `.readerBody` binding combines with a streaming response through the lending terminal
 On a route whose response mode uses the streaming terminal, a `.readerBody` binding SHALL be emitted
-against `wireMVCStreamingTerminal(…, lendingBodyFrom: reader, …)`, which hands the reader to `building`
+against the `lendingBodyFrom:` overload of `wireMVCStreamingTerminal`, which hands the reader to `building`
 as a consuming parameter, so an error the binding throws is mapped before the response head is sent.
 
 #### Scenario: a reader binding under `@HTMLResponse`
 - **WHEN** `@Upload a: Receipt` (a `.readerBody` binding) is on an `@HTMLResponse` route
-- **THEN** the source contains `lendingBodyFrom: reader,` and no `collectingBodyFrom:`
+- **THEN** the terminal uses the `lendingBodyFrom:` overload, and the source contains no `collectingBodyFrom:`
 
 #### Scenario: an oversized body on a streamed page
 - **WHEN** `POST /pages/digest/page` carries 64 KiB to a binding that throws `DigestError.tooLarge` past 4096 bytes, mapped by `@ErrorResponse(DigestError.self, .contentTooLarge)`
@@ -128,8 +128,8 @@ Pinned by: `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`streamBes
 ### Requirement: A `.bodyStream` binding's stream is constructed from its declared `stream:` type
 For a `.bodyStream` parameter the terminal SHALL construct the stream as `<Stream>(request:reader:)`
 from the route's request and reader, where `<Stream>` is the `stream:` string on the binding's
-declaration spelled with no type argument, SHALL pass the value to the handler by value, and SHALL call its terminal with
-`lendingBodyFrom: reader` rather than the collecting overload (`collectingBodyFrom:`).
+declaration spelled with no type argument, SHALL pass the value to the handler by value, and SHALL call
+the `lendingBodyFrom:` overload of its terminal rather than the collecting one (`collectingBodyFrom:`).
 
 #### Scenario: a multipart stream
 - **WHEN** `@RequestBinding(.bodyStream, stream: "MultipartParts") struct Upload` is used as `@Upload parts: consuming S` on a route named `receive`
@@ -137,7 +137,7 @@ declaration spelled with no type argument, SHALL pass the value to the handler b
 
 #### Scenario: the lending overload for a lent stream
 - **WHEN** the same route is generated
-- **THEN** the source contains `lendingBodyFrom: reader,` and no `collectingBodyFrom:`
+- **THEN** the terminal uses the `lendingBodyFrom:` overload, and the source contains no `collectingBodyFrom:`
 
 Pinned by: `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`consumingStream`). The lending overload for a lent stream is pinned by nothing yet.
 
