@@ -232,15 +232,15 @@ Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`g
 
 ### Requirement: Global middleware folds once around the finalized router
 WireMVCRouteGen SHALL emit `extension _WireGlobalMiddleware_<Root>` with a
-`wrapGlobalMiddleware<Handler: HTTPServerRequestHandler>(_ inner: Handler)` that returns
-`GlobalMiddlewareHandler(inner: inner, chain: wireCompose { … })` over the root's factory entries in
+`wrapGlobalMiddleware(_:)`, generic over the `HTTPServerRequestHandler` it is passed, that returns
+`GlobalMiddlewareHandler(inner:chain:)` over that router, its chain a `wireCompose { … }` over the root's factory entries in
 written order, each `self._wireFactory_<key>.create(Handler.RequestContext.Base.self,
-Handler.Reader.self, Handler.ResponseSender.self)`, or returns `inner` when there are none. The
-generated entry SHALL call it once, on the result of `builder.finalize()`.
+Handler.Reader.self, Handler.ResponseSender.self)`, or returns the router unchanged when there are none. The
+generated entry SHALL call it once, on the router `finalize()` returns.
 
 #### Scenario: two global factories
 - **WHEN** `@WireMVCBootstrap @Middleware(LoggingKeys.accessLog) @Middleware(LoggingKeys.requestID) struct AppBootstrap` is rendered
-- **THEN** the extension contains `GlobalMiddlewareHandler(inner: inner, chain: wireCompose {` with both `create` calls and no diagnostic
+- **THEN** the extension contains `GlobalMiddlewareHandler(inner:chain:)` over the router, its chain a `wireCompose` fold with both `create` calls, and no diagnostic
 
 #### Scenario: no global middleware
 - **WHEN** the root carries no `@Middleware`
