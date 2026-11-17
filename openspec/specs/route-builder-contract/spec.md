@@ -216,7 +216,7 @@ WireMVCRouteGen SHALL emit each controller's witness into `_WireRoutes.swift` as
 _WireRouteContributor_<Controller>: RouteContributor { … }`, with no access keyword on the extension.
 Its `registerWireRoutes` method SHALL carry `public ` when the controller is `public` or `open`,
 `package ` when it is `package`, and no access keyword otherwise. The witness body SHALL reach the controller through the
-stored field `_wireSubject`. `contributorProxySubjectAccessor` SHALL equal `"_wireSubject"`, and the
+stored field `_wireSubject`, and the
 witness body SHALL differ from one rendered against any other accessor only in that name.
 
 #### Scenario: the proxy extension for a controller named `Todos`
