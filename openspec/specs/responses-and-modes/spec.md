@@ -48,7 +48,7 @@ with `@ResponseMode(.streaming, codec: "WireMVCHTMLProducer", client: .text)`, a
 
 #### Scenario: a JSON route uses the declared codec
 - **WHEN** `@Get("/{id}") @JSONResponse func get(@Path id: String) async throws -> Todo` is generated
-- **THEN** the `building` closure returns `WireMVCResponse.encoded(try WireMVCJSONCodec.encodeResponseBody(try await self._wireSubject.get(id: id), coding: wireMVCAppCoding), status: .ok)`
+- **THEN** the `building` closure returns `WireMVCResponse.encoded` of `WireMVCJSONCodec.encodeResponseBody` applied to the handler's result with the app coding, with status `.ok`
 
 #### Scenario: an HTML route uses the declared producer
 - **WHEN** `@Get("/home") @HTMLResponse func home() async throws -> some HTML` is generated
@@ -144,21 +144,20 @@ For a `.buffered` or `.streaming` mode the status SHALL be the annotation's `sta
 
 #### Scenario: a headers-only tuple keeps the annotation's status
 - **WHEN** `@Post("/") @JSONResponse(status: .created) func make() async throws -> (headers: HTTPFields, body: Thing)` is generated
-- **THEN** the outcome uses `status: .created` and `returned: wireMVCReturn.headers`
+- **THEN** the outcome uses `status: .created` and `returned:` the tuple's `headers`
 
 Pinned by: `Tests/WireMVCCodegenTests/HTMLResponseGenerationTests.swift` (`annotatedStatus`), `Tests/WireMVCCodegenTests/ResponseHeaderGenerationTests.swift` (`headersOnlyTupleKeepsTheAnnotatedStatus`).
 
 ### Requirement: A labelled response tuple names status, headers and body
 WireMVCRouteGen SHALL read a return type as a response tuple only when at least one element label is
 `status`, `headers` or `body`, and SHALL then accept exactly the label lists `(headers:body:)`,
-`(status:body:)`, `(status:headers:body:)` and `(status:headers:)`, binding the return to
-`wireMVCReturn` and projecting `wireMVCReturn.status`, `wireMVCReturn.headers` and
-`wireMVCReturn.body`. Any other label list containing one of those labels SHALL be reported as
+`(status:body:)`, `(status:headers:body:)` and `(status:headers:)`, binding the returned tuple once and taking
+the status, headers and body from it. Any other label list containing one of those labels SHALL be reported as
 `responseTupleInvalidLabels`. A tuple with none of those labels SHALL be encoded as the body.
 
 #### Scenario: the full tuple
 - **WHEN** a `@JSONResponse` route `get(@Path id: String)` returns `(status: HTTPResponse.Status, headers: HTTPFields, body: Thing)`
-- **THEN** the witness binds `let wireMVCReturn = try await self._wireSubject.get(id: id)`, encodes `wireMVCReturn.body`, and passes `status: wireMVCReturn.status`
+- **THEN** the witness calls `get(id:)` once, encodes the tuple's `body`, and uses its `status`
 
 #### Scenario: a misspelled label
 - **WHEN** a route `get` returns `(status: HTTPResponse.Status, header: HTTPFields)`
@@ -166,19 +165,19 @@ WireMVCRouteGen SHALL read a return type as a response tuple only when at least 
 
 #### Scenario: an unlabelled tuple
 - **WHEN** a `@JSONResponse` route `pair()` returns `(Int, String)`
-- **THEN** the witness encodes `try await self._wireSubject.pair()` directly and binds no `wireMVCReturn`
+- **THEN** the witness encodes `try await self._wireSubject.pair()` directly, encoding the whole tuple as the body
 
 Pinned by: `Tests/WireMVCCodegenTests/ResponseHeaderGenerationTests.swift` (`fullResponseTupleProjectsEveryElement`, `invalidResponseTupleLabelsAreDiagnosed`, `unlabelledTupleStaysABody`), `Tests/WireMVCCodegenTests/HTMLResponseGenerationTests.swift` (`responseTuple`).
 
 ### Requirement: A bodiless `(status:headers:)` tuple takes no response annotation
-A route returning `(status:headers:)` SHALL be generated with no response annotation as
-`return .status(wireMVCReturn.status, headerFields: …)`. Writing a `.buffered` or `.bodiless` response
+A route returning `(status:headers:)` SHALL be generated with no response annotation, returning
+`.status` with the tuple's status and headers. Writing a `.buffered` or `.bodiless` response
 annotation on it SHALL be reported as `responseAnnotationOnSelfDescribingReturn`; a `.streaming`
 annotation is handled by the body-carrying mode requirement instead.
 
 #### Scenario: a computed redirect
 - **WHEN** `@Get("/moved") func moved() async throws -> (status: HTTPResponse.Status, headers: HTTPFields)` is generated
-- **THEN** the witness contains `return .status(wireMVCReturn.status, headerFields: WireMVCResponseHeaders.resolved(returned: wireMVCReturn.headers))` and there are no diagnostics
+- **THEN** the witness returns `.status` with the tuple's status and `headerFields:` resolved by `WireMVCResponseHeaders.resolved(returned:)` from its `headers`, and there are no diagnostics
 
 #### Scenario: an annotation on the self-describing return
 - **WHEN** the same route also carries `@ResponseStatus(.found)`
@@ -196,7 +195,7 @@ if the route's mode annotation carries a `status:` argument, and SHALL accept th
 
 #### Scenario: the bare annotation
 - **WHEN** the same route carries bare `@JSONResponse`
-- **THEN** there are no diagnostics and the outcome uses `status: wireMVCReturn.status`
+- **THEN** there are no diagnostics and the outcome uses the returned status
 
 Pinned by: `Tests/WireMVCCodegenTests/ResponseHeaderGenerationTests.swift` (`annotatedStatusBesideAReturnedStatusIsDiagnosed`, `bareJSONResponseBesideAReturnedStatusIsAccepted`), `Tests/WireMVCCodegenTests/HTMLResponseGenerationTests.swift` (`deadStatusArgument`).
 
@@ -275,17 +274,18 @@ bodiless tuples) or `wireMVCStreamingTerminal` (for `.streaming` modes) with `re
 `responseHeaders:`, `building:` and `errorMapping:`. Each terminal SHALL have three overloads: a plain
 one whose `building` takes no argument, a `collectingBodyFrom:` one that collects the request body and
 passes it to `building` as `[UInt8]`, and a `lendingBodyFrom:` one that passes the reader to
-`building` as a consuming parameter. The generator SHALL choose `collectingBodyFrom: reader` for a
-collected body, `lendingBodyFrom: reader` for a `.readerBody` binding or for a `.bodyStream` binding on
-a `.buffered` or `.bodiless` route, and the plain overload otherwise.
+`building` as a consuming parameter. The generator SHALL choose the `collectingBodyFrom:` overload
+for a collected body and the `lendingBodyFrom:` overload for a `.readerBody` binding or for a
+`.bodyStream` binding on a `.buffered` or `.bodiless` route, passing either one the register
+closure's reader, and the plain overload otherwise.
 
 #### Scenario: a streaming route with a JSON body
 - **WHEN** `@Post("/preview") @HTMLResponse func preview(@JSONBody input: Draft) async throws -> some HTML` is generated
-- **THEN** the witness passes `collectingBodyFrom: reader`, opens `building: { requestBody in`, and emits no `WireMVCRequest.collectBody(` inside `building`
+- **THEN** the witness uses the `collectingBodyFrom:` overload with the register closure's reader, its `building` closure takes the collected body, and it emits no `WireMVCRequest.collectBody(` inside `building`
 
 #### Scenario: a reader-body binding on a streaming route
 - **WHEN** a streaming route binds a `@RequestBinding(.readerBody)` parameter
-- **THEN** the witness passes `lendingBodyFrom: reader,`
+- **THEN** the witness uses the `lendingBodyFrom:` overload with the register closure's reader
 
 Pinned by: `Tests/WireMVCCodegenTests/HTMLResponseGenerationTests.swift` (`bodyBindingUsesTheCollectingOverload`, `noBodyNoCollectingOverload`, `jsonUnchanged`, `readerBodyCombinesWithStreamingResponse`), `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`reducedBodyOnStreamingResponseAllowed`), `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`plainJSONRouteWithPathBinding`).
 
@@ -355,7 +355,7 @@ needs no response annotation.
 
 #### Scenario: a sender-only raw route
 - **WHEN** `@Get("/events") @RawRoute func events<Sender: HTTPResponseSender & ~Copyable & SendableMetatype>(responseSender: consuming sending Sender)` is generated under `/users`
-- **THEN** the witness registers `{ _, requestContext, _, _, responseSender in` and there are no diagnostics
+- **THEN** the register closure binds only the context and the sender, and there are no diagnostics
 
 #### Scenario: an uninferable parameter
 - **WHEN** a bare `@RawRoute` handler takes `name: String`
@@ -391,13 +391,13 @@ Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`r
 
 ### Requirement: An untransformed raw sender is wrapped in `ResponseHeaderApplyingSender`
 A raw handler's sender parameter whose type is the handler's own `HTTPResponseSender`-constrained
-generic parameter SHALL be passed as `ResponseHeaderApplyingSender(wrapping: responseSender, registry:
-wireMVCResponseHeaderRegistry)`, whether roles are inferred or named. A sender parameter of any other
-type, such as `MultiPartSender<Sender>`, SHALL be passed as `responseSender` unwrapped.
+generic parameter SHALL be passed wrapped in `ResponseHeaderApplyingSender(wrapping:registry:)` over the route's
+response-header registry, whether roles are inferred or named. A sender parameter of any other
+type, such as `MultiPartSender<Sender>`, SHALL be passed unwrapped.
 
 #### Scenario: named roles over an untransformed sender
 - **WHEN** `@RawRoute(.reader, .responseSender) func exchange<Reader: AsyncReader & ~Copyable, Sender: HTTPResponseSender & ~Copyable>(reader: consuming Reader, responseSender: consuming Sender)` is generated
-- **THEN** the witness calls `try await self._wireSubject.exchange(reader: reader, responseSender: ResponseHeaderApplyingSender(wrapping: responseSender, registry: wireMVCResponseHeaderRegistry))`
+- **THEN** the witness calls `exchange(reader:responseSender:)` with the reader and the sender wrapped in `ResponseHeaderApplyingSender(wrapping:registry:)` over the route's registry
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`rawRoutePassthrough`, `rawRouteExplicitRolesStillWrapAnUntransformedSender`, `rawRouteExplicitResponseSenderRole`), `Fixtures/Tests/WireMVCBootstrapExampleTests/WithTestServerTests.swift` (`globalContributionReachesARawRoute`).
 
