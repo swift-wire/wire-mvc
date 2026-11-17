@@ -58,18 +58,18 @@ Pinned by: `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`acrossFil
 `RequestBodyReading` SHALL declare an associated type `Value` and
 `static func bindReader<Reader: AsyncReader & ~Copyable>(name:request:pathParameters:reader: consuming
 Reader, coding:) async throws -> Value` where `Reader.ReadElement == UInt8` and `Reader.FinalElement ==
-HTTPFields?`. For a `.readerBody` parameter the terminal SHALL emit
-`try await <Wrapper><<Type>>.bindReader(name: …, request: request, pathParameters: pathParameters, reader:
-reader, coding: …)`, SHALL call its terminal with `lendingBodyFrom: reader` and a `building` closure
-taking `reader`, and SHALL NOT use the collecting terminal overload (`collectingBodyFrom:`).
+HTTPFields?`. For a `.readerBody` parameter the terminal SHALL call
+`<Wrapper><<Type>>.bindReader(name:request:pathParameters:reader:coding:)` with the route's reader,
+SHALL use the `lendingBodyFrom:` terminal overload, whose `building` closure takes the reader, and
+SHALL NOT use the collecting terminal overload (`collectingBodyFrom:`).
 
 #### Scenario: the emitted bind
 - **WHEN** `@RequestBinding(.readerBody) struct Upload` is used as `@Upload file: Receipt` on a `@JSONResponse` route
-- **THEN** the source contains `Upload<Receipt>.bindReader(` and `reader: reader`, and the register closure names its `reader`
+- **THEN** the source contains `Upload<Receipt>.bindReader(`, and the terminal passes the route's reader to `bindReader`
 
 #### Scenario: the lending overload on a buffered route
 - **WHEN** the same `@Upload file: Receipt` route is `@JSONResponse`
-- **THEN** the source contains `lendingBodyFrom: reader,` and `building: { reader in`, and no `collectingBodyFrom:`
+- **THEN** the terminal uses the `lendingBodyFrom:` overload, whose `building` closure takes the reader, and the source contains no `collectingBodyFrom:`
 
 #### Scenario: a streamed digest over HTTP
 - **WHEN** `POST /pages/digest` carries a 4000-byte body to a `@JSONResponse` route that returns what its `@DigestBody` binding (a `.readerBody` binding) folds the body into, a `BodyDigest` of `byteCount` and `checksum`
@@ -126,14 +126,14 @@ When a route has one streaming binding and any `.body` binding, WireMVCRouteGen 
 Pinned by: `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`streamBesideCollectRefused`, `lentBesideCollectRefused`).
 
 ### Requirement: A `.bodyStream` binding's stream is constructed from its declared `stream:` type
-For a `.bodyStream` parameter the terminal SHALL emit `let <name> = <Stream>(request: request, reader:
-reader)`, where `<Stream>` is the `stream:` string on the binding's declaration spelled with no type
-argument, SHALL pass the value to the handler by value, and SHALL call its terminal with
+For a `.bodyStream` parameter the terminal SHALL construct the stream as `<Stream>(request:reader:)`
+from the route's request and reader, where `<Stream>` is the `stream:` string on the binding's
+declaration spelled with no type argument, SHALL pass the value to the handler by value, and SHALL call its terminal with
 `lendingBodyFrom: reader` rather than the collecting overload (`collectingBodyFrom:`).
 
 #### Scenario: a multipart stream
 - **WHEN** `@RequestBinding(.bodyStream, stream: "MultipartParts") struct Upload` is used as `@Upload parts: consuming S` on a route named `receive`
-- **THEN** the source contains `let parts = MultipartParts(request: request, reader: reader)` and `receive(parts: parts)`, and contains no `MultipartParts<`
+- **THEN** the terminal constructs `MultipartParts(request:reader:)` and passes it to `receive(parts:)`, and the source contains no `MultipartParts<`
 
 #### Scenario: the lending overload for a lent stream
 - **WHEN** the same route is generated
@@ -184,7 +184,7 @@ the handler call. No other binding SHALL be given a validation step.
 
 #### Scenario: the order of the three statements
 - **WHEN** a route named `receive` lends `@Upload parts: consuming S`, with `Upload` declared `stream: "MultipartParts"`
-- **THEN** `let parts = MultipartParts(request: request, reader: reader)` precedes `try parts.validateRequest()`, which precedes `receive(parts: parts)`
+- **THEN** the stream is constructed as `MultipartParts(request:reader:)`, then `validateRequest()` is called on it, then `receive(parts:)` is called with it
 
 #### Scenario: ordinary bindings
 - **WHEN** a route declares only `@Path id: String` and `@JSONBody meta: Meta`
