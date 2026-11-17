@@ -182,7 +182,7 @@ Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`c
 
 ### Requirement: Coding resolves route, then controller, then application
 Each route SHALL encode and decode with its own `@Coding` if it declares one, else its controller's,
-else the witness's `coding wireMVCAppCoding` parameter. A route's `@Coding` SHALL NOT affect sibling
+else the app coding the witness receives as its `coding:` argument. A route's `@Coding` SHALL NOT affect sibling
 routes.
 
 #### Scenario: a controller tier and a route override
@@ -191,7 +191,7 @@ routes.
 
 #### Scenario: no inner tier
 - **WHEN** neither the controller nor the route carries `@Coding`
-- **THEN** the route passes `coding: wireMVCAppCoding`
+- **THEN** the route passes on the witness's own `coding:` argument
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`codingTiersResolveInnermostFirst`, `routesWithoutCodingUseTheAppTier`).
 
@@ -206,7 +206,7 @@ read off the root's proxy; otherwise it SHALL be `WireMVCCoding.default`.
 
 #### Scenario: none declared
 - **WHEN** the root carries no `@Coding`
-- **THEN** the entry contains `WireMVC.apply(graph, to: &builder, coding: WireMVCCoding.default)`
+- **THEN** the entry passes `WireMVCCoding.default` as `coding:` to `WireMVC.apply`
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`bootstrapEntryReadsDeclaredCodingOffTheGraph`, `bootstrapEntryGeneratesMain`).
 
