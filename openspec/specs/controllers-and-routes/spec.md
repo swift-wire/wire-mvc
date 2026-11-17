@@ -197,12 +197,12 @@ Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`c
 
 ### Requirement: The composition root's `@Coding` is the application tier
 The generated entry SHALL pass the application tier to `WireMVC.apply` as `coding:`. When the
-`@WireMVCBootstrap` root carries `@Coding`, that SHALL be `graph._WireGlobalMiddleware_<Root>.<field>`,
-read off the root's proxy; otherwise it SHALL be `WireMVCCoding.default`.
+`@WireMVCBootstrap` root carries `@Coding`, that SHALL be the field for that coding on the root's `_WireGlobalMiddleware_<Root>` proxy,
+read off the graph; otherwise it SHALL be `WireMVCCoding.default`.
 
 #### Scenario: a declared application coding
 - **WHEN** `@Singleton @WireMVCBootstrap @Coding(WireMVCCoding.app) struct AppBootstrap` is rendered
-- **THEN** the entry contains `coding: graph._WireGlobalMiddleware_AppBootstrap._wireWireMVCCoding_app` and not `WireMVCCoding.default`
+- **THEN** the entry passes the root proxy's `_wireWireMVCCoding_app` field as `coding:`, and not `WireMVCCoding.default`
 
 #### Scenario: none declared
 - **WHEN** the root carries no `@Coding`
