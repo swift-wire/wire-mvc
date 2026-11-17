@@ -15,8 +15,7 @@ Documentation: [Logging](../../../Sources/WireMVC/WireMVC.docc/Logging.md), [The
 
 ### Requirement: The core declares the logging keys and provides no logging binding
 `WireMVC` SHALL declare `WireMVCApplication.logger` as a `BindingKey<Logger>`, `WireMVCRequest.id` as a
-`BindingKey<String>`, and `WireMVCLogMetadata.stringEntries` as a `MappedKey<String, String>`, in
-`Sources/WireMVC/LoggingKeys.swift`. The `WireMVC` target SHALL provide no binding for any of the three.
+`BindingKey<String>`, and `WireMVCLogMetadata.stringEntries` as a `MappedKey<String, String>`. The `WireMVC` target SHALL provide no binding for any of the three.
 
 #### Scenario: both logging targets name the same keys
 - **WHEN** `WireMVCLogging` and `WireMVCTaskLocalLogging` each declare `@Provides(WireMVCApplication.logger)`
