@@ -41,9 +41,7 @@ Pinned by: nothing yet.
 
 ### Requirement: The route dispatches on the per-request controller, never a held subject
 The witness SHALL call the handler on the entry's `_wireSubject`. A scoped controller's
-witness SHALL NOT reference `self._wireSubject`. The names `_wireEnterScope`, `_wireSubject` and
-`_wireScopeTeardown` SHALL be `contributorProxyScopeEntryAccessor`, `wireScopeEntrySubjectField` and
-`wireScopeEntryTeardownField`.
+witness SHALL NOT reference `self._wireSubject`.
 
 #### Scenario: the handler call
 - **WHEN** the `Sessions` witness is rendered
@@ -71,7 +69,7 @@ binding SHALL be mapped by the route's `errorMapping` like a handler throw.
 
 #### Scenario: a scoped controller with an error mapping
 - **WHEN** `@Scoped(seed: HTTPRequest.self) @Controller("/me") @ErrorResponse(Unauthenticated.self, .unauthorized) struct Me` is rendered
-- **THEN** the `_wireEnterScope(request)` call is inside `building:`
+- **THEN** the call to `_wireEnterScope` with the request is inside `building:`
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`scopedControllerScopeEntryInsideDoWhenMapped`), `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`theBindComesAfterTheScopeEntryThatProducesIt`, for a bind following the entry). That a throw from scope entry is actually mapped by `errorMapping` at runtime is pinned by nothing yet.
 
