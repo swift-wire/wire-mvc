@@ -331,8 +331,8 @@ produces for the connection.
 Pinned by: `Tests/WireMVCTestingTests/InProcessTransportTests.swift` (`handlerThatNeverRespondsIsDistinguishable`). The `routeDidNotRespond` throw is pinned by nothing yet.
 
 ### Requirement: A client is reached only through `withClient`
-For every test consumer whose composed sources declare a `@WireMVCBootstrap`, `WireMVCRouteGen` SHALL emit a module-scope `withClient<R>(_ body: (TestClient) async throws -> R)`
-and, per controller with a client, `withClient<R>(for _: <Name>Client.Type, _ body: (<Name>Client) async throws -> R)`,
+For every test consumer whose composed sources declare a `@WireMVCBootstrap`, `WireMVCRouteGen` SHALL emit a module-scope `withClient(_:)` whose body takes a `TestClient`
+and, per controller with a client, a `withClient(for:_:)` overload taking `<Name>Client.Type` whose body takes a `<Name>Client`,
 both `@discardableResult` and both handing out a client carrying no doubles. No ambient accessor SHALL be
 emitted. A test consumer without a `@WireMVCBootstrap` still gets its `<Name>Client` types but no
 `withClient`, which is tracked in https://github.com/swift-wire/wire-mvc/issues/249. `TestClient.forSuite` SHALL be non-public and SHALL trap outside a suite the trait scopes with
@@ -340,7 +340,7 @@ emitted. A test consumer without a `@WireMVCBootstrap` still gets its `<Name>Cli
 
 #### Scenario: a keyless test consumer
 - **WHEN** `generateRouteContributors` runs with `testEntry: true` over a bootstrap and `NotesController`
-- **THEN** the output contains `for _: NotesControllerClient.Type,` and neither `var notesController:` nor `static var current`
+- **THEN** the output contains a `withClient(for:_:)` overload taking `NotesControllerClient.Type` and neither `var notesController:` nor `static var current`
 
 Pinned by: `Tests/WireMVCCodegenTests/ControllerClientGenerationTests.swift` (`theClientIsOnlyEmittedForATestConsumer`). The `forSuite` trap is pinned by nothing yet.
 
@@ -376,7 +376,7 @@ error.
 
 #### Scenario: a dependency's key
 - **WHEN** `Lib.swift` (module `SharedLib`) declares `LibBinds.mock` and `App.swift` (module `MyTests`) declares `Binds.mock`, with `consumerModule: "MyTests"`
-- **THEN** no diagnostic is reported, `enum _WireMVCKeyed_Binds_mock` is emitted, and nothing named `LibBinds_mock` is
+- **THEN** no diagnostic is reported, a keyed harness for `Binds.mock` is emitted, and nothing for `LibBinds.mock` is
 
 #### Scenario: no key
 - **WHEN** a test consumer declares only a `@WireMVCBootstrap`
@@ -386,7 +386,7 @@ Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`a
 
 ### Requirement: The keyed factory bootstraps the variant graph and registers each subject's variant proxy
 When a test consumer declares a `TestingKey` with at least one variant subject, `WireMVCRouteGen` SHALL emit
-a second factory `wiremvc(_ key: TestingKey, _ mode: WireMVCTestMode<WireMVCTestServerType>, environment:, services:)`
+a second factory `wiremvc(_:_:environment:services:)`, taking a `TestingKey` then a `WireMVCTestMode<WireMVCTestServerType>`,
 alongside the keyless one, and SHALL add `import WireTesting`. Its build SHALL call
 `Wire.bootstrap<Variant>()`, then for each subject build its variant proxy with
 `Wire.bootstrap<Variant>_<Subject>Contributor(wireGraph:)` from the variant graph and register its
@@ -395,17 +395,17 @@ A program consumer SHALL get none of this and its scoped dispatch SHALL be the p
 
 #### Scenario: a keyed test consumer
 - **WHEN** the composed sources declare `Binds.mock` with `@BindType(NoteBackend.self, MockNoteBackend.self)` and a `@Scoped(seed:)` `NotesController`
-- **THEN** the output contains `_ key: TestingKey, _ mode: WireMVCTestMode<WireMVCTestServerType>,` and `import WireTesting`, awaits `Wire.bootstrapBinds_mock()` and builds `Wire.bootstrapBinds_mock_NotesControllerContributor(wireGraph:)` from its result
+- **THEN** the output contains a `wiremvc(_:_:…)` factory taking a `TestingKey` then a `WireMVCTestMode<WireMVCTestServerType>`, and `import WireTesting`, awaits `Wire.bootstrapBinds_mock()` and builds `Wire.bootstrapBinds_mock_NotesControllerContributor(wireGraph:)` from its result
 
 #### Scenario: the same sources as a program consumer
 - **WHEN** `generateRouteContributors` runs with `testEntry: false`
-- **THEN** scoped dispatch enters scope through the production `self._wireEnterScope` with the request only, and the output emits no variant proxy and nothing named `_WireMVCKeyed_` or `wiremvc(_ key:`
+- **THEN** scoped dispatch enters scope through the production `_wireEnterScope` with the request only, and the output emits no variant proxy, no keyed harness and no keyed factory
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`keyedHarnessEmitsDoublesAwareDispatchAndFactory`, `keyedHarnessImportsWireTestingAndKeylessDoesNot`, `productionDispatchIsUnchangedWithoutTestEntry`).
 
 ### Requirement: The key a suite passes is asserted at suite entry
 When the served key's declaring module is known, the keyed factory SHALL begin its build with
-`precondition(key == TestingKey(fileID: "<Module>/<File>.swift", line: <line>), "<message>")`, where the
+a check that traps with `<message>` unless the key passed equals `TestingKey(fileID: "<Module>/<File>.swift", line: <line>)`, where the
 message is
 `@Suite(.wiremvc(…)) was passed a TestingKey this target does not serve. This target's harness is built for '<key>' (<fileID>:<line>); serving a different key's substitutions would need its own variant graph, which only the target declaring it emits. Pass <key>, or move the suite to the target that declares the key you meant.`.
 The check SHALL run inside the serve closure, not when the attribute is evaluated. Without module
@@ -413,16 +413,16 @@ attribution no assertion SHALL be emitted.
 
 #### Scenario: attributed sources
 - **WHEN** `generateRouteContributors` runs with `sourceModules: ["App.swift": "MyTests"]` and `static let mock = TestingKey()` is on line 16
-- **THEN** the output contains `key == TestingKey(fileID: "MyTests/App.swift", line: 16)` inside a `precondition(`
+- **THEN** the keyed factory traps unless the key passed equals `TestingKey(fileID: "MyTests/App.swift", line: 16)`
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`keyedFactoryAssertsTheKeyItWasBuiltFor`).
 
 ### Requirement: Every `@Scoped(seed:)` controller and every `@TestScopable` controller is a variant subject
 Under a served key, `keyedScopeEntry(for:key:)` SHALL treat a controller as a variant subject when it
-carries `@Scoped(seed:)` or `@TestScopable`. For each subject the harness SHALL emit, in
-`enum _WireMVCKeyed_<Variant>`, `static let <subject>Doubles = TestBindStore<_<Variant>_<Subject>Doubles>()`,
-a `typealias <Subject>Doubles = _<Variant>_<Subject>Doubles`, and a `@discardableResult withClient<R>(supplying doubles: _<Variant>_<Subject>Doubles, _ body:)`
-overload whose body receives `<Subject>Client` when one exists and `TestClient` otherwise. A seed-scoped
+carries `@Scoped(seed:)` or `@TestScopable`. For each subject the harness SHALL emit
+a doubles store, a `TestBindStore` of the subject's `_<Variant>_<Subject>Doubles`, in the key's keyed harness,
+a `typealias <Subject>Doubles = _<Variant>_<Subject>Doubles`, and a `@discardableResult` `withClient(supplying:_:)`
+overload taking `_<Variant>_<Subject>Doubles` whose body receives `<Subject>Client` when one exists and `TestClient` otherwise. A seed-scoped
 subject SHALL enter scope through `_wireEnterScope`, passing the request and the resolved doubles; a
 seedless one passes the resolved doubles only.
 
@@ -464,8 +464,8 @@ Pinned by: `Tests/WireMVCTestingTests/TestBindStoreTests.swift` (`putValueRemove
 
 ### Requirement: The keyed dispatch resolves doubles only while a harness is active, else answers an explicit 500
 Each variant subject's generated witness SHALL guard its scope entry with
-`WireMVCTesting.harnessIsActive`, `wireMVCTestCorrelationID(in: request)` and
-`_WireMVCKeyed_<Variant>.<subject>Doubles.value(for:)`. When any of the three fails it SHALL send
+`WireMVCTesting.harnessIsActive`, `wireMVCTestCorrelationID(in:)` over the request and
+a lookup of the subject's doubles store under the correlation ID. When any of the three fails it SHALL send
 `.internalServerError` with the body
 `WireMVC keyed test harness: no bound doubles for a request reaching this route under key <key> — wrap the request in withClient(supplying: <Subject>Doubles(...))`
 followed by a newline, and return. `wireMVCTestCorrelationID(in:)` SHALL be a pure header read that does
