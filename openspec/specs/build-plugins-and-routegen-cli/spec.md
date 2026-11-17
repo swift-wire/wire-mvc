@@ -192,7 +192,7 @@ plus `import WireMVCTesting` and `import Testing`. The two entries SHALL never b
 
 #### Scenario: the program entry
 - **WHEN** `App.swift` declares `@Singleton @WireMVCBootstrap struct AppBootstrap` and the tool runs without `--test-entry`
-- **THEN** the output contains `struct _WireMVCBootstrapEntry {`, `let bootstrap = graph.appBootstrap`, `import Wire`, and neither `import WireMVCTesting` nor `import Testing`
+- **THEN** the output contains `struct _WireMVCBootstrapEntry {` and `import Wire`, the entry reads the root off the graph as `graph.appBootstrap`, and the output contains neither `import WireMVCTesting` nor `import Testing`
 
 #### Scenario: the test entry
 - **WHEN** the same root is generated with `--test-entry` and `--import WireMVCBootstrapExample`
