@@ -16,39 +16,38 @@ Documentation: [RequestScope](../../../Sources/WireMVC/WireMVC.docc/RequestScope
 
 ### Requirement: A seeded controller enters its scope per request with the request as seed
 For a controller carrying `@Scoped(seed: S.self)`, every typed route of the production witness SHALL
-open its terminal body with `let wireMVCScopeEntry = try await self._wireEnterScope(request)`. On a
-route with no `@Middleware`, `request` SHALL be the register closure's `request`. The variant witness a
-keyed test harness generates enters scope with `_wireEnterScope(request, wireMVCDoubles)` instead, as
+begin its terminal body by calling `self._wireEnterScope` with the request. On a route with no
+`@Middleware`, the seed SHALL be the request the route was dispatched with. The variant witness a keyed
+test harness generates enters scope with the request and the suite's doubles instead, as
 [testing-harness](../testing-harness/spec.md) specifies.
 
 #### Scenario: a request-scoped sessions controller
 - **WHEN** `@Scoped(seed: HTTPRequest.self) @Controller("/sessions") struct Sessions` declares `@Get("/{id}") @JSONResponse func get(@Path id: String) async throws -> Session`
-- **THEN** the witness contains `let wireMVCScopeEntry = try await self._wireEnterScope(request)` and no diagnostic is reported
+- **THEN** the witness calls `self._wireEnterScope` with the request and no diagnostic is reported
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`scopedControllerConstructsPerRequestViaScopeEntry`).
 
 ### Requirement: On a route with middleware, scope entry follows the middleware fold
 On a typed route of a `@Scoped(seed:)` controller that carries `@Middleware`, the terminal body, and
-with it the scope entry, SHALL run inside `wireMVCFinalBox.withPendingContents` after the whole
-middleware fold, and the seed SHALL be the request the final middleware box carries, which a middleware
+with it the scope entry, SHALL run inside the final middleware box's `withPendingContents` after the
+whole middleware fold, and the seed SHALL be the request the final middleware box carries, which a middleware
 may have replaced through `RequestResponseMiddlewareBox.pending(request:...)`.
 
 #### Scenario: a scoped controller behind a middleware
 - **WHEN** a `@Scoped(seed: HTTPRequest.self) @Controller` carries `@Middleware(Gate.self)` and a request reaches one of its typed routes
-- **THEN** `Gate` runs before `_wireEnterScope` is called, and the scope is seeded from the `request` that `wireMVCFinalBox.withPendingContents` yields
+- **THEN** `Gate` runs before `_wireEnterScope` is called, and the scope is seeded from the request that the final box's `withPendingContents` yields
 
 Pinned by: nothing yet.
 
 ### Requirement: The route dispatches on the per-request controller, never a held subject
-The witness SHALL read the controller off the entry by name, `let wireMVCController =
-wireMVCScopeEntry._wireSubject`, and call the handler on `wireMVCController`. A scoped controller's
+The witness SHALL call the handler on the entry's `_wireSubject`. A scoped controller's
 witness SHALL NOT reference `self._wireSubject`. The names `_wireEnterScope`, `_wireSubject` and
 `_wireScopeTeardown` SHALL be `contributorProxyScopeEntryAccessor`, `wireScopeEntrySubjectField` and
 `wireScopeEntryTeardownField`.
 
 #### Scenario: the handler call
 - **WHEN** the `Sessions` witness is rendered
-- **THEN** it contains `let wireMVCController = wireMVCScopeEntry._wireSubject` and `try await wireMVCController.get(id: id)`, and does not contain `self._wireSubject`
+- **THEN** it calls `get(id:)` on the scope entry's `_wireSubject`, and does not contain `self._wireSubject`
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`scopedControllerConstructsPerRequestViaScopeEntry`).
 
@@ -56,7 +55,7 @@ Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`s
 The production witness of a controller with no `@Scoped(seed:)` attribute SHALL call the handler
 through the proxy's held `self._wireSubject`, and SHALL contain no `_wireEnterScope` call. The variant
 witness a keyed test harness generates for an app-`@Singleton` `@TestScopable` controller does enter
-scope, with `_wireEnterScope(wireMVCDoubles)`, as [testing-harness](../testing-harness/spec.md)
+scope, with the suite's doubles, as [testing-harness](../testing-harness/spec.md)
 specifies.
 
 #### Scenario: a singleton controller
@@ -72,13 +71,13 @@ binding SHALL be mapped by the route's `errorMapping` like a handler throw.
 
 #### Scenario: a scoped controller with an error mapping
 - **WHEN** `@Scoped(seed: HTTPRequest.self) @Controller("/me") @ErrorResponse(Unauthenticated.self, .unauthorized) struct Me` is rendered
-- **THEN** `let wireMVCScopeEntry = try await self._wireEnterScope(request)` appears after `building: {`
+- **THEN** the `_wireEnterScope(request)` call is inside `building:`
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`scopedControllerScopeEntryInsideDoWhenMapped`), `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`theBindComesAfterTheScopeEntryThatProducesIt`, for a bind following the entry). That a throw from scope entry is actually mapped by `errorMapping` at runtime is pinned by nothing yet.
 
 ### Requirement: Teardown runs in an async `defer` when the `building:` closure ends
-Immediately after scope entry the witness SHALL bind `let wireMVCScopeTeardown =
-wireMVCScopeEntry._wireScopeTeardown` and declare `defer { _ = await wireMVCScopeTeardown() }`. On a
+Immediately after scope entry the witness SHALL defer an awaited call to the entry's
+`_wireScopeTeardown`. On a
 typed route this `defer` SHALL sit in the `building:` closure, so the teardown SHALL run when that
 closure returns or throws, before the terminal drains the response headers and sends the response.
 Because the `defer` is declared after entry, a throw from entry itself SHALL skip it. The teardown's
@@ -86,7 +85,7 @@ result SHALL be discarded.
 
 #### Scenario: the generated teardown
 - **WHEN** the `Sessions` witness is rendered
-- **THEN** it contains `let wireMVCScopeTeardown = wireMVCScopeEntry._wireScopeTeardown`, `defer {` and `_ = await wireMVCScopeTeardown()`
+- **THEN** the witness defers a call to the entry's `_wireScopeTeardown`
 
 #### Scenario: `@Teardown` fires once per request
 - **WHEN** a `@Scoped(seed: HTTPRequest.self) @Controller("/whoami")` injects a `@Scoped(seed: HTTPRequest.self)` `RequestResource` whose `@Teardown func close()` increments a counter, and two `GET /whoami` requests are served
