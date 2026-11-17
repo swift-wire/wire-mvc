@@ -48,12 +48,12 @@ Pinned by: `Package.resolved`, `.github/workflows/build.yml` (`BuildAndRun`, ste
 ### Requirement: Each trait gates one module's contents and its product dependencies
 The `ServerTransport` trait SHALL gate the `OpenAPIRuntime` product dependency of
 `WireMVCServerTransport` and the `#if ServerTransport` body of its source. The `NIOHTTPServer` trait
-SHALL gate the `NIOHTTPServer` and `Logging` product dependencies of `WireMVCTesting` and the `#if
-NIOHTTPServer` bodies of `NIOHTTPServerTestServer.swift` and `SwiftHttpServerMode.swift`. The
-`Elementary` trait SHALL gate the `Elementary` product dependency of `WireMVCElementary` and the `#if
-Elementary` body of `WireMVCHTMLProducer.swift`. The only other trait reference SHALL be the test
-target `WireMVCServerTransportTests`, whose `AdapterTests.swift` is entirely `#if ServerTransport` and
-so holds no tests with the trait off. No other target SHALL reference a trait.
+SHALL gate the `NIOHTTPServer` and `Logging` product dependencies of `WireMVCTesting`, and
+`WireMVCTesting`'s `NIOHTTPServer` conformance to `WireMVCTestServer` and its `.swiftHttpServer` mode are
+compiled only with that trait. The `Elementary` trait SHALL gate the `Elementary` product dependency of
+`WireMVCElementary` and the `#if Elementary` body of its source. The only other trait reference SHALL
+be the test target `WireMVCServerTransportTests`, whose tests are compiled only with `ServerTransport`,
+so it holds no tests with the trait off. No other target SHALL reference a trait.
 
 #### Scenario: the ServerTransport trait build
 - **WHEN** CI runs `swift test --traits ServerTransport` at the repository root
@@ -81,8 +81,8 @@ mode.
 
 Pinned by: `Package.swift`, `.github/workflows/build.yml` (`BuildAndRun`, step `Build`, which shows only
 that the product resolves and compiles with the trait off). That the module declares nothing follows
-from the file-wide `#if ServerTransport` in `Sources/WireMVCServerTransport/WireMVCServerTransport.swift`
-and is pinned by nothing yet.
+from the `WireMVCServerTransport` target's source being wholly inside `#if ServerTransport` and is
+pinned by nothing yet.
 
 ### Requirement: The default-trait libraries cross-compile for static Linux
 The products `WireMVC`, `WireMVCRouter`, `WireMVCMiddleware`, `WireMVCLogging` and
