@@ -38,7 +38,7 @@ the path parameters the router matched from the route's template.
 
 #### Scenario: the generated witness registers a JSON route
 - **WHEN** `@Controller("/todos")` declares `@Get("/{id}") @JSONResponse func get(@Path id: String)`
-- **THEN** the generated witness calls `builder.register(method: .get, path: "/todos/{id}") { request, requestContext, pathParameters, _, responseSender in … }` and binds `id` from `pathParameters`
+- **THEN** the generated witness calls `builder.register(method: .get, path: "/todos/{id}")` with a five-parameter handler and binds `id` from its path-parameters argument
 
 #### Scenario: a hand-written route reads the matched parameter
 - **WHEN** a hand-written contributor registers `/users/{id}` and reads `pathParameters["id"]`
@@ -56,7 +56,7 @@ ServingHandler`.
 
 #### Scenario: the generated entry point drives all three
 - **WHEN** WireMVCRouteGen renders the `@main` for a `@WireMVCBootstrap` root
-- **THEN** the entry calls `builder.registerNotFound { … }`, then `builder.registerMethodNotAllowed { _, requestContext, wireMVCAllowed, _, responseSender in … }`, then `let handler = builder.finalize()`
+- **THEN** the entry calls `builder.registerNotFound`, then `builder.registerMethodNotAllowed`, then `builder.finalize()`
 
 #### Scenario: a hand-written program freezes before serving
 - **WHEN** `WireMVCExample` calls `WireMVC.apply(graph, to: &builder)` on a `TrieRouteBuilder` and then `builder.finalize()`
@@ -74,7 +74,7 @@ never does.
 
 #### Scenario: the generated witness spells the signature
 - **WHEN** WireMVCRouteGen renders a controller's witness
-- **THEN** it emits `func registerWireRoutes<Builder: HTTPServerRouteBuilder>(on builder: inout Builder, coding wireMVCAppCoding: WireMVCCoding) throws` with exactly the four `where` constraints above
+- **THEN** it emits `func registerWireRoutes<Builder: HTTPServerRouteBuilder>(on builder: inout Builder, coding: WireMVCCoding) throws` with exactly the four `where` constraints above
 
 #### Scenario: contributors are collated as existentials
 - **WHEN** a hand-written `WireMVCComposable` returns `[HelloController()]` as `routeContributors`
@@ -123,7 +123,7 @@ return `graph.services`. The result SHALL be `@discardableResult`. It SHALL carr
 
 #### Scenario: the generated entry passes the app coding
 - **WHEN** WireMVCRouteGen renders the `@main` for a root that declares no `@Coding`
-- **THEN** the entry contains `let wireMVCServices = try WireMVC.apply(graph, to: &builder, coding: WireMVCCoding.default)`
+- **THEN** the entry calls `try WireMVC.apply` on the graph and builder with `coding: WireMVCCoding.default` and keeps the returned services
 
 Pinned by: `Fixtures/Sources/WireMVCExample/main.swift` (run by the `BuildAndRun` job in `.github/workflows/build.yml`), `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`bootstrapEntryGeneratesMain`).
 
@@ -139,7 +139,7 @@ that sends that prepared outcome.
 
 #### Scenario: the generated entry mounts an unguarded path
 - **WHEN** a `@WireMVCBootstrap` root declares `func mountIntrospectionAt() -> String? { "/wiring" }` with no `@Middleware` on it
-- **THEN** the rendered entry contains `try WireMVC.mountIntrospection(for: graph, into: &builder, at: wireMVCIntrospectionPath)`
+- **THEN** the rendered entry calls `try WireMVC.mountIntrospection(for:into:at:)` with the graph, the builder and the path `mountIntrospectionAt()` returned
 
 Pinned by: `Fixtures/Sources/WireMVCExample/main.swift` (run by the `BuildAndRun` job in `.github/workflows/build.yml`), `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`bootstrapEntryMountsIntrospection`).
 
@@ -152,7 +152,7 @@ cancel the group when serving returns.
 
 #### Scenario: the generated entry hands the locals to serve
 - **WHEN** WireMVCRouteGen renders the `@main` for a `@WireMVCBootstrap` root
-- **THEN** its last statement is `try await WireMVC.serve(on: server, handler: wireMVCServed, services: wireMVCServices)`
+- **THEN** its last statement awaits `WireMVC.serve(on:handler:services:)` with the wrapped server, the globally-wrapped handler and the services `apply` returned
 
 #### Scenario: the generated program serves
 - **WHEN** CI boots the `WireMVCBootstrapExample` binary, whose `HelloController` answers `GET /hello/{name}` with `{"message":"Hello, <name>!"}`, and polls `GET /hello/ci`
@@ -248,7 +248,7 @@ letter upper-cased; and a scoped controller's per-request entry calls `self._wir
 
 #### Scenario: a scoped controller
 - **WHEN** the controller is `@Scoped(seed: HTTPRequest.self)`
-- **THEN** each route's terminal body enters the scope with `let wireMVCScopeEntry = try await self._wireEnterScope(request)`, dispatches on `wireMVCController` bound from `wireMVCScopeEntry._wireSubject`, and never reads `self._wireSubject`
+- **THEN** each route's terminal body enters the scope through `self._wireEnterScope` with the request, dispatches on the entry's `_wireSubject`, and never reads `self._wireSubject`
 
 #### Scenario: by-type middleware
 - **WHEN** a controller carries `@Middleware(ControllerGate.self)` and its route carries `@Middleware(RouteGate.self)`
