@@ -371,7 +371,7 @@ roles, drawn from `RawRouteRole`'s cases `request`, `requestContext`, `pathParam
 
 #### Scenario: a transformed sender by role
 - **WHEN** `@Post("/multipart") @RawRoute(.request, .responseSender) func upload(_ request: HTTPRequest, responseSender: consuming MultiPartSender<Sender>)` is generated
-- **THEN** the witness calls `try await self._wireSubject.upload(request, responseSender: responseSender)`
+- **THEN** the witness calls `upload(_:responseSender:)` on `self._wireSubject` with the request and the register closure's `MultiPartSender` as it stands, not wrapped in `ResponseHeaderApplyingSender`
 
 #### Scenario: one role for two parameters
 - **WHEN** a route `upload` carries `@RawRoute(.responseSender)` and takes two parameters
