@@ -35,7 +35,7 @@ Pinned by: `Fixtures/Sources/WireMVCExample/main.swift` (the `WireMVCLogging` ch
 
 ### Requirement: `WireMVCLogMetadata.applying` folds entries as string metadata
 `WireMVCLogMetadata.applying(_ entries: [String: String], to logger: Logger) -> Logger` SHALL return a
-copy of `logger` with `result[metadataKey: key] = .string(value)` set for every entry.
+copy of `logger` with each entry set as `.string` metadata under its key.
 
 #### Scenario: an app-side field on the logger
 - **WHEN** `TenantLogFields.tenant` contributes `"public"` to `WireMVCLogMetadata.stringEntries` at key `"tenant"`
