@@ -115,17 +115,17 @@ Pinned by: `Tests/WireMVCCodegenTests/ResponseHeaderGenerationTests.swift` (`res
 
 ### Requirement: A route names `headerFields:` only for what it states itself
 The generated outcome SHALL pass `headerFields: WireMVCResponseHeaders.resolved(…)` naming `statics:`
-when the route or controller has constants and `returned: wireMVCReturn.headers` when the response
+when the route or controller has constants and `returned:` the tuple's `headers` when the response
 tuple has `headers`, and SHALL omit `headerFields:` entirely when it has neither. Middleware
 contributions SHALL NOT appear in that call.
 
 #### Scenario: a route that states nothing
 - **WHEN** `@Get("/{id}") @JSONResponse func get(@Path id: String) async throws -> Thing` is generated
-- **THEN** the witness contains no `headerFields:` and still passes `responseHeaders: wireMVCResponseHeaderDrain` to the terminal
+- **THEN** the witness contains no `headerFields:` and still passes the drained registry to the terminal as `responseHeaders:`
 
 #### Scenario: constants and a returned field list
 - **WHEN** a route with `@ResponseHeader(.cacheControl, "no-store")` returns `(status:headers:body:)`
-- **THEN** the outcome passes `headerFields: WireMVCResponseHeaders.resolved(statics: [.set(.cacheControl, "no-store")], returned: wireMVCReturn.headers)`
+- **THEN** the outcome passes as `headerFields:` a call to `WireMVCResponseHeaders.resolved` with `statics: [.set(.cacheControl, "no-store")]` and `returned:` the tuple's `headers`
 
 Pinned by: `Tests/WireMVCCodegenTests/ResponseHeaderGenerationTests.swift` (`routeDeclaringNothingStillResolvesMiddlewareContributions`, `fullResponseTupleProjectsEveryElement`).
 
@@ -227,7 +227,7 @@ the registry to its terminal.
 
 #### Scenario: the generated destructure
 - **WHEN** `@Get("/{id}") @JSONResponse func get(@Path id: String)` is generated with no middleware
-- **THEN** the register closure begins `let wireMVCContextContents = requestContext.takeContents()` and `let wireMVCResponseHeaderDrain = wireMVCContextContents.responseHeaders.take()`, and the witness constrains `Builder.RequestContext: ~Copyable & ResponseHeaderCarrying`
+- **THEN** the register closure first takes the context's contents (`takeContents()`) and the registry from their `responseHeaders`, before anything else, and the witness constrains `Builder.RequestContext: ~Copyable & ResponseHeaderCarrying`
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`plainJSONRouteWithPathBinding`), `Tests/WireMVCCodegenTests/ResponseHeaderGenerationTests.swift` (`routeDeclaringNothingStillResolvesMiddlewareContributions`).
 
@@ -240,7 +240,7 @@ as its `RequestContext` and SHALL serve a handler by passing `WireMVCContextHand
 
 #### Scenario: the generated entry
 - **WHEN** WireMVCRouteGen renders the `@main` for a `@WireMVCBootstrap` root whose `createServer()` is declared `throws`
-- **THEN** it contains `let server = WireMVCContextServer(try bootstrap.createServer())`
+- **THEN** the entry wraps the result of `try` `createServer()` in `WireMVCContextServer`
 
 #### Scenario: a global contribution on a route with no middleware
 - **WHEN** the global `AccessLog` middleware contributes `x-served-by: wire-mvc` and `GET /hello/cached/Ada` has no `@Middleware` of its own
