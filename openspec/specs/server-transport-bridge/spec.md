@@ -174,8 +174,8 @@ When a handler returns without sending a response head, the bridge SHALL return
 Pinned by: nothing yet.
 
 ### Requirement: The bridge carries response-header contributions
-The bridge SHALL give each handler a `WireMVCContext<BridgeRequestContext>` holding a fresh
-`ResponseHeaderRegistry`, so the middleware box's contribution rules (see
+The bridge SHALL give each handler a `WireMVCContext` holding a fresh `ResponseHeaderRegistry`,
+so the middleware box's contribution rules (see
 [middleware](../middleware/spec.md)) hold on this runtime as they do natively. Dropping a contribution
 made after a gate has responded is done by `RequestResponseMiddlewareBox.contributing` in the `WireMVC`
 module, not by the bridge; the gate scenario shows that rule survives the bridge.
