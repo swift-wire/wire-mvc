@@ -26,7 +26,7 @@ a wrong-method request SHALL be answered `404` with no `Allow` header.
 
 #### Scenario: proposal-native, catch-all
 - **WHEN** only `GET /files/{path*}` is registered and a client sends `DELETE /files/a`
-- **THEN** the router resolves `.notFound` and the response is `404` with no `Allow` header
+- **THEN** the response is `404` with no `Allow` header
 
 #### Scenario: Hummingbird
 - **WHEN** `/only-get` is registered for `GET` on a Hummingbird router through `ServerTransport` and a client sends `DELETE /only-get`
@@ -61,7 +61,7 @@ handler exactly as it appeared in the request path.
 - **WHEN** the same route is requested on Vapor
 - **THEN** the handler receives `a b`
 
-Pinned by: `Tests/WireMVCRouterTests/RouteTrieTests.swift` (`aPercentEscapeInAParameterIsDecoded`, `malformedEscapesAreLeftAlone`, `bytesThatAreNotUTF8LeaveTheSegmentRaw`, `aCatchAllRemainderIsNotDecoded`), [SwiftHttpServerExample PathParameterDecodingTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/SwiftHttpServerExample/Tests/SwiftHttpServerExampleMockedTests/PathParameterDecodingTests.swift) (`anIdWithSpacesRoundTrips`, `anIdWithALiteralPercentRoundTrips`, `anIdWithASlashStaysOneParameter`), [HummingbirdExample PathParameterDecodingTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/HummingbirdExample/Tests/HummingbirdExampleTests/PathParameterDecodingTests.swift) (`aPercentEscapedParameterArrivesUndecoded`), [VaporExample PathParameterDecodingTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/VaporExample/Tests/VaporExampleTests/PathParameterDecodingTests.swift) (`aPercentEscapedParameterArrivesDecoded`).
+Pinned by: at the trie level, `Tests/WireMVCRouterTests/RouteTrieTests.swift` (`aPercentEscapeInAParameterIsDecoded`, `malformedEscapesAreLeftAlone`, `bytesThatAreNotUTF8LeaveTheSegmentRaw`, `aCatchAllRemainderIsNotDecoded`), which measure the values the router binds rather than what a handler receives; [SwiftHttpServerExample PathParameterDecodingTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/SwiftHttpServerExample/Tests/SwiftHttpServerExampleMockedTests/PathParameterDecodingTests.swift) (`anIdWithSpacesRoundTrips`, `anIdWithALiteralPercentRoundTrips`, `anIdWithASlashStaysOneParameter`), [HummingbirdExample PathParameterDecodingTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/HummingbirdExample/Tests/HummingbirdExampleTests/PathParameterDecodingTests.swift) (`aPercentEscapedParameterArrivesUndecoded`), [VaporExample PathParameterDecodingTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/VaporExample/Tests/VaporExampleTests/PathParameterDecodingTests.swift) (`aPercentEscapedParameterArrivesDecoded`).
 
 ### Requirement: The trailing slash is a policy natively and lenient on the bridged runtimes
 On the proposal-native runtime, a trailing slash on a request path SHALL be governed by the
@@ -69,30 +69,31 @@ On the proposal-native runtime, a trailing slash on a request path SHALL be gove
 request. On Hummingbird and on Vapor, a trailing slash SHALL be ignored, with no option to change it.
 
 #### Scenario: proposal-native, strict
-- **WHEN** `GET /users` is registered on a router frozen with `.strict` and `GET /users/` is requested
-- **THEN** the router resolves a miss
+- **WHEN** `GET /users` is registered on a `TrieRouteBuilder` with `.strict` and `GET /users/` is requested
+- **THEN** the route does not serve it, and the router answers it as not found
 
 #### Scenario: a bridged runtime
 - **WHEN** `GET /users` is registered on Hummingbird or Vapor and `GET /users/` is requested
 - **THEN** the route serves it
 
-Pinned by: `Tests/WireMVCRouterTests/RouteTrieTests.swift` (`lenientTreatsATrailingSlashAsTheSameResource`, `strictRejectsATrailingSlash`). The Hummingbird and Vapor behaviour is pinned by nothing yet.
+Pinned by: at the trie level, `Tests/WireMVCRouterTests/RouteTrieTests.swift` (`lenientTreatsATrailingSlashAsTheSameResource`, `strictRejectsATrailingSlash`). The Hummingbird and Vapor behaviour is pinned by nothing yet.
 
 ### Requirement: A duplicate route is fatal natively and on Hummingbird, and overrides on Vapor
-On the proposal-native runtime, registering a second route for the same method at the same trie node
-SHALL stop the process with a `preconditionFailure` at startup. On Hummingbird, a second handler for
-the same method and path SHALL stop the process with Hummingbird's own `preconditionFailure`. On Vapor,
-the later registration SHALL replace the earlier one, with an `info`-level log line.
+On the proposal-native runtime, registering a second route for the same method on a template that is
+the same route as an earlier one, equal to it or differing only in parameter names, SHALL stop the
+process with a `preconditionFailure` at startup. On Hummingbird, a second handler for the same method
+and path SHALL stop the process with Hummingbird's own `preconditionFailure`. On Vapor, the later
+registration SHALL replace the earlier one, with an `info`-level log line.
 
 #### Scenario: proposal-native
 - **WHEN** two controllers both register `GET /users`
-- **THEN** `RouteTrie.insert` reports `.duplicate(existing: "/users")` and `TrieRouteBuilder.register` fails with `duplicate route: GET '/users' is registered twice.`
+- **THEN** `TrieRouteBuilder.register` fails with `duplicate route: GET '/users' is registered twice.`
 
 #### Scenario: Vapor
 - **WHEN** two controllers both register `GET /users` on Vapor through the bridge
 - **THEN** RoutingKit logs a line beginning `[Routing] Overriding duplicate route for GET` at `info` level, and the second handler serves
 
-Pinned by: `Tests/WireMVCRouterTests/RouteTrieTests.swift` (`registeringTheSameMethodAndPathTwiceIsADuplicate`). The native `preconditionFailure` and the Hummingbird and Vapor behaviour are pinned by nothing yet.
+Pinned by: at the trie level, `Tests/WireMVCRouterTests/RouteTrieTests.swift` (`registeringTheSameMethodAndPathTwiceIsADuplicate`), which measures that the second template is refused, not the builder's message. The native `preconditionFailure` and the Hummingbird and Vapor behaviour are pinned by nothing yet.
 
 ### Requirement: A catch-all serves natively and is refused on the bridged runtimes
 On the proposal-native runtime, a trailing `{name*}` template SHALL serve and bind the remainder of the
@@ -107,7 +108,7 @@ path. On Hummingbird and on Vapor, `WireMVCServerTransport.apply` SHALL throw
 - **WHEN** the same controller is composed into a graph passed to `WireMVCServerTransport.apply`
 - **THEN** `apply` throws `catchAllNotBridgeable(path: "/assets/{path*}", segment: "{path*}")`
 
-Pinned by: `Tests/WireMVCRouterTests/RouteTrieTests.swift` (`aCatchAllBindsTheRemainder`), [SwiftHttpServerExample AssetRoutingTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/SwiftHttpServerExample/Tests/SwiftHttpServerExampleMockedTests/AssetRoutingTests.swift) (`aCatchAllMatchesADeepPath`). The refusal on the bridged runtimes is pinned by nothing yet.
+Pinned by: at the trie level, `Tests/WireMVCRouterTests/RouteTrieTests.swift` (`aCatchAllBindsTheRemainder`), [SwiftHttpServerExample AssetRoutingTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/SwiftHttpServerExample/Tests/SwiftHttpServerExampleMockedTests/AssetRoutingTests.swift) (`aCatchAllMatchesADeepPath`). The refusal on the bridged runtimes is pinned by nothing yet.
 
 ### Requirement: Ambient task-local context reaches a handler on every runtime
 A task-local value bound by the host around request dispatch SHALL be readable inside a WireMVC route
