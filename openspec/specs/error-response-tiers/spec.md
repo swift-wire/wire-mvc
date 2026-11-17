@@ -15,20 +15,20 @@ Documentation: [ErrorHandling](../../../Sources/WireMVC/WireMVC.docc/ErrorHandli
 ## Requirements
 
 ### Requirement: The status form maps an error type to a status
-`@ErrorResponse(E.self, .status)` SHALL add the chain element `(wireMVCError is E ?
-WireMVCOutcome.status(.status) : nil)`, which answers a thrown `E` with that status and no body and
-falls through for any other error.
+`@ErrorResponse(E.self, .status)` SHALL add a chain element that yields
+`WireMVCOutcome.status(.status)` when the thrown error is an `E`, and `nil` otherwise, so it answers a
+thrown `E` with that status and no body and falls through for any other error.
 
 #### Scenario: a controller-scope shorthand
 - **WHEN** `@Controller("/users") @ErrorResponse(NotFound.self, .notFound) struct Users` declares `@Get("/{id}") @JSONResponse func get(@Path id: String)`
-- **THEN** the route's `errorMapping: { wireMVCError in` closure contains `(wireMVCError is NotFound ? WireMVCOutcome.status(.notFound) : nil)` and no diagnostic is reported
+- **THEN** the route's `errorMapping:` chain answers `NotFound` with `.status(.notFound)` and no diagnostic is reported
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`controllerScopeStatusShorthandCoversRoute`).
 
 ### Requirement: The body form encodes the closure's value as JSON with the given status
-`@ErrorResponse(E.self, .status, { e in Body })` SHALL add the chain element
-`wireMVCRespond(to: wireMVCError, as: E.self, status: .status, (closure))`, which for a thrown `E`
-returns `.json(body(e), status: status)` and otherwise returns `nil`.
+`@ErrorResponse(E.self, .status, { e in Body })` SHALL add a chain element that calls
+`wireMVCRespond(to:as:status:_:)` with the thrown error, `E.self`, the status and the closure, which for
+a thrown `E` returns `.json(body(e), status: status)` and otherwise returns `nil`.
 
 #### Scenario: a user that is not found
 - **WHEN** `UsersController` declares `@ErrorResponse(UserStore.NotFound.self, .notFound, { _ in APIError(message: "user not found") })`, and a client requests `GET /users/999` from its `@Get("/{id}")` route, which throws `UserStore.NotFound` for an unknown id
@@ -38,13 +38,13 @@ Pinned by: `Fixtures/Sources/WireMVCExample/main.swift` (the `GET /users/999` ch
 
 ### Requirement: The closure form maps through a typed-parameter closure returning an outcome
 `@ErrorResponse({ (e: E) in … })` SHALL take `E` from the closure's annotated parameter type and add
-the chain element `wireMVCRespond(to: wireMVCError, (closure))`, which returns the closure's
-`WireMVCOutcome` for a thrown `E` and `nil` otherwise. A chain containing a closure element SHALL be
+a chain element that calls `wireMVCRespond(to:_:)` with the thrown error and the closure, which
+returns the closure's `WireMVCOutcome` for a thrown `E` and `nil` otherwise. A chain containing a closure element SHALL be
 prefixed with `try`.
 
 #### Scenario: a validation error
 - **WHEN** a route declares `@ErrorResponse({ (e: ValidationError) in try .json(Problem(e.message), status: .unprocessableContent) })`
-- **THEN** the witness contains `wireMVCRespond(to: wireMVCError, ({ (e: ValidationError) in`
+- **THEN** the route's chain passes the `(e: ValidationError)` closure to `wireMVCRespond(to:_:)`
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`inlineClosureMapping`, `routeClosureOverridesController`, `catchAllClosureIsTerminal`). The `try` prefix is pinned only by `catchAllClosureIsTerminal`, whose closure element is a catch-all; for a chain whose only closure element is a typed mapping it is pinned by nothing yet.
 
@@ -102,7 +102,7 @@ answers.
 
 #### Scenario: a route closure ahead of the controller's status
 - **WHEN** a controller maps `NotFound` to `.notFound` and its route maps `NotFound` with `{ (e: NotFound) in .status(.gone) }`
-- **THEN** `wireMVCRespond(to: wireMVCError, ({ (e: NotFound) in` appears before `(wireMVCError is NotFound ? WireMVCOutcome.status(.notFound) : nil)`
+- **THEN** the route's closure element precedes the controller's `NotFound` status element in the chain
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`routeClosureOverridesController`). Controller-before-global ordering is pinned by nothing yet.
 
@@ -113,7 +113,7 @@ and controller declare no `@ErrorResponse`.
 
 #### Scenario: a controller with no mappings
 - **WHEN** the root declares `@ErrorResponse(TenantMissing.self, .badRequest)` and `ThingsController` declares none
-- **THEN** its route's chain contains `(wireMVCError is TenantMissing ? WireMVCOutcome.status(.badRequest) : nil)`
+- **THEN** its route's chain maps `TenantMissing` to `.badRequest`
 
 #### Scenario: over the wire
 - **WHEN** the root declares `@ErrorResponse(TenantMissing.self, .badRequest)`, and `GET /hello/tenant` throws `TenantMissing` while neither its route nor `HelloController` maps it
@@ -122,17 +122,16 @@ and controller declare no `@ErrorResponse`.
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`globalErrorResponseFoldsIntoEveryRoute`), `Fixtures/Tests/WireMVCBootstrapExampleTests/WithTestServerTests.swift` (`globalErrorTierMapsToBadRequest`), `.github/workflows/build.yml` (`BuildAndRun`, step `Run @WireMVCBootstrap example (boot, probe, stop)`).
 
 ### Requirement: `WireMVCBindingError` follows the typed mappings on a route with bindings
-On a route with at least one parameter binding, the chain SHALL include
-`(wireMVCError as? WireMVCBindingError).map { WireMVCOutcome.status($0.status) }` after every typed
-mapping and before the catch-all. A route with no bindings SHALL NOT include it.
+On a route with at least one parameter binding, the chain SHALL include an element that answers a
+`WireMVCBindingError` with its own `status`, after every typed mapping and before the catch-all. A route with no bindings SHALL NOT include it.
 
 #### Scenario: a bound route
 - **WHEN** a route binds `@Path id` under a controller mapping `NotFound`
-- **THEN** its chain contains `(wireMVCError as? WireMVCBindingError).map` after the `NotFound` element
+- **THEN** its chain contains the binding-error element after the `NotFound` element
 
 #### Scenario: a route with no bindings
 - **WHEN** `@Get @JSONResponse @ErrorResponse(NotFound.self, .notFound) func list()` takes no parameters
-- **THEN** its witness contains `errorMapping: { wireMVCError in` and does not contain `as? WireMVCBindingError`
+- **THEN** the route has an `errorMapping:` chain with no binding-error element
 
 #### Scenario: malformed input over the wire
 - **WHEN** `POST /users`, a route that binds a `@JSONBody` parameter and declares no catch-all, arrives with `Content-Type: text/plain`, and again as `application/json` with the body `{bad`
@@ -143,12 +142,13 @@ Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`c
 ### Requirement: The innermost catch-all follows the binding built-in
 When any tier declares a catch-all, the chain SHALL end in the first catch-all found in route,
 controller, global order, as a non-optional element: `WireMVCOutcome.status(.status)` for the status
-form, `wireMVCRespondAny(to: wireMVCError, (closure))` for the closure form, or
-`wireMVCRespondAny(to: wireMVCError, status: .status, (closure))` for the body form.
+form, a call to `wireMVCRespondAny(to:_:)` with the thrown error and the closure for the closure form,
+or a call to `wireMVCRespondAny(to:status:_:)` with the thrown error, the status and the closure for the
+body form.
 
 #### Scenario: a controller catch-all closure
 - **WHEN** a controller declares `@ErrorResponse({ (e: Swift.Error) in .status(.internalServerError) })` and its route binds `@Path id`
-- **THEN** the chain contains `wireMVCRespondAny(to: wireMVCError, ({ (e: Swift.Error) in`, the closure body reads `return try (`, and nothing is rethrown
+- **THEN** the chain ends in the catch-all closure passed to `wireMVCRespondAny(to:_:)`, the chain is prefixed with `try`, and the error is never rethrown
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`catchAllClosureIsTerminal`), which asserts the closure-form element is present. Its position after the binding built-in and at the end of the chain, the status-form and body-form terminal elements, and selection of the route's catch-all over a controller's are pinned by nothing yet.
 
@@ -159,7 +159,7 @@ bindings SHALL have the chain `WireMVCOutcome.status(.internalServerError)` alon
 
 #### Scenario: the controller shorthand without a catch-all
 - **WHEN** a controller maps only `NotFound`
-- **THEN** the chain ends `?? WireMVCOutcome.status(.internalServerError)` and the witness contains no `throw wireMVCError`
+- **THEN** the chain ends `?? WireMVCOutcome.status(.internalServerError)` and the terminal never rethrows the error
 
 #### Scenario: an unmapped handler throw over the wire
 - **WHEN** `GET /boom` throws an error no tier maps and the route has no bindings
@@ -175,7 +175,7 @@ SHALL run inside the same mapped region.
 
 #### Scenario: a scoped controller with a mapping
 - **WHEN** `@Scoped(seed: HTTPRequest.self) @Controller("/me") @ErrorResponse(Unauthenticated.self, .unauthorized) struct Me` is rendered
-- **THEN** `let wireMVCScopeEntry = try await self._wireEnterScope(request)` appears after `building: {`
+- **THEN** the call to `self._wireEnterScope(request)` sits inside the `building:` closure
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`scopedControllerScopeEntryInsideDoWhenMapped`).
 
