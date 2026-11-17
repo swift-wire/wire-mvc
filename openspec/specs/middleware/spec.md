@@ -33,7 +33,7 @@ required arguments with no default, and `responded(request:route:)` SHALL take t
 
 #### Scenario: the generated fold builds the base box
 - **WHEN** a route at `/x/y` carries one `@Middleware`
-- **THEN** its register closure contains `RequestResponseMiddlewareBox.pending(request: request, requestContext: wireMVCBaseContext, route: wireMVCRoute, reader: reader, responseSender: responseSender, responseHeaders: wireMVCFoldRegistry)`
+- **THEN** its register closure builds the base box with `RequestResponseMiddlewareBox.pending(request:requestContext:route:reader:responseSender:responseHeaders:)`, passing the base context and response-header registry taken from the request context and a `RouteContext` for `/x/y`
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`middlewareFactoryKeyFold`).
 
@@ -109,7 +109,7 @@ chain's final box.
 
 #### Scenario: the generated terminal
 - **WHEN** a route carries one `@Middleware`
-- **THEN** the register closure calls `try await wireMVCChain.intercept(input: wireMVCBaseBox) { wireMVCFinalBox in return try await wireMVCFinalBox.withPendingContents { … } }` and the handler call sits inside that closure
+- **THEN** the register closure calls the chain's `intercept(input:)` on the base box, its continuation calls `withPendingContents` on the final box, and the handler call sits inside that `withPendingContents` closure
 
 #### Scenario: `withPendingContents` yields the final box's route
 - **WHEN** `withPendingContents` is called on a pending box for `/documents/{id}`
@@ -119,13 +119,13 @@ Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`m
 
 ### Requirement: Each route's chain is folded inline with `wireCompose`
 `wireCompose(_:)` SHALL take a `@MiddlewareBuilder` closure and return the concrete composed
-`Middleware` it builds. The generated register closure for a route with middleware SHALL bind
-`let wireMVCChain = wireCompose { … }` listing one fold entry per `@Middleware`. A route with no
+`Middleware` it builds. The generated register closure for a route with middleware SHALL compose
+the chain with `wireCompose { … }`, listing one fold entry per `@Middleware`. A route with no
 middleware SHALL register without a box, a chain or `withPendingContents`.
 
 #### Scenario: a route with one factory middleware
 - **WHEN** `@Controller("/x") @Middleware(Keys.session) struct C` declares `@Get("/y")` and `Keys.session` is a factory key
-- **THEN** the witness binds `let wireMVCChain = wireCompose {` with the single entry `self._wireFactory_Keys_session.create(Builder.RequestContext.Base.self, Builder.Reader.self, Builder.ResponseSender.self)`
+- **THEN** the witness composes with `wireCompose` over the single entry `self._wireFactory_Keys_session.create(Builder.RequestContext.Base.self, Builder.Reader.self, Builder.ResponseSender.self)`
 
 #### Scenario: a route with no middleware
 - **WHEN** `@Controller("/todos") struct Todos` declares `@Get("/{id}") @JSONResponse func get(@Path id: String)` and carries no `@Middleware`
@@ -175,8 +175,7 @@ On a controller or route, `@Middleware(key)` where `key` names a `@Factory` temp
 Builder.ResponseSender.self)`, with every character of the key's text that is not a letter, a number
 (Swift `Character.isLetter` or `isNumber`) or `_` replaced by `_`. The exception is a keyed-harness
 variant witness whose factory `@Inject`s a `@BindType`'d slot: there the entry SHALL be
-`create(doubles: wireMVCDoubles, Builder.RequestContext.Base.self, Builder.Reader.self, Builder.ResponseSender.self)`,
-with `wireMVCDoubles` bound above the fold.
+`create(doubles:…)` with the same three box types, passing the request's resolved doubles.
 
 #### Scenario: `Keys.session`
 - **WHEN** a controller carries `@Middleware(Keys.session)` and `Keys.session` is a factory key
@@ -188,7 +187,7 @@ with `wireMVCDoubles` bound above the fold.
 
 #### Scenario: a mock-consuming factory under a keyed harness
 - **WHEN** `Audit`, the `@Factory` behind `AuditKeys.factory`, declares `@Inject var backend: any NoteBackend` and a `TestingKey` carries `@BindType(NoteBackend.self, MockNoteBackend.self)`
-- **THEN** the variant witness folds `self._wireFactory_AuditKeys_factory.create(doubles: wireMVCDoubles, Builder.RequestContext.Base.self, Builder.Reader.self, Builder.ResponseSender.self)` after `let wireMVCDoubles =`, and the production witness folds the box-role-only `create`
+- **THEN** the variant witness folds `self._wireFactory_AuditKeys_factory.create(doubles:…)` with the doubles resolved earlier in the witness and the three box types, and the production witness folds the box-role-only `create`
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`middlewareFactoryKeyFold`, `mockConsumingFactoryFoldThreadsDoublesToCreate`), `Fixtures/Sources/WireMVCExample/main.swift` (run by the `BuildAndRun` job in `.github/workflows/build.yml`).
 
@@ -249,7 +248,7 @@ generated entry SHALL call it once, on the result of `builder.finalize()`.
 
 #### Scenario: the entry wraps the frozen router
 - **WHEN** WireMVCRouteGen renders the `@main` for `AppBootstrap`
-- **THEN** it contains `let wireMVCServed = graph._WireGlobalMiddleware_AppBootstrap.wrapGlobalMiddleware(handler)`
+- **THEN** it calls `wrapGlobalMiddleware` on the root's `_WireGlobalMiddleware_AppBootstrap` proxy with the finalized router
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`globalMiddlewareProxyWrapsRouterWithFactories`, `globalMiddlewareProxyIdentityWhenEmpty`, `bootstrapEntryGeneratesMain`). The written order of the factory entries is pinned by nothing yet.
 
@@ -303,7 +302,7 @@ register closure without passing through any `@ErrorResponse` mapping.
 
 #### Scenario: the mapping sits inside the terminal
 - **WHEN** a route with one `@Middleware` is rendered
-- **THEN** the `errorMapping:` closure appears only inside the `withPendingContents` closure, not around `wireMVCChain.intercept`
+- **THEN** the `errorMapping:` closure appears only inside the `withPendingContents` closure, not around the chain's `intercept` call
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`middlewareFactoryKeyFold`).
 
