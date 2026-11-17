@@ -14,8 +14,8 @@ itself.
 ### Requirement: `CORSMiddleware` is a factory-form middleware reading `CORSConfiguration` from the graph
 `CORSMiddleware<Ctx, Reader, Sender>` SHALL be a public `Middleware` annotated
 `@Factory(CORSMiddlewareKeys.factory) @MiddlewareFactory`, with `Input` and `NextInput` both
-`RequestResponseMiddlewareBox<Ctx, Reader, Sender>`, and SHALL read its policy from `@Inject var
-configuration: CORSConfiguration`. `CORSMiddlewareKeys.factory` SHALL be a `FactoryKey`.
+`RequestResponseMiddlewareBox<Ctx, Reader, Sender>`, and SHALL inject its `CORSConfiguration`
+from the graph. `CORSMiddlewareKeys.factory` SHALL be a `FactoryKey`.
 
 #### Scenario: folded globally with the configuration provided by the root
 - **WHEN** `FallbackBootstrap` is declared `@WireMVCBootstrap @Middleware(CORSMiddlewareKeys.factory)` and `@Provides package static let cors = CORSConfiguration(allowOrigin: .oneOf(["https://allowed.example"]), …)`, and its app serves a `@Get` route at `/ping`
@@ -59,7 +59,7 @@ the request carries `Origin` and the value is not nothing, `CORSMiddleware` SHAL
 Pinned by: `Tests/WireMVCMiddlewareTests/CORSConfigurationTests.swift` (`originBasedEchoesTheRequestOrigin`, `oneOfEchoesOnlyListedOrigins`, `fixedPoliciesDoNotVaryByOrigin`), `Fixtures/Tests/WireMVCFallbackExampleTests/FallbackTests.swift` (`anUnlistedOriginGetsNoAllowOrigin`). The `.custom` value is pinned by nothing yet.
 
 ### Requirement: Credentials are advertised when configured
-When `configuration.allowCredentials` is `true` and the request carries `Origin`, `CORSMiddleware`
+When the configuration's `allowCredentials` is `true` and the request carries `Origin`, `CORSMiddleware`
 SHALL contribute `Access-Control-Allow-Credentials: true`.
 
 #### Scenario: the fixture's credentialed policy
@@ -95,8 +95,8 @@ Pinned by: `Tests/WireMVCMiddlewareTests/CORSConfigurationTests.swift` (`fixedPo
 Pinned by: nothing yet.
 
 ### Requirement: `Expose-Headers` is sent on an actual request only
-When the request carries `Origin`, is not a preflight and `configuration.exposedHeaders` is not
-empty, `CORSMiddleware` SHALL contribute `Access-Control-Expose-Headers` with the names' `rawName`s joined by `", "`. A
+When the request carries `Origin`, is not a preflight and the configuration's `exposedHeaders` is
+not empty, `CORSMiddleware` SHALL contribute `Access-Control-Expose-Headers` with the names' `rawName`s joined by `", "`. A
 preflight SHALL NOT receive it.
 
 #### Scenario: the fixture exposes one field
