@@ -33,15 +33,16 @@ Pinned by: `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`theBuiltI
 An extension SHALL supply `bind(name:request:pathParameters:body:coding:)` forwarding to it, and the
 generated terminal SHALL call the coding-aware form (`bind`, or `bindOptional` for an optional or defaulted
 parameter), passing as `coding:` the innermost `@Coding` in scope (the route's, then the controller's, read
-from the proxy), else `wireMVCAppCoding`.
+from the proxy), else the app coding passed in to the generated contributor's
+`registerWireRoutes(on:coding:)`.
 
 #### Scenario: every parameter is bound through the coding-aware call
 - **WHEN** a route declares `@Path scope: String` and `@JSONBody filter: Filter`
-- **THEN** the terminal contains `let scope = try await Path<String>.bind(name: "scope", request: request, pathParameters: pathParameters, body: requestBody, coding: wireMVCAppCoding)` and the matching `JSONBody<Filter>.bind(…)` line
+- **THEN** the terminal calls `Path<String>.bind(name: "scope", …)` and `JSONBody<Filter>.bind(…)`, each passing the app coding as `coding:`
 
 #### Scenario: a controller's `@Coding` replaces the app's
 - **WHEN** a `@Coding(WireMVCCoding.controller)` controller declares `@Get("/{id}") func get(@Path id: String)` and a second route that adds `@Coding(WireMVCCoding.route)`
-- **THEN** the first route's bind passes `coding: self._wireWireMVCCoding_controller`, the second's passes `coding: self._wireWireMVCCoding_route`, and neither passes `wireMVCAppCoding`
+- **THEN** the first route's bind passes `coding: self._wireWireMVCCoding_controller`, the second's passes `coding: self._wireWireMVCCoding_route`, and neither passes the app coding
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`allParameterBindingShapes`, `codingTiersResolveInnermostFirst`).
 
@@ -134,7 +135,7 @@ Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`a
 `pathParameterTypeMismatch`, `missingQueryParameter`, `queryParameterTypeMismatch`, `missingHeader` and
 `headerTypeMismatch`; `.unsupportedMediaType` (415) for `unsupportedMediaType`; and
 `.unprocessableContent` (422) for `malformedBody`. The `errorMapping` of every route that has at least
-one binding SHALL include `(wireMVCError as? WireMVCBindingError).map { WireMVCOutcome.status($0.status) }`.
+one binding SHALL map a thrown `WireMVCBindingError` to `WireMVCOutcome.status` of its `status`.
 
 #### Scenario: the built-in mapping is emitted
 - **WHEN** WireMVCRouteGen renders a route with any binding
@@ -187,16 +188,16 @@ Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`p
 ### Requirement: Binding runs inside the terminal's `building` closure, after scope entry
 WireMVCRouteGen SHALL emit every `bind` call inside the terminal's `building` closure, so a binding
 failure reaches that route's `errorMapping`. On a `@Scoped(seed:)` controller the binds SHALL follow the
-scope-entry line, `let wireMVCScopeEntry = try await self._wireEnterScope(…)`, whose arguments are
-`(request)` in the production witness and `(request, wireMVCDoubles)` in a keyed test-variant witness.
+call to `_wireEnterScope` (with the request; in a keyed test-variant witness, with the request and the
+suite's doubles).
 
 #### Scenario: the scope entry is inside the mapped region
 - **WHEN** a `@Scoped(seed: HTTPRequest.self)` controller carries `@ErrorResponse(Unauthenticated.self, .unauthorized)`
-- **THEN** `building: {` precedes `let wireMVCScopeEntry = try await self._wireEnterScope(request)` in the rendered witness
+- **THEN** the `_wireEnterScope(request)` call is inside `building:` in the rendered witness
 
 #### Scenario: an ordinary bind on a scoped controller
 - **WHEN** a `@Scoped(seed: HTTPRequest.self)` controller declares `@Get("/{id}") func note(@Path id: String)`
-- **THEN** `let wireMVCScopeEntry = try await self._wireEnterScope(request)` precedes `let id = try await Path<String>.bind(` in the rendered witness
+- **THEN** the `_wireEnterScope(request)` call precedes the `Path<String>.bind(name: "id", …)` call in the rendered witness
 
 #### Scenario: a scoped controller binds a path parameter over HTTP
 - **WHEN** `GET /notes/z` reaches `@Scoped(seed: HTTPRequest.self) @Controller("/notes")`'s `@Get("/{id}") note(@Path id: String)`, which returns `stamp.stamp(await backend.note(id))` from the controller's injected `stamp`, which prefixes `stamped:`, and `backend`, which prefixes `real:`
@@ -205,15 +206,14 @@ scope-entry line, `let wireMVCScopeEntry = try await self._wireEnterScope(…)`,
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`scopedControllerScopeEntryInsideDoWhenMapped`), `Fixtures/Tests/WireMVCBootstrapExampleBindTests/KeylessCoexistTests.swift` (`keylessSuiteServesRealBackendOnSharedRoute`). The bind-after-entry order is measured only for a graph-aware binding, by `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`theBindComesAfterTheScopeEntryThatProducesIt`); the order of an ordinary bind is pinned by nothing yet.
 
 ### Requirement: The body is collected once, and only when a binding declares `.body`
-When any parameter's binding declares `.body`, the terminal SHALL be called with
-`collectingBodyFrom: reader`, its `building` closure SHALL take `requestBody`, and every binding on the
-route SHALL be passed `body: requestBody`. A route with no `.body` binding SHALL collect nothing, SHALL
-pass `body: nil`, and SHALL name the register closure's reader parameter `_` unless a streaming binding
-needs it.
+When any parameter's binding declares `.body`, the terminal SHALL be its `collectingBodyFrom:`
+overload, and the collected body SHALL be passed as `body:` to every bind on the route. A route with no
+`.body` binding SHALL collect nothing, SHALL pass `body: nil`, and SHALL name the register closure's
+reader parameter `_` unless a streaming binding needs it.
 
 #### Scenario: a route with a body binding
 - **WHEN** a route declares `@JSONBody filter: Filter` beside `@Path` and `@Query` parameters
-- **THEN** the terminal carries `collectingBodyFrom: reader` and `building: { requestBody in`, and every bind passes `body: requestBody`
+- **THEN** the terminal is the `collectingBodyFrom:` overload and every bind receives the collected body as `body:`
 
 #### Scenario: a route without one
 - **WHEN** `@Get("/{id}") @JSONResponse func get(@Path id: String)` is rendered
@@ -221,7 +221,7 @@ needs it.
 
 #### Scenario: a user binding with `.body`
 - **WHEN** `@RequestBinding(.body) struct FormBody` is used as `@FormBody input: Login`
-- **THEN** the route carries `collectingBodyFrom: reader` and binds with `body: requestBody`
+- **THEN** the terminal is the `collectingBodyFrom:` overload and the bind receives the collected body as `body:`
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`allParameterBindingShapes`, `plainJSONRouteWithPathBinding`), `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`collectsTheBody`, `noObligationNoCollection`, `userBodyBindingOnAStreamingRoute`).
 
