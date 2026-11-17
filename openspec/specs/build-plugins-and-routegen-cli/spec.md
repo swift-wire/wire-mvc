@@ -192,7 +192,7 @@ plus `import WireMVCTesting` and `import Testing`. The two entries SHALL never b
 
 #### Scenario: the program entry
 - **WHEN** `App.swift` declares `@Singleton @WireMVCBootstrap struct AppBootstrap` and the tool runs without `--test-entry`
-- **THEN** the output contains `struct _WireMVCBootstrapEntry {` and `import Wire`, the entry reads the root off the graph as `graph.appBootstrap`, and the output contains neither `import WireMVCTesting` nor `import Testing`
+- **THEN** the output contains `struct _WireMVCBootstrapEntry {` and `import Wire`, the entry reads the root off the graph's `appBootstrap` field, and the output contains neither `import WireMVCTesting` nor `import Testing`
 
 #### Scenario: the test entry
 - **WHEN** the same root is generated with `--test-entry` and `--import WireMVCBootstrapExample`
@@ -238,18 +238,18 @@ Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`k
 
 ### Requirement: The keyed harness needs a bootstrap root and a keyed subject
 Under `--test-entry` with a `TestingKey` found, WireMVCRouteGen SHALL emit the keyed harness (the
-`_WireMVCKeyed_<Variant>` statics and the keyed `.wiremvc(_ key:, _ mode:)` factory) beside the
+per-subject doubles stores and the keyed `.wiremvc(_:_:…)` factory taking a `TestingKey` then a `WireMVCTestMode`) beside the
 keyless entry only when the input also declares a `@WireMVCBootstrap` root and at least one
 `@Controller` that is `@Scoped(seed:)` or `@TestScopable`. Without both, no keyed harness SHALL be
 emitted and no diagnostic SHALL be raised.
 
 #### Scenario: a key, a root and a seed-scoped controller
 - **WHEN** `App.swift` declares `@Singleton @WireMVCBootstrap struct AppBootstrap`, a `@Scoped(seed: HTTPRequest.self)` `NotesController`, and `enum Binds` holding `@BindType(NoteBackend.self, MockNoteBackend.self) static let mock = TestingKey()`, generated with `--test-entry`
-- **THEN** the output contains `enum _WireMVCKeyed_Binds_mock {`, `extension _Binds_mock_WireRouteContributor_NotesController: RouteContributor` and `_ key: TestingKey, _ mode: WireMVCTestMode<WireMVCTestServerType>,`
+- **THEN** the output emits a keyed harness for `Binds.mock`, the `extension _Binds_mock_WireRouteContributor_NotesController: RouteContributor`, and a `wiremvc(_:_:…)` factory taking a `TestingKey` then a `WireMVCTestMode<WireMVCTestServerType>`
 
 #### Scenario: a key with only an app-scoped controller
 - **WHEN** the same key and root are declared beside a `@Singleton` `@Controller` that is neither `@Scoped(seed:)` nor `@TestScopable`
-- **THEN** the output contains `import WireTesting` and no `_WireMVCKeyed_` declaration
+- **THEN** the output contains `import WireTesting` and no keyed harness is emitted
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`keyedHarnessEmitsDoublesAwareDispatchAndFactory`, `everyScopedControllerIsKeyedRegardlessOfInjection`, `mockConsumingFactoryFoldThreadsDoublesToCreate`). The omission without a root or a keyed subject is pinned by nothing yet.
 
