@@ -30,7 +30,7 @@ unconditionally.
 Pinned by: `Fixtures/Package.swift` (built by the `Build fixtures` step of the `BuildAndRun` job in `.github/workflows/build.yml`), `Fixtures/Tests/WireMVCBootstrapExampleTests/HTMLResponseOverTheWireTests.swift` (`servesAStreamedPage`, run by the `Test fixtures` step of the same job), `Package.resolved`. No CI step asserts that `elementary` stays out of the root graph; that is pinned by nothing yet.
 
 ### Requirement: With the trait off the module is empty
-Every declaration in `Sources/WireMVCElementary/WireMVCHTMLProducer.swift` SHALL sit inside `#if
+Every declaration in the `WireMVCElementary` target SHALL sit inside `#if
 Elementary`, so that `WireMVCElementary` compiles to an empty module when the trait is off.
 
 #### Scenario: a default build
