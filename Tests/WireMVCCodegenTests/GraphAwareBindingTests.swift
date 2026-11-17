@@ -273,6 +273,9 @@ struct GraphAwareBindingTests {
             ],
             testEntry: true
         )
+        // The scan read `DocumentAuthorizer.self` as the worker: the route binds off the scope entry's
+        // worker field, not through the wrapper.
+        #expect(result.source.contains("let document = try await wireMVCScopeEntry.documentAuthorizer.bind("))
         let messages = result.diagnostics.map(\.message.message)
         #expect(!messages.contains { $0.contains("does not conform to RequestSendable") }, "\(messages)")
     }
