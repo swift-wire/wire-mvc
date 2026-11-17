@@ -221,7 +221,7 @@ witness body SHALL differ from one rendered against any other accessor only in t
 
 #### Scenario: the proxy extension for a controller named `Todos`
 - **WHEN** WireMVCRouteGen renders the witness for `@Controller("/todos") struct Todos` declaring `@Get("/{id}") @JSONResponse func get(@Path id: String)`
-- **THEN** the source begins `extension _WireRouteContributor_Todos: RouteContributor {` and the route calls `self._wireSubject.get(id: id)`
+- **THEN** the source begins `extension _WireRouteContributor_Todos: RouteContributor {` and the route calls `get(id:)` on `self._wireSubject` with the bound `id` value
 
 #### Scenario: the accessor is the only variable
 - **WHEN** the same controller's witness is rendered with `subjectAccessor: "_wireSubject"` and with `subjectAccessor: "controller"`
@@ -236,7 +236,7 @@ annotation's canonical argument text: a `@Middleware(key)` naming a `@Factory` t
 `Character.isLetter` and `isNumber`, so non-ASCII letters and digits are kept) replaced by `_`; a `@Middleware(key)`
 naming any other binding key reads `_wire<key>` sanitised the same way; a `@Middleware(T.self)` reads
 `_wire<T>` where `<T>` is the simple type name with generics and namespace stripped and its first
-letter upper-cased; and a scoped controller's per-request entry calls `self._wireEnterScope(request)`.
+letter upper-cased; and a scoped controller's per-request entry calls `self._wireEnterScope` with the request.
 
 #### Scenario: a factory key with a dotted reference
 - **WHEN** a route carries `@Middleware(Keys.session)` and `Keys.session` is a declared `@Factory` template key
