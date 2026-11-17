@@ -40,7 +40,7 @@ result SHALL be `@discardableResult`.
 - **THEN** `GET /hello` answers `200` with `Well, hello!`, `POST /echo` with body `round-trip` answers `200` with `round-trip`, and `GET /users/42` answers `200` with `user 42`
 
 #### Scenario: the Hummingbird example
-- **WHEN** `HummingbirdExample` builds its application with `let services = try WireMVCServerTransport.apply(graph, to: router)`
+- **WHEN** `HummingbirdExample` builds its application with `WireMVCServerTransport.apply(_:to:)`, passing its graph and its Hummingbird router
 - **THEN** the graph's collated controllers answer their routes through Hummingbird's router
 
 Pinned by: `Tests/WireMVCServerTransportTests/AdapterTests.swift` (`servesProposalRoutesOnServerTransport`), [HummingbirdExample TodoVerificationTests](https://github.com/swift-wire/wire-mvc-examples/blob/main/HummingbirdExample/Tests/HummingbirdExampleTests/TodoVerificationTests.swift).
