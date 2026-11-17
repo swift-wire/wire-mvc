@@ -22,7 +22,7 @@ respectively. `Path`, `Query` and `Header` SHALL conform to `RequestBound` where
 offer `init(wrappedValue:_ name:)`; `JSONBody` SHALL offer only `init(wrappedValue:)`.
 
 #### Scenario: the scan reads WireMVC's own declarations
-- **WHEN** `scanRequestBindings` is run over `Sources/WireMVC/RequestBinding.swift`
+- **WHEN** `scanRequestBindings` is run over the WireMVC module's request-binding declarations
 - **THEN** it finds exactly four bindings: `Path` with `.path`, `JSONBody` with `.body`, and `Query` and `Header` with no obligation
 
 Pinned by: `Tests/WireMVCCodegenTests/BindingObligationsTests.swift` (`theBuiltInsAreAnnotated`). The conditional `RequestBound` conformances and `Header`'s `init(wrappedValue:_ name:)` are exercised only by the fixtures compiling (the `@Query`, `@Path` and `@Header("x-trace")` parameters in `Fixtures/Sources/WireMVCExample/UsersController.swift`); the remaining initialiser shapes are pinned by nothing yet.
@@ -94,7 +94,7 @@ string literal, otherwise the parameter's external label, or its internal name w
 
 #### Scenario: a path name override
 - **WHEN** a route on `/users/{user_id}` declares `@Path("user_id") id: String`
-- **THEN** the terminal binds `Path<String>.bind(name: "user_id", …)` and the handler is called with `id: id`
+- **THEN** the terminal binds `Path<String>.bind(name: "user_id", …)` and the handler's `id` parameter receives the bound `user_id` value
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`allParameterBindingShapes`). The `@Path` override scenario is pinned by nothing yet.
 
@@ -193,11 +193,11 @@ suite's doubles).
 
 #### Scenario: the scope entry is inside the mapped region
 - **WHEN** a `@Scoped(seed: HTTPRequest.self)` controller carries `@ErrorResponse(Unauthenticated.self, .unauthorized)`
-- **THEN** the `_wireEnterScope(request)` call is inside `building:` in the rendered witness
+- **THEN** the call to `_wireEnterScope` with the request is inside `building:` in the rendered witness
 
 #### Scenario: an ordinary bind on a scoped controller
 - **WHEN** a `@Scoped(seed: HTTPRequest.self)` controller declares `@Get("/{id}") func note(@Path id: String)`
-- **THEN** the `_wireEnterScope(request)` call precedes the `Path<String>.bind(name: "id", …)` call in the rendered witness
+- **THEN** the call to `_wireEnterScope` with the request precedes the `Path<String>.bind(name: "id", …)` call in the rendered witness
 
 #### Scenario: a scoped controller binds a path parameter over HTTP
 - **WHEN** `GET /notes/z` reaches `@Scoped(seed: HTTPRequest.self) @Controller("/notes")`'s `@Get("/{id}") note(@Path id: String)`, which returns `stamp.stamp(await backend.note(id))` from the controller's injected `stamp`, which prefixes `stamped:`, and `backend`, which prefixes `real:`
@@ -208,8 +208,8 @@ Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`s
 ### Requirement: The body is collected once, and only when a binding declares `.body`
 When any parameter's binding declares `.body`, the terminal SHALL be its `collectingBodyFrom:`
 overload, and the collected body SHALL be passed as `body:` to every bind on the route. A route with no
-`.body` binding SHALL collect nothing, SHALL pass `body: nil`, and SHALL name the register closure's
-reader parameter `_` unless a streaming binding needs it.
+`.body` binding SHALL collect nothing, SHALL pass `body: nil`, and SHALL not use the register closure's
+reader unless a streaming binding needs it.
 
 #### Scenario: a route with a body binding
 - **WHEN** a route declares `@JSONBody filter: Filter` beside `@Path` and `@Query` parameters
@@ -217,7 +217,7 @@ reader parameter `_` unless a streaming binding needs it.
 
 #### Scenario: a route without one
 - **WHEN** `@Get("/{id}") @JSONResponse func get(@Path id: String)` is rendered
-- **THEN** the register closure's fourth parameter is `_` and the bind passes `body: nil`
+- **THEN** the register closure does not use its reader and the bind passes `body: nil`
 
 #### Scenario: a user binding with `.body`
 - **WHEN** `@RequestBinding(.body) struct FormBody` is used as `@FormBody input: Login`
