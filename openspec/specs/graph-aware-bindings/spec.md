@@ -30,7 +30,7 @@ declaration in any parsed file, recording `S` without `.self`.
 
 #### Scenario: the worker read through the scan
 - **WHEN** `generateRouteContributors` is given `@RequestBinding(DocumentAuthorizer.self) struct AuthorizedDocument`, which conforms to neither send protocol, beside `@Scoped(seed: HTTPRequest.self) struct DocumentAuthorizer` and a scoped controller using it
-- **THEN** the route binds its parameter through `wireMVCScopeEntry.documentAuthorizer.bind(`, and no diagnostic contains `does not conform to RequestSendable`
+- **THEN** the route binds its parameter through the `bind` of the scope entry's `documentAuthorizer` field, and no diagnostic contains `does not conform to RequestSendable`
 
 Pinned by: `Fixtures/Sources/WireMVCBootstrapExample/AuthorizedNoteBinding.swift` and `Fixtures/Sources/WireMVCBootstrapExample/NotesController.swift` (built by the `Build fixtures` step of the `BuildAndRun` job in `.github/workflows/build.yml`), `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`theOmittedRouteIsNotAlsoNaggedAboutRequestSendable`). Resolving the worker's seed through the scan is pinned by nothing yet.
 
@@ -41,7 +41,7 @@ the controller's scope entry yield the worker.
 
 #### Scenario: the worker arrives on the scope entry
 - **WHEN** the scoped `NotesController` route takes `@AuthorizedNote("read") note: Note`
-- **THEN** the generated witness reads `wireMVCScopeEntry.noteAuthorizer` and the fixtures package compiles
+- **THEN** the generated witness reads the scope entry's `noteAuthorizer` field and the fixtures package compiles
 
 Pinned by: `Fixtures/Sources/WireMVCBootstrapExample/NotesController.swift` (built by the `Build fixtures` step of the `BuildAndRun` job in `.github/workflows/build.yml`).
 
@@ -60,19 +60,19 @@ Pinned by: `Fixtures/Sources/WireMVCBootstrapExample/AuthorizedNoteBinding.swift
 
 ### Requirement: The parameter is bound off the scope entry's worker field
 For a parameter that is neither optional nor defaulted, whose binding names a worker and declares
-neither `.readerBody` nor `.bodyStream`, the terminal SHALL emit `let <parameter> = try await
-wireMVCScopeEntry.<field>.bind(name: …, request: request, pathParameters: pathParameters, body: …,
-coding: …)`, where `<field>` is `scopeYieldFieldName(forType:)` of the worker's type. It SHALL NOT
+neither `.readerBody` nor `.bodyStream`, the terminal SHALL bind the parameter with `try await` on the
+scope entry's `<field>.bind(name:request:pathParameters:body:coding:)`, passing the route's request and
+path parameters, where `<field>` is `scopeYieldFieldName(forType:)` of the worker's type. It SHALL NOT
 spell `<Wrapper><<Type>>` and SHALL NOT read a field named after the wrapper. Ordinary bindings on the
 same route SHALL keep the static form.
 
 #### Scenario: a worker-backed parameter
 - **WHEN** a scoped `Documents` controller declares `read(@AuthorizedDocument("read") document: Document)` and `AuthorizedDocument` names `DocumentAuthorizer`
-- **THEN** the source contains `let document = try await wireMVCScopeEntry.documentAuthorizer.bind(name: "read", request: request, pathParameters: pathParameters, body: nil, ` and contains neither `AuthorizedDocument<Document>` nor `wireMVCScopeEntry.authorizedDocument`
+- **THEN** `document` is bound by `documentAuthorizer.bind` on the scope entry with name `"read"` and no body. It is not built through `AuthorizedDocument<Document>` and not read from a field named after the wrapper
 
 #### Scenario: beside `@Path`
 - **WHEN** the same route also declares `@Path id: String`
-- **THEN** the source contains both `let id = try await Path<String>.bind(` and `let document = try await wireMVCScopeEntry.documentAuthorizer.bind(`
+- **THEN** `id` binds through `Path<String>.bind` and `document` through the worker
 
 Pinned by: `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`theBindingIsReadOffTheScopeEntryRatherThanConstructed`, `anOrdinaryBindingIsUnchanged`).
 
@@ -84,29 +84,29 @@ is tracked as a defect in https://github.com/swift-wire/wire-mvc/issues/231.
 
 #### Scenario: a worker with a reader body
 - **WHEN** a scoped route takes `@AuthorizedDocument("read") document: Document` and `AuthorizedDocument` is declared `@RequestBinding(DocumentAuthorizer.self, .readerBody)`
-- **THEN** the source contains `let document = try await AuthorizedDocument<Document>.bindReader(` and does not contain `wireMVCScopeEntry.documentAuthorizer`
+- **THEN** `document` binds through `AuthorizedDocument<Document>.bindReader` and the route does not read the worker off the scope entry
 
 Pinned by: nothing yet.
 
 ### Requirement: An optional worker-backed parameter uses the instance's `bindOptional`
-For a worker-backed parameter whose type ends in `?`, the terminal SHALL call
-`wireMVCScopeEntry.<field>.bindOptional(…)`, and for one with a default value it SHALL call
+For a worker-backed parameter whose type ends in `?`, the terminal SHALL call `bindOptional(…)` on the
+scope entry's worker field, and for one with a default value it SHALL call
 `bindOptional(…) ?? <default>`.
 
 #### Scenario: an optional document
 - **WHEN** the route declares `@AuthorizedDocument("read") document: Document?`
-- **THEN** the source contains `wireMVCScopeEntry.documentAuthorizer.bindOptional(`
+- **THEN** the route calls `bindOptional` on the scope entry's `documentAuthorizer` field
 
 Pinned by: `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`anOptionalParameterUsesTheInstancesOptionalForm`). The defaulted form is pinned by nothing yet.
 
 ### Requirement: The worker's bind runs after the scope entry that produces it
-WireMVCRouteGen SHALL emit a worker-backed bind after the `let wireMVCScopeEntry = try await
-self._wireEnterScope(…)` line in the same route, whose argument is `request` in a production witness and
-`request, wireMVCDoubles` in a keyed variant witness.
+WireMVCRouteGen SHALL emit a worker-backed bind after the route enters the scope through
+`self._wireEnterScope(…)`, which is passed the request in a production witness and the request plus the
+doubles in a keyed variant witness.
 
 #### Scenario: statement order
 - **WHEN** the `Documents` witness is rendered
-- **THEN** the scope-entry line ends before `wireMVCScopeEntry.documentAuthorizer.bind(` begins
+- **THEN** the scope is entered before the worker's `bind` is called
 
 Pinned by: `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`theBindComesAfterTheScopeEntryThatProducesIt`, production witness only). The keyed variant witness is pinned by nothing yet.
 
