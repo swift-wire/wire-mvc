@@ -39,7 +39,7 @@ one generated entry that calls `createServer()`.
 
 #### Scenario: a bootstrap declaring `createServer()`
 - **WHEN** the test entry is rendered for a `@WireMVCBootstrap` that declares `func createServer() throws -> NIOHTTPServer`
-- **THEN** the rendered entry contains `let server = WireMVCContextServer(mode.makeTestServer())` and does not contain `createServer()`
+- **THEN** the rendered entry wraps `mode.makeTestServer()` in `WireMVCContextServer` and does not contain `createServer()`
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`testEntryNeverCallsCreateServer`).
 
@@ -232,8 +232,8 @@ shape SHALL produce no client type at all.
 Pinned by: `Tests/WireMVCCodegenTests/ControllerClientGenerationTests.swift` (`aControllerWithNoRouteEmitsNothing`), `Fixtures/Tests/WireMVCBootstrapExampleReplaceTests/ReplaceTests.swift` (`notFoundFallbackServes`).
 
 ### Requirement: A declared `@Header` beats the `headers:` bag
-A typed method SHALL build its header set as `headers.merging(wireMVCRequest.headers) { _, declared in declared }`,
-so a header the route binds with `@Header` is sent from the typed parameter when the caller also names
+A typed method SHALL build its header set by merging the caller's `headers:` with the headers its
+`@Header` bindings set, the declared value winning on an exactly equal key, so a header the route binds with `@Header` is sent from the typed parameter when the caller also names
 it in `headers:` with the same spelling, and headers the route does not declare travel from the bag unchanged.
 The merge is case-sensitive: a bag key differing from the `@Header` name only in case survives beside the
 declared one, and which value is sent then depends on dictionary order, which is tracked as a defect in
@@ -265,9 +265,8 @@ Pinned by: `Tests/WireMVCCodegenTests/GraphAwareBindingTests.swift` (`theRouteIs
 ### Requirement: Typed sending goes through `RequestSendable` and `RequestBodySendable`
 A typed method SHALL build a `WireMVCOutgoingRequest` and, per binding, call
 `<Wrapper><T>.send(name:value:into:coding:)` or, for a body binding,
-`let wireMVCBody = try <Wrapper><T>.sendBody(name:value:into:coding:)`, then pass
-`wireMVCRequest.pathParameters`, `wireMVCRequest.query`, and for a body `wireMVCBody.bytes` with
-`wireMVCBody.contentType` to `routeResponse`. `Path`, `Query` and `Header` SHALL conform to
+`try <Wrapper><T>.sendBody(name:value:into:coding:)`, then pass the request's path parameters and
+query, and for a body the sent body's bytes and content type, to `routeResponse`. `Path`, `Query` and `Header` SHALL conform to
 `RequestSendable` where `T: LosslessStringConvertible`; `JSONBody` SHALL conform to `RequestBodySendable`
 where `T: Decodable & Encodable`. Conformance SHALL be on the underlying type, never the optional; an
 optional binding SHALL be sent only when non-`nil`.
@@ -389,17 +388,18 @@ Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`a
 When a test consumer declares a `TestingKey` with at least one variant subject, `WireMVCRouteGen` SHALL emit
 a second factory `wiremvc(_ key: TestingKey, _ mode: WireMVCTestMode<WireMVCTestServerType>, environment:, services:)`
 alongside the keyless one, and SHALL add `import WireTesting`. Its build SHALL call
-`Wire.bootstrap<Variant>()`, then for each subject `let wireMVCVariantProxy_<Subject> = Wire.bootstrap<Variant>_<Subject>Contributor(wireGraph: graph)`
-and `try wireMVCVariantProxy_<Subject>.registerWireRoutes(on: &builder, coding: …)` before `finalize()`.
+`Wire.bootstrap<Variant>()`, then for each subject build its variant proxy with
+`Wire.bootstrap<Variant>_<Subject>Contributor(wireGraph:)` from the variant graph and register its
+routes through that proxy's `registerWireRoutes(on:coding:)` before `finalize()`.
 A program consumer SHALL get none of this and its scoped dispatch SHALL be the production scope entry.
 
 #### Scenario: a keyed test consumer
 - **WHEN** the composed sources declare `Binds.mock` with `@BindType(NoteBackend.self, MockNoteBackend.self)` and a `@Scoped(seed:)` `NotesController`
-- **THEN** the output contains `_ key: TestingKey, _ mode: WireMVCTestMode<WireMVCTestServerType>,`, `let graph = try await Wire.bootstrapBinds_mock()`, `Wire.bootstrapBinds_mock_NotesControllerContributor(wireGraph: graph)` and `import WireTesting`
+- **THEN** the output contains `_ key: TestingKey, _ mode: WireMVCTestMode<WireMVCTestServerType>,` and `import WireTesting`, awaits `Wire.bootstrapBinds_mock()` and builds `Wire.bootstrapBinds_mock_NotesControllerContributor(wireGraph:)` from its result
 
 #### Scenario: the same sources as a program consumer
 - **WHEN** `generateRouteContributors` runs with `testEntry: false`
-- **THEN** the output contains `let wireMVCScopeEntry = try await self._wireEnterScope(request)` and nothing named `wireMVCVariantProxy`, `_WireMVCKeyed_` or `wiremvc(_ key:`
+- **THEN** scoped dispatch enters scope through the production `self._wireEnterScope` with the request only, and the output emits no variant proxy and nothing named `_WireMVCKeyed_` or `wiremvc(_ key:`
 
 Pinned by: `Tests/WireMVCCodegenTests/RouteContributorGenerationTests.swift` (`keyedHarnessEmitsDoublesAwareDispatchAndFactory`, `keyedHarnessImportsWireTestingAndKeylessDoesNot`, `productionDispatchIsUnchangedWithoutTestEntry`).
 
@@ -423,8 +423,8 @@ carries `@Scoped(seed:)` or `@TestScopable`. For each subject the harness SHALL 
 `enum _WireMVCKeyed_<Variant>`, `static let <subject>Doubles = TestBindStore<_<Variant>_<Subject>Doubles>()`,
 a `typealias <Subject>Doubles = _<Variant>_<Subject>Doubles`, and a `@discardableResult withClient<R>(supplying doubles: _<Variant>_<Subject>Doubles, _ body:)`
 overload whose body receives `<Subject>Client` when one exists and `TestClient` otherwise. A seed-scoped
-subject SHALL enter scope through `_wireEnterScope(request, doubles)`; a seedless one through
-`_wireEnterScope(doubles)`.
+subject SHALL enter scope through `_wireEnterScope`, passing the request and the resolved doubles; a
+seedless one passes the resolved doubles only.
 
 #### Scenario: a seed-scoped subject
 - **WHEN** `NotesController` is `@Scoped(seed: HTTPRequest.self)` and injects the substituted `NoteBackend`
